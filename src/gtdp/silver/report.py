@@ -188,7 +188,9 @@ def customer(spark: SparkSession, cfg: AppConfig, customer_id: str) -> tuple[Dat
 
 
 def explain(spark: SparkSession, cfg: AppConfig, source: str, day: date) -> None:
-    records = classified(spark, cfg.paths, source, day)
+    records = classified(
+        spark, cfg.paths, source, day, salt_frame(spark, cfg.pseudonymization.salt)
+    )
     print(f"== classification of {source} {day}, before persist")
     records.explain()
     persisted = records.persist(StorageLevel.MEMORY_AND_DISK)
@@ -197,8 +199,7 @@ def explain(spark: SparkSession, cfg: AppConfig, source: str, day: date) -> None
         rejects(persisted, list(SOURCES[source].columns), source=source, run_id="-").explain()
         print("== clean rows, reading the persisted classification")
         clean = persisted.where(F.col(DISPOSITION) == Disposition.CLEAN.value)
-        salt = salt_frame(spark, cfg.pseudonymization.salt)
-        PIPELINES[source].build(clean, salt).explain()
+        PIPELINES[source].build(clean).explain()
     finally:
         persisted.unpersist()
 

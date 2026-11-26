@@ -32,8 +32,8 @@ class Pipeline:
     table: str
     """Directory of the table under the silver root."""
     schema: StructType
-    build: Callable[[DataFrame, DataFrame], DataFrame]
-    """(clean records, salt) -> the rows of the table."""
+    build: Callable[[DataFrame], DataFrame]
+    """Clean records -> the rows of the table."""
     key: tuple[str, ...]
     """Columns unique across the whole table, checked after each write."""
     partitioned: bool
@@ -119,8 +119,10 @@ def file_columns(spark: SparkSession, bronze: str, source: str, day: date) -> li
     return [column for column in partition.columns if column not in technical]
 
 
-def classified(spark: SparkSession, paths: LakePaths, source: str, day: date) -> DataFrame:
-    """The bronze records that silver reads for ``source`` and ``day``, classified.
+def classified(
+    spark: SparkSession, paths: LakePaths, source: str, day: date, salt: DataFrame
+) -> DataFrame:
+    """The bronze records that silver reads for ``source`` and ``day``, classified with ``salt``.
 
     A partitioned table reads bronze(D) alone; another reads every day up to D, classified day by
     day, to rebuild the table.
@@ -135,4 +137,4 @@ def classified(spark: SparkSession, paths: LakePaths, source: str, day: date) ->
     if pipeline.cross_day:
         published = read_table(spark, table_path(paths.silver, source), pipeline.schema)
         earlier = published.where(F.col(INGESTION_DATE) < F.lit(day))
-    return classify(with_references(records, identifiers), pipeline.entity, earlier)
+    return classify(with_references(records, identifiers), pipeline.entity, salt, earlier)

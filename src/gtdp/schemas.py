@@ -135,7 +135,6 @@ SILVER_ORDERS = StructType(
         StructField("channel", StringType(), False),
         StructField("status", StringType(), False),
         StructField("discount_pct", DISCOUNT, False),
-        StructField(RECORD_HASH, StringType(), False),
         StructField(INGESTION_DATE, DateType(), False),
     ]
 )
@@ -151,7 +150,6 @@ SILVER_CUSTOMERS = StructType(
         StructField("signup_date", DateType()),
         StructField("updated_at", TimestampType()),
         StructField(QUALITY_FLAGS, ArrayType(StringType()), False),
-        StructField(RECORD_HASH, StringType(), False),
         StructField(INGESTION_DATE, DateType(), False),
     ]
 )

@@ -9,9 +9,9 @@ from __future__ import annotations
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
-from gtdp.schemas import RECORD_HASH, SILVER_WEBLOGS, SOURCES
+from gtdp.schemas import SILVER_WEBLOGS, SOURCES
 from gtdp.silver.parse import null_if
-from gtdp.silver.pseudonymize import with_salted_hashes
+from gtdp.silver.pseudonymize import salted
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw
 
 COMBINED_LOG = (
@@ -59,8 +59,10 @@ def _event_type() -> Column:
 
 def _columns() -> dict[str, Column]:
     return {
-        "log_id": F.col(RECORD_HASH),
-        "ip": _field("ip"),
+        # Salted like the address: an unsalted hash of the line is recomputed from the other
+        # columns and the 256 addresses of the /24, which gives the address back.
+        "log_id": salted(raw("value")),
+        "ip_hash": salted(_field("ip")),
         "ip_prefix": F.concat(F.regexp_extract(_field("ip"), SUBNET, 1), F.lit(".0/24")),
         "event_ts": F.to_timestamp(_field("time"), TIME_FORMAT),
         "customer_id": null_if(_field("user"), "-"),
@@ -90,6 +92,6 @@ ENTITY = Entity(
 )
 
 
-def table(clean: DataFrame, salt: DataFrame) -> DataFrame:
+def table(clean: DataFrame) -> DataFrame:
     """The parsed lines, the address replaced by its salted hash and its ``/24`` network."""
-    return conform(with_salted_hashes(clean, salt, {"ip_hash": F.col("ip")}), SILVER_WEBLOGS)
+    return conform(clean, SILVER_WEBLOGS)

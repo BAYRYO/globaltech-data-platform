@@ -132,7 +132,7 @@ def _publish(
 
     target, rejected = table_path(paths.silver, source), rejects_path(paths.silver, source)
     of_day = F.col(INGESTION_DATE) == F.lit(day)
-    records = classified(spark, paths, source, day).persist(StorageLevel.MEMORY_AND_DISK)
+    records = classified(spark, paths, source, day, salt).persist(StorageLevel.MEMORY_AND_DISK)
     try:
         report.measures = measures(records.where(of_day))
         report.clean = report.measures.get(Disposition.CLEAN.value, 0)
@@ -147,11 +147,9 @@ def _publish(
         write_partitions(conform(rejected_rows, SILVER_REJECTS), rejected, {INGESTION_DATE: [day]})
         clean = records.where(F.col(DISPOSITION) == Disposition.CLEAN.value)
         if pipeline.partitioned:
-            write_partitions(
-                pipeline.build(clean.where(of_day), salt), target, {INGESTION_DATE: [day]}
-            )
+            write_partitions(pipeline.build(clean.where(of_day)), target, {INGESTION_DATE: [day]})
         else:
-            replace_table(pipeline.build(clean, salt), target)
+            replace_table(pipeline.build(clean), target)
     finally:
         records.unpersist()
 

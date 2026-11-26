@@ -54,8 +54,8 @@ ENTITY = Entity(
 )
 
 
-def table(clean: DataFrame, salt: DataFrame) -> DataFrame:
-    """The versions of every product in ``clean``; products hold no personal data."""
+def table(clean: DataFrame) -> DataFrame:
+    """The versions of every product in ``clean``."""
     restated = Window.partitionBy("product_id", "updated_at").orderBy(
         F.col(INGESTION_DATE).desc(), F.col(RECORD_HASH)
     )

@@ -82,6 +82,6 @@ ENTITY = Entity(
 )
 
 
-def table(clean: DataFrame, salt: DataFrame) -> DataFrame:
-    """The rows of ``silver/orders``: orders hold no personal data, ``salt`` is unused."""
+def table(clean: DataFrame) -> DataFrame:
+    """The rows of ``silver/orders``."""
     return conform(clean, SILVER_ORDERS)
