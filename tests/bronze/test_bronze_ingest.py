@@ -5,6 +5,9 @@ from collections import Counter
 import pytest
 from pyspark.sql import functions as F
 
+from gtdp.audit import audit_path
+from gtdp.bronze.report import file_counts, partitions, runs, unmatched
+
 pytestmark = pytest.mark.slow
 
 DAYS = ("2026-01-01", "2026-01-02", "2026-01-03")
@@ -132,3 +135,48 @@ def test_j3_orders_carry_discount_pct_that_earlier_days_read_as_null(ingested):
     assert j3_rows == j3["rows"]
     # Rows resent from earlier days carry an empty discount_pct; malformed rows have no 9th field.
     assert 0 < j3_discounts < j3_rows
+
+
+def test_the_report_counts_each_partition_and_finds_only_csv_headers_missing(ingested):
+    lake, manifests, runs = ingested
+    paths = lake.cfg.paths
+    summary = {
+        (r.source, r.ingestion_date.isoformat()): r
+        for r in partitions(lake.spark, paths.bronze).collect()
+    }
+    unmatched_rows = {
+        (r.source, r.ingestion_date.isoformat()): r
+        for r in unmatched(lake.spark, paths.landing, paths.bronze).collect()
+    }
+
+    assert (
+        summary.keys()
+        == unmatched_rows.keys()
+        == {(e["source"], d) for d, e in landed_files(manifests)}
+    )
+    for day, entry in landed_files(manifests):
+        key, is_csv = (entry["source"], day), entry["source"] != "weblogs"
+        part, diff = summary[key], unmatched_rows[key]
+        assert (part.rows, part.corrupt, part.files, part.run_id) == (
+            entry["rows"],
+            entry["anomalies"].get("MALFORMED_ROW", 0),
+            1,
+            runs[day].run_id,
+        )
+        header = lake.landing_file(day, entry["path"]).read_text().split("\n", 1)[0]
+        assert diff.landing_lines == entry["rows"] + is_csv
+        assert (diff.landing_not_in_bronze, diff.bronze_not_in_landing) == (int(is_csv), 0)
+        assert (diff.lines_not_in_bronze or []) == ([header] if is_csv else [])
+
+
+def test_the_report_lists_the_counts_of_each_run_and_file(ingested):
+    lake, manifests, runs_by_day = ingested
+
+    rows = file_counts(runs(lake.spark, audit_path(lake.cfg))).collect()
+
+    expected = {
+        (runs_by_day[day].run_id, entry["path"]): entry["rows"]
+        for day, entry in landed_files(manifests)
+    }
+    assert {(row.run_id, row.file): row.rows_written for row in rows} == expected
+    assert all(row.manifest_rows == row.landing_lines == row.rows_read for row in rows)
