@@ -66,14 +66,14 @@ def test_records_that_do_not_add_up_fail_the_run_and_keep_their_counts(fresh_lak
     write = silver_job.write_partitions
 
     def losing_one_reject(frame, path, partitions):
-        if "/rejects/" in path:
+        if path.endswith("/rejects/orders"):
             frame = frame.limit(frame.count() - 1)
         write(frame, path, partitions)
 
     monkeypatch.setattr(silver_job, "write_partitions", losing_one_reject)
 
     with pytest.raises(silver_job.SilverCheckError, match="in silver/rejects"):
-        fresh_lake.run("silver", J1, "orders")
+        fresh_lake.run("silver", J1)
 
     failed = fresh_lake.audit()[-1]
     report = json.loads(failed.metrics_json)["sources"]["orders"]
