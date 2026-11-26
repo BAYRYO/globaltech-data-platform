@@ -16,8 +16,7 @@
 #
 # The job runs in client mode with one executor and stops by itself after 4 idle triggers (2 min
 # at the configured 30 s) once the replay is over. Logs go to a new directory under
-# ${TMPDIR:-/tmp}, printed first. GTDP_PSEUDO_SALT must be set (.env or export), as for any
-# --env cluster job.
+# ${TMPDIR:-/tmp}, printed first.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
