@@ -220,8 +220,27 @@ GTDP_DEPLOY_MODE=cluster scripts/cluster/submit.sh gold --date 2026-01-01
 
 En mode `cluster`, le driver n'a pas accès à la copie du dépôt. `submit.sh` envoie donc `conf/`
 sous forme d'archive (`--archives dist/conf.zip#conf`) et transmet chaque variable `GTDP_*` au
-driver par `spark.yarn.appMasterEnv.*`. `spark.redaction.regex` masque le sel dans les
-interfaces et les event logs.
+driver par une entrée `spark.yarn.appMasterEnv.*`.
+
+Le sel ne doit apparaître nulle part en clair. Trois mécanismes y veillent.
+
+- **Ligne de commande.** Les entrées `spark.yarn.appMasterEnv.*` passent par un fichier de
+  propriétés temporaire (mode 600, supprimé à la fin de `submit.sh`) qui reprend
+  `spark-defaults.conf` (`--properties-file`). La ligne de commande, visible de tous par `ps`,
+  ne contient que son chemin.
+- **Journaux YARN.** Les NodeManagers n'agrègent pas `launch_container.sh`, qui exporte
+  l'environnement du conteneur, sel compris (`yarn.nodemanager.log-container-debug-info.enabled`
+  à `false`). Le sel n'arrive donc ni dans `/app-logs`, ni dans JobHistory, qui sert ces journaux
+  sans authentification.
+- **Configuration.** `spark.redaction.regex` contient `salt`. Spark remplace la valeur de
+  `spark.yarn.appMasterEnv.GTDP_PSEUDO_SALT` par `*********(redacted)` dans la page Environment
+  du Spark History Server et dans l'event log.
+
+Ce masquage ne porte que sur les entrées de configuration. Une valeur écrite dans un plan reste
+en clair : un `lit(sel)` apparaît dans `explain` et dans l'event log servi par le History Server.
+Les jobs passent donc le sel comme une donnée, jamais comme un littéral
+([ADR-0004](adr/0004-pseudonymisation.md)), et le test du lot silver vérifie son absence du plan
+et de l'event log.
 
 Suivre et diagnostiquer une application :
 
