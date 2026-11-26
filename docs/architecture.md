@@ -65,19 +65,26 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 ```
 /datalake
 ├── landing/<source>/ingestion_date=YYYY-MM-DD/   fichiers déposés tels quels (CSV, log, JSON)
+├── landing/_manifests/ingestion_date=…/          _MANIFEST.json du dépôt
 ├── landing/sensors/incoming/                     fichiers capteurs surveillés par le streaming
 ├── bronze/<source>/ingestion_date=YYYY-MM-DD/    Parquet, colonnes brutes en string + métadonnées
 ├── silver/<entité>/                              données typées et fiables
 ├── silver/rejects/<source>/ingestion_date=…/     lignes rejetées + motifs
+├── silver/_days/ingestion_date=…/                <source>.json par source publiée, _SUCCESS si le jour est complet
 ├── gold/<table>/                                 modèle en étoile et indicateurs
 ├── gold/sensor_aggregates/, gold/sensor_alerts/  agrégats et alertes du flux capteurs
 ├── streaming/{sensors/checkpoints,rejects}/      état technique du streaming
-└── ops/audit/                                    table d'audit des exécutions
+├── ops/audit/run_date=…/run_id=…/                table d'audit, une ligne par exécution
+└── ops/pseudonymization/salt_fingerprint.json    empreinte du sel de pseudonymisation
 /spark-logs                                       event logs Spark (History Server)
 /benchmarks                                       jeux de mesure (réplication contre EC)
 ```
 
-`<source>` ∈ `orders`, `customers`, `products`, `weblogs`.
+`<source>` ∈ `orders`, `customers`, `products`, `weblogs`. Pendant une écriture, chaque table a
+pour frères cachés son verrou `_<table>.lock` et ses répertoires de transit
+(`_<table>.staging-<id>`, `_<table>.tmp`, `_<table>.old`), voir
+[ADR-0002](adr/0002-parquet-idempotence.md). Les event logs de `/spark-logs` sont compressés et
+découpés ([guide de la plateforme](platform.md#arborescence-hdfs-droits-et-quotas)).
 
 Justification :
 
@@ -91,14 +98,19 @@ Justification :
 
 ### Droits et quotas
 
+`scripts/cluster/init-hdfs.sh` porte la table qui fait foi, reprise en entier dans le
+[guide de la plateforme](platform.md#arborescence-hdfs-droits-et-quotas). Une ACL « par défaut
+aussi » est héritée par chaque fichier et répertoire créé ensuite.
+
 | Chemin | Propriétaire | Mode | ACL | Quota espace | Quota de noms |
 | --- | --- | --- | --- | --- | --- |
 | `/datalake/landing` | `etl:datalake` | `770` | — | 20 Go | 100 000 |
 | `/datalake/bronze` | `etl:datalake` | `750` | — | 30 Go | 200 000 |
-| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x` sur les entités pseudonymisées | 30 Go | 200 000 |
-| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x` (défaut hérité) | 10 Go | 200 000 |
+| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x`, par défaut aussi | 30 Go | 200 000 |
+| `/datalake/silver/rejects` | `etl:datalake` | `750` | `group:analysts:---`, par défaut aussi (lignes brutes, données personnelles en clair) | — | — |
+| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x`, par défaut aussi | 10 Go | 200 000 |
 | `/datalake/streaming` | `etl:datalake` | `750` | — | 5 Go | 500 000 |
-| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x` | 2 Go | 100 000 |
+| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x`, par défaut aussi | 2 Go | 100 000 |
 | `/spark-logs` | `spark:hadoop` | `1777` | — | 15 Go | 100 000 |
 | `/benchmarks` | `etl:datalake` | `755` | — | 20 Go | 100 000 |
 
@@ -112,21 +124,32 @@ Pour chaque jour d'ingestion `D` (J1 = 2026-01-01, J2 = 2026-01-02, J3 = 2026-01
 1. **Dépôt** : `scripts/cluster/land.sh <dépôt> D` vérifie le dépôt local du générateur contre
    son manifeste, puis le publie vers `/datalake/landing/<source>/ingestion_date=D/` en remplaçant
    le landing précédent de `D` d'un bloc ([guide de la plateforme](platform.md#déposer-un-jour-de-données)).
-2. **Bronze** : lecture de chaque fichier avec un schéma tout en `string` dérivé de son en-tête
-   (aucune perte, changement de schéma toléré, [ADR-0007](adr/0007-evolution-schema.md)), ajout de
-   `_ingested_at`, `_source_file`, `_run_id`, `_record_hash`, `_corrupt_record`. Écriture Parquet
-   dans la partition `ingestion_date=D`, remplacée en entier.
+2. **Bronze** : un fichier différent de son manifeste (SHA-256, nombre de lignes), hors UTF-8 ou
+   dont l'en-tête n'a pas une colonne obligatoire est refusé avant toute écriture. Chaque fichier
+   est lu avec un schéma tout en `string` dérivé de son en-tête (aucune perte, changement de
+   schéma toléré, [ADR-0007](adr/0007-evolution-schema.md)), avec ajout de `_ingested_at`,
+   `_source_file`, `_run_id`, `_record_hash`, `_corrupt_record`. Écriture Parquet dans la
+   partition `ingestion_date=D`, remplacée en entier.
 3. **Silver** ([règles et disposition](data-model.md#règles-de-qualité-et-disposition)) :
+   - refus avant toute écriture si le sel est inutilisable ou différent de celui de l'empreinte,
+     si un jour antérieur n'est pas complet ou si un jour postérieur l'est
+     ([ADR-0005](adr/0005-silver-incremental.md)) ;
+   - sources traitées dans l'ordre `customers`, `products`, `orders`, `weblogs` : les commandes
+     sont contrôlées contre les dimensions publiées pour `D` ;
    - doublons exacts, contrôles qualité en une seule projection (registre de règles), séparation
-     propres / rejets, doublons de clé intra-jour et inter-jours ;
-   - réconciliation `propres + rejets + doublons = total bronze(D)`, vérifiée à chaque exécution
-     et tracée dans l'audit ; l'exécution échoue si l'égalité est fausse ;
-   - produits historisés en SCD type 2, clients pseudonymisés, logs web parsés.
+     propres / rejets, doublons de clé intra-jour et inter-jours contre les jours complets ;
+   - réconciliation `propres + rejets + doublons = total bronze(D)` et unicité de la clé,
+     vérifiées avant l'écriture puis sur les données relues, et tracées dans l'audit ; un échec
+     après l'écriture retire la publication de la source ;
+   - produits historisés en SCD type 2, clients en SCD type 1 pseudonymisés, logs web parsés et
+     pseudonymisés ;
+   - un marqueur par source publiée, puis `_SUCCESS` quand le jour est complet.
 4. **Gold** : dimensions et indicateurs recalculés en entier ; fait des ventes au prix applicable
    à la date de commande, dont seules les partitions `order_date` touchées par silver(`D`) sont
    recalculées, à partir de toutes les lignes silver de ces dates.
 5. **Audit** : chaque job ajoute une ligne à `/datalake/ops/audit` (identifiant d'exécution,
-   application YARN, compteurs, durée, statut).
+   application YARN, compteurs, durée, statut `SUCCESS`, `FAILED` ou `STOPPED`), même quand il
+   échoue ou qu'un signal l'arrête ([interroger l'audit](runbook/README.md#interroger-laudit)).
 
 Chaque étape est idempotente : la rejouer converge vers le même état (voir
 [ADR-0002](adr/0002-parquet-idempotence.md) et [ADR-0005](adr/0005-silver-incremental.md)).
@@ -154,7 +177,7 @@ Un même calcul, deux moteurs, mêmes entrées et mêmes règles :
 | Entrée | fichiers CSV de commandes en landing (J1, ou J1 à J3), lus bruts par les deux moteurs |
 | Jointure pays | `customer_id` → pays par le référentiel clients : cache distribué (`-files`) et jointure côté map en Hadoop Streaming, jointure diffusée en Spark ; un client sans région (anomalie `MISSING_REGION`, 0,99 % des lignes valides) est compté dans le pays `UNKNOWN` par les deux moteurs, comme en silver |
 | Mesure | montant facturé `quantity × unit_price_eur × (1 − discount_pct)` des lignes `COMPLETED` (pas de SCD2, impossible dans un mapper sans état) |
-| Lignes invalides | compteurs par motif : nombre de champs différent de 8 ou 9 (le contrat garantit qu'une ligne malformée n'a jamais 8 ni 9 champs), quantité ou prix invalide, horodatage invalide, client vide ou inconnu ; compteurs Hadoop (`reporter:counter:`) contre accumulateurs ou agrégats Spark |
+| Lignes invalides | un compteur par motif, chaque ligne comptée sous la première règle qu'elle enfreint, dans cet ordre : `MALFORMED_ROW` (nombre de champs différent de 8 ou 9 ; le contrat garantit qu'une ligne malformée n'a jamais 8 ni 9 champs), `BAD_QUANTITY`, `BAD_PRICE`, `BAD_TIMESTAMP`, `NULL_CUSTOMER`, `UNKNOWN_CUSTOMER`, `BAD_ENUM`, `BAD_DISCOUNT` ; compteurs Hadoop (`reporter:counter:`, groupe `Quality`) contre une agrégation Spark |
 | Comparaison | durée (application YARN), lignes lues (`Map input records` contre métriques d'entrée Spark), lignes de code, résultats identiques au centime |
 
 ## Banc de performance (Lot 7)
@@ -188,15 +211,19 @@ Réplication 3 contre erasure coding : voir [ADR-0006](adr/0006-topologie-hdfs.m
 
 ```
 src/gtdp/
-├── config.py        configuration TOML + surcharges d'environnement
-├── log.py           journalisation structurée (JSON)
-├── io.py            écritures idempotentes et lectures tolérantes (write_partitions, replace_table, read_table)
-├── spark.py         construction de la SparkSession
-├── audit.py         table d'audit
-├── schemas.py       schémas explicites des sources
-├── datagen/         générateur J1/J2/J3 et simulateur capteurs
-├── bronze/  silver/  gold/  streaming/  perf/
-└── jobs/            points d'entrée spark-submit (registre de jobs)
+├── config.py        configuration TOML, surcharges (variables GTDP_*, --set), chemins par environnement
+├── log.py           journalisation JSON, une ligne par événement
+├── spark.py         construction de la SparkSession (--conf de spark-submit prioritaire)
+├── io.py            écritures sous verrou (write_partitions, replace_table, drop_partitions), lecture typée (read_table)
+├── audit.py         table d'audit, une ligne par exécution (SUCCESS, FAILED, STOPPED)
+├── schemas.py       colonnes canoniques des sources, schémas bronze et silver
+├── datagen/         générateur J1/J2/J3, vérificateur, rejeu des capteurs
+├── bronze/          lecture du landing contre le manifeste, colonnes techniques, rapport
+├── silver/          quality.py (registre de règles, disposition), un module par source,
+│                    days.py (marqueurs des jours complets), pseudonymize.py, reconcile.py, report.py
+├── perf/            calcul Spark du Lot 6 et outil de comparaison avec MapReduce
+├── gold/  streaming/  lots 4 et 5, sur leurs branches en cours de revue
+└── jobs/            run.py (point d'entrée spark-submit), registry.py, catalog.py, un module par job
 mapreduce/           mapper et reducer Hadoop Streaming
 scripts/             exploitation du cluster
 conf/                configuration externalisée
