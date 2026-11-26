@@ -23,6 +23,7 @@ from gtdp.schemas import (
     bronze_schema,
 )
 from gtdp.silver import customers, orders, products, weblogs
+from gtdp.silver.days import complete_days
 from gtdp.silver.quality import Entity, classify, with_references
 
 
@@ -40,7 +41,8 @@ class Pipeline:
     """True: day D replaces its own ``ingestion_date`` partition, built from bronze(D)
     (ADR-0005). False: the table is rebuilt from bronze up to D and swapped whole."""
     cross_day: bool = False
-    """A key already in a partition before D is a cross-day duplicate (ADR-0005)."""
+    """A key already published on a complete day before D is a cross-day duplicate
+    (ADR-0005)."""
     checks: Callable[[DataFrame], dict[str, int]] | None = None
     """Further invariants of the written table: rows breaking each one."""
 
@@ -135,6 +137,7 @@ def classified(
     }
     earlier = None
     if pipeline.cross_day:
+        trusted = [d for d in complete_days(spark, paths.silver) if d < day]
         published = read_table(spark, table_path(paths.silver, source), pipeline.schema)
-        earlier = published.where(F.col(INGESTION_DATE) < F.lit(day))
+        earlier = published.where(F.col(INGESTION_DATE).isin(trusted))
     return classify(with_references(records, identifiers), pipeline.entity, salt, earlier)
