@@ -87,6 +87,7 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             weblogs.table,
             ("log_id",),
             partitioned=True,
+            cross_day=True,
         ),
     }
 )

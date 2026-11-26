@@ -54,6 +54,19 @@ def test_replaying_a_day_rewrites_the_same_silver_and_only_its_partitions(fresh_
     assert {path: files(lake, path, J1) for path in j1_files} == j1_files
 
 
+def test_a_log_line_resent_the_next_day_counts_as_a_cross_day_duplicate(fresh_lake):
+    lake = fresh_lake
+    resent = next(line for line in lake.landed_lines(J1, "weblogs") if '" 200 ' in line)
+    lake.append_lines(J2, "weblogs", [resent])
+    lake.run("silver", J1)
+
+    run = lake.run("silver", J2)
+
+    weblogs = lake.table("weblogs")
+    assert weblogs.count() == weblogs.select("log_id").distinct().count()
+    assert run.metrics["sources"]["weblogs"]["measures"]["duplicated.cross_day"] == 1
+
+
 def test_bronze_then_silver_day_by_day_gives_the_silver_of_all_bronze_first(
     seed42, published, tmp_path
 ):
