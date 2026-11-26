@@ -43,6 +43,8 @@ RM = "http://resourcemanager:8088/ws/v1/cluster"
 JHS = "http://mr-history:19888/ws/v1/history/mapreduce/jobs"
 SHS = "http://spark-history:18080/api/v1/applications"
 ACTIVE_STATES = "NEW,NEW_SAVING,SUBMITTED,ACCEPTED,RUNNING"
+EXCLUSIVE_ATTEMPTS = 3
+"""Runs of an engine before keeping one that another application overlapped."""
 QUALITY_CODES = (
     "MALFORMED_ROW",
     "BAD_QUANTITY",
@@ -72,10 +74,19 @@ class Result:
 
 @dataclass
 class Measure:
+    """One run of one engine.
+
+    ``elapsed_s`` is the YARN application's elapsed time, ``jobs_s`` the part of it spent in jobs
+    (MapReduce job start to finish, first Spark job submitted to last job completed), ``cpu_s``
+    the CPU time of the tasks. ``inputs`` are the order and customer directories read.
+    """
+
     engine: str
     run: int
     app_id: str
     elapsed_s: float
+    jobs_s: float
+    cpu_s: float
     memory_mb_s: int
     vcore_s: int
     lines_read: int
@@ -84,7 +95,8 @@ class Measure:
     tasks: int
     inputs: list[str]
     result: Result
-    idle_check: str
+    details: dict[str, int] = field(default_factory=dict)
+    idle_check: str = ""
     overlapping: list[str] = field(default_factory=list)
 
 
@@ -115,18 +127,31 @@ def result_counters(groups: dict[str, dict[str, int]]) -> dict[str, int]:
 
 
 def stage_totals(stages: Iterable[dict]) -> dict[str, int]:
-    """Input, shuffle and task totals of the Spark History Server ``/stages`` answer."""
-    keys = {
-        "lines_read": "inputRecords",
-        "bytes_read": "inputBytes",
-        "shuffle_bytes": "shuffleWriteBytes",
-        "tasks": "numCompleteTasks",
-    }
+    """Sums over the completed stages of the Spark History Server ``/stages`` answer."""
+    keys = (
+        "inputRecords",
+        "inputBytes",
+        "shuffleWriteBytes",
+        "numCompleteTasks",
+        "executorRunTime",
+        "executorCpuTime",
+        "jvmGcTime",
+    )
     totals = Counter()
     for stage in stages:
         if stage.get("status") == "COMPLETE":
-            totals.update({key: stage.get(name, 0) for key, name in keys.items()})
+            totals.update({key: stage.get(key, 0) for key in keys})
     return {key: totals[key] for key in keys}
+
+
+def jobs_window_s(jobs: Iterable[dict]) -> float:
+    """Seconds from the first submission to the last completion of the Spark ``/jobs`` answer."""
+    times = [
+        datetime.strptime(job[key], "%Y-%m-%dT%H:%M:%S.%f%Z")
+        for job in jobs
+        for key in ("submissionTime", "completionTime")
+    ]
+    return (max(times) - min(times)).total_seconds()
 
 
 def manifest_quality(manifests: Iterable[dict]) -> dict[str, int]:
@@ -176,7 +201,9 @@ def code_lines(path: Path) -> tuple[int, int]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     if path.suffix != ".py":
-        return len(lines), sum(1 for line in lines if line.strip() and not line.lstrip().startswith("#"))
+        return len(lines), sum(
+            1 for line in lines if line.strip() and not line.lstrip().startswith("#")
+        )
     docstrings = set()
     for node in ast.walk(ast.parse(text)):
         body = getattr(node, "body", None)
@@ -225,13 +252,20 @@ class Cluster:
         return done.stdout
 
     def hdfs_cat(self, path: str) -> str:
-        return subprocess.run(
-            ["hdfs", "dfs", "-cat", path], capture_output=True, text=True, check=True
-        ).stdout
+        return self.run_quiet("hdfs", "dfs", "-cat", path)
 
     def hdfs_ls(self, path: str) -> list[str]:
-        done = subprocess.run(["hdfs", "dfs", "-ls", "-C", path], capture_output=True, text=True)
+        done = subprocess.run(
+            ["hdfs", "dfs", "-ls", "-C", path], capture_output=True, text=True, check=False
+        )
         return done.stdout.split() if done.returncode == 0 else []
+
+    def hdfs_bytes(self, path: str) -> int:
+        """Logical size of ``path`` (``hdfs dfs -du -s``, before replication)."""
+        return int(self.run_quiet("hdfs", "dfs", "-du", "-s", path).split()[0])
+
+    def run_quiet(self, *command: str) -> str:
+        return subprocess.run(command, capture_output=True, text=True, check=True).stdout
 
     def wait_idle(self, wait: bool, max_wait_s: int) -> str:
         """Wait until YARN runs no application; return the evidence of the last check."""
@@ -260,25 +294,39 @@ def run_mapreduce(cluster: Cluster, run: int, landing: str, day: date, output: s
     )
     *result_lines, last = stdout.strip().splitlines()
     job_id = last.removeprefix("job_id=")
-    cluster.poll(f"{JHS}/{job_id}", lambda p: p["job"]["state"] == "SUCCEEDED")
+    job = cluster.poll(f"{JHS}/{job_id}", lambda p: p["job"]["state"] == "SUCCEEDED")["job"]
     groups = mr_counters(cluster.get(f"{JHS}/{job_id}/counters"))
-    conf = cluster.get(f"{JHS}/{job_id}/conf")["conf"]["property"]
-    inputs = next(p["value"] for p in conf if p["name"] == "mapreduce.input.fileinputformat.inputdir")
+    conf = {p["name"]: p["value"] for p in cluster.get(f"{JHS}/{job_id}/conf")["conf"]["property"]}
+    customer_files = [f for f in conf["tmpfiles"].split(",") if not f.startswith("file:")]
     app = cluster.app(job_id.replace("job_", "application_", 1))
+    task, launched = groups[TASK], groups[JOB]
     return Measure(
         engine="mapreduce",
         run=run,
         app_id=app["id"],
         elapsed_s=app["elapsedTime"] / 1000,
+        jobs_s=(job["finishTime"] - job["startTime"]) / 1000,
+        cpu_s=task["CPU_MILLISECONDS"] / 1000,
         memory_mb_s=app["memorySeconds"],
         vcore_s=app["vcoreSeconds"],
-        lines_read=groups[TASK]["MAP_INPUT_RECORDS"],
+        lines_read=task["MAP_INPUT_RECORDS"],
         bytes_read=groups[FILESYSTEM]["HDFS_BYTES_READ"],
-        shuffle_bytes=groups[TASK]["REDUCE_SHUFFLE_BYTES"],
-        tasks=groups[JOB]["TOTAL_LAUNCHED_MAPS"] + groups[JOB]["TOTAL_LAUNCHED_REDUCES"],
-        inputs=sorted(inputs.split(",")),
+        shuffle_bytes=task["REDUCE_SHUFFLE_BYTES"],
+        tasks=launched["TOTAL_LAUNCHED_MAPS"] + launched["TOTAL_LAUNCHED_REDUCES"],
+        inputs=sorted(
+            conf["mapreduce.input.fileinputformat.inputdir"].split(",")
+            + [posixpath.dirname(f) for f in customer_files]
+        ),
         result=Result(parse_revenue("\n".join(result_lines)), result_counters(groups)),
-        idle_check="",
+        details={
+            "killed_map_attempts": launched.get("NUM_KILLED_MAPS", 0),
+            "map_output_records": task["MAP_OUTPUT_RECORDS"],
+            "combine_output_records": task["COMBINE_OUTPUT_RECORDS"],
+            "spilled_records": task["SPILLED_RECORDS"],
+            "gc_ms": task["GC_TIME_MILLIS"],
+            "map_ms": launched["MILLIS_MAPS"],
+            "reduce_ms": launched["MILLIS_REDUCES"],
+        },
     )
 
 
@@ -297,7 +345,8 @@ def run_spark(cluster: Cluster, run: int, landing: str, day: date) -> Measure:
     done = next(r for r in records if r["message"] == "revenue by country written")
     app_id, output = done["yarn_app_id"], done["output"]
     cluster.poll(f"{SHS}/{app_id}", lambda p: p["attempts"][0]["completed"])
-    totals = stage_totals(cluster.get(f"{SHS}/{app_id}/stages"))
+    stages = stage_totals(cluster.get(f"{SHS}/{app_id}/stages"))
+    jobs = cluster.get(f"{SHS}/{app_id}/jobs")
     counters = {}
     for line in cluster.hdfs_cat(f"{output}/counters/part-*").splitlines():
         group, name, value = line.split("\t")
@@ -308,25 +357,37 @@ def run_spark(cluster: Cluster, run: int, landing: str, day: date) -> Measure:
         run=run,
         app_id=app_id,
         elapsed_s=app["elapsedTime"] / 1000,
+        jobs_s=jobs_window_s(jobs),
+        cpu_s=stages["executorCpuTime"] / 1e9,
         memory_mb_s=app["memorySeconds"],
         vcore_s=app["vcoreSeconds"],
-        inputs=sorted({posixpath.dirname(path) for path in done["order_files"]}),
+        lines_read=stages["inputRecords"],
+        bytes_read=stages["inputBytes"],
+        shuffle_bytes=stages["shuffleWriteBytes"],
+        tasks=stages["numCompleteTasks"],
+        inputs=sorted(
+            {posixpath.dirname(path) for path in done["order_files"]} | set(done["customer_dirs"])
+        ),
         result=Result(parse_revenue(cluster.hdfs_cat(f"{output}/revenue/part-*")), counters),
-        idle_check="",
-        **totals,
+        details={
+            "spark_jobs": len(jobs),
+            "executor_run_ms": stages["executorRunTime"],
+            "gc_ms": stages["jvmGcTime"],
+        },
     )
 
 
 def checks(measures: list[Measure], expected_quality: dict[str, int] | None) -> list[str]:
     """Every failed check, as a sentence; an empty list means the engines agree."""
     reference = measures[0]
+    order_lines = next(m.lines_read for m in measures if m.engine == "mapreduce")
     failures = []
     for measure in measures:
         label = f"{measure.engine} #{measure.run}"
         failures += [f"{label}: {d}" for d in differences(reference.result, measure.result)]
         if measure.inputs != reference.inputs:
             failures.append(f"{label} read {measure.inputs}, not {reference.inputs}")
-        if sum(measure.result.counters.values()) != reference.lines_read:
+        if sum(measure.result.counters.values()) != order_lines:
             failures.append(f"{label}: the counters do not add up to the lines read")
     if expected_quality is not None:
         quality = {k: v for k, v in reference.result.counters.items() if k.startswith("Quality.")}
@@ -339,19 +400,21 @@ def report(
     measures: list[Measure], failures: list[str], expected_quality: dict | None, context: str
 ) -> str:
     rows = [
-        "| Moteur | Exécution | Application | Durée (s) | Mo·s | vcore·s | Lignes lues "
-        "| Octets lus | Octets de shuffle | Tâches | Exclusive | Contrôle YARN avant l'exécution |",
-        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Moteur | Exécution | Application | Durée (s) | Dont jobs (s) | CPU des tâches (s) "
+        "| Mo·s | vcore·s | Lignes lues | Octets lus | Octets de shuffle | Tâches | Exclusive "
+        "| Contrôle YARN avant l'exécution |",
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- "
+        "| --- |",
     ]
     for m in measures:
         exclusive = "oui" if not m.overlapping else "non : " + ", ".join(m.overlapping)
         rows.append(
-            f"| {m.engine} | {m.run} | `{m.app_id}` | {m.elapsed_s:.1f} | {m.memory_mb_s} "
-            f"| {m.vcore_s} | {m.lines_read} | {m.bytes_read} | {m.shuffle_bytes} | {m.tasks} "
-            f"| {exclusive} | {m.idle_check} |"
+            f"| {m.engine} | {m.run} | `{m.app_id}` | {m.elapsed_s:.1f} | {m.jobs_s:.1f} "
+            f"| {m.cpu_s:.1f} | {m.memory_mb_s} | {m.vcore_s} | {m.lines_read} | {m.bytes_read} "
+            f"| {m.shuffle_bytes} | {m.tasks} | {exclusive} | {m.idle_check} |"
         )
     summary = [
-        "| Moteur | Durée médiane (s) | Min | Max | Écart (max − min) / médiane | Mo·s médian "
+        "| Moteur | Durée médiane (s) | Min | Max | Écart (max - min) / médiane | Mo·s médian "
         "| vcore·s médian |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -375,8 +438,10 @@ def report(
     counters = ["| Compteur | Valeur |", "| --- | ---: |"]
     counters += [f"| {k} | {v} |" for k, v in sorted(reference.counters.items())]
     verdict = (
-        ["Toutes les exécutions des deux moteurs donnent le même CA au centime et les mêmes "
-         "compteurs ; les compteurs couvrent toutes les lignes lues."]
+        [
+            "Toutes les exécutions des deux moteurs donnent le même CA au centime et les mêmes "
+            "compteurs ; les compteurs couvrent toutes les lignes lues."
+        ]
         if not failures
         else ["Écarts :", "", *[f"- {f}" for f in failures]]
     )
@@ -429,18 +494,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     cluster = Cluster(args.out)
 
-    measures = []
+    measures: list[Measure] = []
     for run in range(1, args.runs + 1):
         for engine in CODE_FILES:
-            evidence = cluster.wait_idle(not args.no_wait, args.max_wait)
-            if engine == "mapreduce":
-                measure = run_mapreduce(cluster, run, landing, args.date, mr_output)
-            else:
-                measure = run_spark(cluster, run, landing, args.date)
-            measure.idle_check = evidence
-            measure.overlapping = cluster.overlaps(cluster.app(measure.app_id))
+            for _attempt in range(EXCLUSIVE_ATTEMPTS):
+                evidence = cluster.wait_idle(not args.no_wait, args.max_wait)
+                if engine == "mapreduce":
+                    measure = run_mapreduce(cluster, run, landing, args.date, mr_output)
+                else:
+                    measure = run_spark(cluster, run, landing, args.date)
+                measure.idle_check = evidence
+                measure.overlapping = cluster.overlaps(cluster.app(measure.app_id))
+                print(f"{engine} #{run}: {measure.app_id} {measure.elapsed_s:.1f} s", flush=True)
+                if args.no_wait or not measure.overlapping:
+                    break
+                print(f"  discarded: {', '.join(measure.overlapping)} ran at the same time")
             measures.append(measure)
-            print(f"{engine} #{run}: {measure.app_id} {measure.elapsed_s:.1f} s", flush=True)
+            (args.out / "runs.json").write_text(
+                json.dumps([asdict(m) for m in measures], default=str, indent=2), "utf-8"
+            )
 
     manifests = [
         json.loads(cluster.hdfs_cat(f"{path}/_MANIFEST.json"))
@@ -449,17 +521,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     expected = manifest_quality(manifests) if manifests else None
     failures = checks(measures, expected)
-    files = [(path, cluster.hdfs_ls(path)) for path in measures[0].inputs]
+    sizes = "\n".join(
+        f"- `{path.removeprefix(landing)}` : {cluster.hdfs_bytes(path)} octets"
+        for path in measures[0].inputs
+    )
     context = (
-        f"Entrée : `{landing}`, partitions `ingestion_date` ≤ {args.date} : "
-        + ", ".join(f"`{p}`" for p, _ in files)
-        + f". {args.runs} exécutions par moteur, en alternance, générées le "
-        f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC par `scripts/mapreduce/compare.sh`."
+        f"Entrée : `{landing}`, partitions `ingestion_date` jusqu'au {args.date} :\n\n{sizes}\n\n"
+        f"{args.runs} exécutions par moteur en alternance, le {datetime.now(UTC):%Y-%m-%d %H:%M} "
+        f"UTC, par `scripts/mapreduce/compare.sh` au commit `{cfg.git_sha}`."
     )
     (args.out / "report.md").write_text(report(measures, failures, expected, context), "utf-8")
-    (args.out / "runs.json").write_text(
-        json.dumps([asdict(m) for m in measures], default=str, indent=2), "utf-8"
-    )
     print(f"report: {args.out / 'report.md'}")
     for failure in failures:
         print(f"FAILED {failure}", file=sys.stderr)
