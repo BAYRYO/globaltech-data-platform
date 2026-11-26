@@ -1,4 +1,4 @@
-"""Hadoop Streaming reducer: sums the counts of each key (input arrives sorted by key)."""
+"""Hadoop Streaming delivers reducer input sorted by key."""
 
 import sys
 from itertools import groupby

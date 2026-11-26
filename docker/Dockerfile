@@ -1,5 +1,3 @@
-# One image for every cluster role (ADR-0001): Java 11, Hadoop 3.3.6, Spark 3.5.3 built without
-# Hadoop, Python 3.11. Each compose service passes its role to gtdp-entrypoint.
 FROM eclipse-temurin:11-jre AS jre
 
 FROM python:3.11-slim-bookworm AS hadoop
@@ -8,7 +6,6 @@ ARG APACHE_MIRROR=https://archive.apache.org/dist
 ARG HADOOP_VERSION=3.3.6
 ARG HADOOP_SHA512=de3eaca2e0517e4b569a88b63c89fae19cb8ac6c01ff990f1ff8f0cc0f3128c8e8a23db01577ca562a0e0bb1b4a3889f8c74384e609cd55e537aada3dcaa9f8a
 COPY docker/fetch.py /usr/local/bin/fetch.py
-# The S3 and Azure SDK bundles and the HTML docs are half the archive and nothing here uses them.
 RUN python /usr/local/bin/fetch.py \
         "${APACHE_MIRROR}/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" \
         "${HADOOP_SHA512}" /tmp/hadoop.tgz \
@@ -60,7 +57,6 @@ COPY --from=hadoop /opt/hadoop /opt/hadoop
 COPY --from=spark /opt/spark /opt/spark
 
 # Same users and groups on every node: HDFS resolves groups with `id` on the NameNode.
-# hadoop runs the daemons and is the HDFS superuser; spark runs the Spark History Server.
 RUN groupadd -g 1000 hadoop \
     && groupadd -g 1001 datalake \
     && groupadd -g 1002 analysts \

@@ -70,7 +70,6 @@
     <name>mapreduce.jobhistory.done-dir</name>
     <value>/mr-history/done</value>
   </property>
-  <!-- Show finished jobs in the JobHistory list after 10 s instead of 3 min. -->
   <property>
     <name>mapreduce.jobhistory.move.interval-ms</name>
     <value>10000</value>

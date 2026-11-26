@@ -7,8 +7,8 @@
 # folder (orders, customers, products, weblogs) replaces
 # /datalake/landing/<source>/ingestion_date=<date>/ and _MANIFEST.json replaces
 # /datalake/landing/_manifests/ingestion_date=<date>/. Files are staged under
-# /datalake/landing/_staging and renamed into place, so a partition is either the old or the
-# complete new one.
+# /datalake/landing/_staging and renamed into place after the old partitions are deleted, so a
+# partition is absent or complete, never partially written.
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

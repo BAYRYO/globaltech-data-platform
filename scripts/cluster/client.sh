@@ -11,8 +11,8 @@
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-GTDP_IMAGE=gtdp/hadoop-spark:3.3.6-3.5.3 # image: in docker-compose.yml
-GTDP_NETWORK=gtdp                         # networks.default.name in docker-compose.yml
+GTDP_IMAGE=gtdp/hadoop-spark:3.3.6-3.5.3
+GTDP_NETWORK=gtdp
 
 in_image && die "already inside the cluster image"
 docker network inspect "$GTDP_NETWORK" >/dev/null 2>&1 ||

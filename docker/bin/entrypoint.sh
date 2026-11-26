@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Start the daemon for a compose role, in the foreground. Anything else runs as a plain command.
 set -euo pipefail
 
 case "${1:-}" in
@@ -14,8 +13,7 @@ case "${1:-}" in
   nodemanager) exec yarn nodemanager ;;
   mr-history) exec mapred historyserver ;;
   spark-history)
-    # The History Server exits if its log directory is missing, and it starts before
-    # init-hdfs.sh. init-hdfs.sh then sets the owner, mode and quota.
+    # Spark's History Server exits at startup if its log directory does not exist.
     export HADOOP_USER_NAME=hadoop
     hdfs dfsadmin -safemode wait
     hdfs dfs -mkdir -p /spark-logs

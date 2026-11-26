@@ -1,8 +1,4 @@
-"""Download an archive and verify its SHA-512 before writing it. Usage: fetch.py URL SHA512 DEST.
-
-The slim base image has no curl; Python's standard library is enough. archive.apache.org drops
-connections under load, so each attempt restarts the download.
-"""
+"""Usage: fetch.py URL SHA512 DEST. The slim base image has no curl."""
 
 import hashlib
 import sys
