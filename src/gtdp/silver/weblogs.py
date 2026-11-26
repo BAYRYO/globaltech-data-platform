@@ -14,10 +14,17 @@ from gtdp.silver.parse import null_if
 from gtdp.silver.pseudonymize import salted
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw
 
+IPV4 = r"\d{1,3}(?:\.\d{1,3}){3}"
+IPV6 = r"[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}"
+QUOTED = r'"((?:[^"\\]|\\.)*)"'
+"""A quoted field, in which Apache escapes a quote or a backslash with a backslash; the value
+is kept as written."""
 COMBINED_LOG = (
-    r"^(\d{1,3}(?:\.\d{1,3}){3}) (\S+) (\S+) \[([^\]]+)\] "
-    r'"([A-Z]+) (\S+) (HTTP/\d\.\d)" (\d{3}) (\d+|-) "([^"]*)" "([^"]*)"$'
+    rf"^({IPV4}|{IPV6}) (\S+) (\S+) \[([^\]]+)\] "
+    rf'"(?:([A-Z]+) (\S+) (HTTP/\d\.\d)|-)" (\d{{3}}) (\d+|-) {QUOTED} {QUOTED}$'
 )
+"""A request line of ``-`` (a connection closed before any request) has no method, path or
+protocol."""
 FIELDS = (
     "ip",
     "ident",
@@ -81,6 +88,18 @@ def _event_ts() -> Column:
     return F.when(time.rlike(CLF_TIME), iso.cast("timestamp"))
 
 
+def _ip_prefix() -> Column:
+    """The ``/24`` network of an IPv4 address; the ``/48`` of an IPv6 one, its first three
+    groups once ``::`` is expanded, such as ``2001:db8:0::/48``."""
+    ip = _field("ip")
+    leading = F.filter(F.split(F.split(ip, "::").getItem(0), ":"), lambda group: group != "")
+    groups = F.slice(F.concat(leading, F.array(*[F.lit("0")] * 3)), 1, 3)
+    hexadecimal = F.transform(groups, lambda group: F.lower(F.conv(group, 16, 16)))
+    ipv6 = F.concat(F.concat_ws(":", hexadecimal), F.lit("::/48"))
+    ipv4 = F.concat(F.regexp_extract(ip, SUBNET, 1), F.lit(".0/24"))
+    return F.when(ip.contains(":"), ipv6).otherwise(ipv4)
+
+
 def _event_type() -> Column:
     event_type = F.lit(OTHER_EVENT)
     for method, prefix, name in reversed(EVENT_TYPES):
@@ -94,13 +113,13 @@ def _columns() -> dict[str, Column]:
         # Salted like the address: an unsalted hash of the line is recomputed from the other
         # columns and the 256 addresses of the /24, which gives the address back.
         "log_id": salted(raw("value")),
-        "ip_hash": salted(_field("ip")),
-        "ip_prefix": F.concat(F.regexp_extract(_field("ip"), SUBNET, 1), F.lit(".0/24")),
+        "ip_hash": salted(F.lower(_field("ip"))),
+        "ip_prefix": _ip_prefix(),
         "event_ts": _event_ts(),
         "customer_id": null_if(_field("user"), "-"),
-        "method": _field("method"),
-        "path": _field("path"),
-        "protocol": _field("protocol"),
+        "method": null_if(_field("method"), ""),
+        "path": null_if(_field("path"), ""),
+        "protocol": null_if(_field("protocol"), ""),
         "http_status": _field("status").cast("int"),
         "bytes_sent": null_if(_field("bytes"), "-").cast("long"),
         "referer": null_if(_field("referer"), "-"),

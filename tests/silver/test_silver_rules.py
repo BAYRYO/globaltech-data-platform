@@ -48,6 +48,8 @@ LOG = (
     '198.18.12.34 - C000001 [01/Jan/2026:20:21:48 +0000] "GET /products/P00042 HTTP/1.1" '
     '200 5123 "-" "Mozilla/5.0 (tablet)"'
 )
+ESCAPED_AGENT = 'Mozilla/5.0 (tablet) \\"Foo\\" \\\\'
+"""A user agent holding a quote and a backslash, escaped as Apache writes them."""
 
 
 def classified(spark, source, rows, *, earlier=None, day=DAY):
@@ -294,6 +296,42 @@ def test_requests_map_to_event_types_and_errors_are_kept(
         event_type,
         product_id,
     )
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (
+            ('"Mozilla/5.0 (tablet)"', f'"{ESCAPED_AGENT}"'),
+            ("198.18.12.0/24", "GET", "/products/P00042", ESCAPED_AGENT),
+        ),
+        (
+            ("198.18.12.34", "2001:DB8::1"),
+            ("2001:db8:0::/48", "GET", "/products/P00042", "Mozilla/5.0 (tablet)"),
+        ),
+        (
+            ("198.18.12.34", "2001:0db8:85a3:0000:0000:8a2e:0370:7334"),
+            ("2001:db8:85a3::/48", "GET", "/products/P00042", "Mozilla/5.0 (tablet)"),
+        ),
+        (
+            ('"GET /products/P00042 HTTP/1.1" 200 5123', '"-" 408 -'),
+            ("198.18.12.0/24", None, None, "Mozilla/5.0 (tablet)"),
+        ),
+    ],
+)
+def test_valid_combined_log_variants_are_parsed(spark, change, expected):
+    (row,) = classified(spark, "weblogs", [{"value": LOG.replace(*change)}])
+
+    assert (row[DISPOSITION], row.reject_reasons) == ("clean", [])
+    assert (row.ip_prefix, row.method, row.path, row.user_agent) == expected
+
+
+def test_one_address_has_one_hash_whatever_its_case(spark):
+    lower, upper = (LOG.replace("198.18.12.34", ip) for ip in ("2001:db8::1", "2001:DB8::1"))
+
+    rows = classified(spark, "weblogs", [{"value": lower}, {"value": upper}])
+
+    assert rows[0].ip_hash == rows[1].ip_hash
 
 
 @pytest.mark.parametrize(
