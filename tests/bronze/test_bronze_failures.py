@@ -151,14 +151,16 @@ def test_a_failed_replay_leaves_the_published_partition_as_it_was(lake):
     assert sorted(row._record_hash for row in lake.table("orders").collect()) == before
 
 
-@pytest.mark.parametrize("change", ["extra file", "missing file"])
+@pytest.mark.parametrize("change", ["extra file", "missing file", "missing directory"])
 def test_landing_files_must_be_exactly_those_of_the_manifest(lake, change):
     lake.land(J2)
     path = lake.landing_file(J2, ORDERS)
     if change == "extra file":
         path.with_name("orders_late.csv").write_text(path.read_text())
-    else:
+    elif change == "missing file":
         path.unlink()
+    else:
+        shutil.rmtree(path.parent)
 
     with pytest.raises(LandingError, match="does not match the manifest"):
         lake.run(J2)
