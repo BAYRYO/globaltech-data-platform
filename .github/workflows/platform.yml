@@ -36,10 +36,14 @@ jobs:
           cluster=false
           if [ "$EVENT" = workflow_dispatch ]; then
             cluster=true
-          elif [ "$EVENT" = pull_request ] &&
-            git diff --name-only "origin/$BASE_REF...HEAD" |
-            grep -qE '^(docker/|docker-compose\.yml$|scripts/cluster/|\.github/workflows/platform\.yml$)'; then
-            cluster=true
+          elif [ "$EVENT" = pull_request ]; then
+            # A file, not a pipe: grep -q exits at the first match, git diff then dies of SIGPIPE
+            # on a long list, and under pipefail the match counted as no match.
+            git diff --name-only "origin/$BASE_REF...HEAD" >"$RUNNER_TEMP/changed-files"
+            if grep -qE '^(docker/|docker-compose\.yml$|scripts/cluster/|\.github/workflows/platform\.yml$)' \
+              "$RUNNER_TEMP/changed-files"; then
+              cluster=true
+            fi
           fi
           echo "cluster=$cluster" | tee -a "$GITHUB_OUTPUT"
 
