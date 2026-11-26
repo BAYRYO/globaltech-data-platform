@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from enum import StrEnum
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 _T = typing.TypeVar("_T")
@@ -26,6 +27,7 @@ SALT_VAR = "GTDP_PSEUDO_SALT"
 GIT_SHA_VAR = "GTDP_GIT_SHA"
 DEV_SALT = "gtdp-local-dev-salt-not-secret"
 _URI_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+_MASTER = re.compile(r"local(\[([1-9][0-9]*|\*)\])?|yarn")
 
 
 class ConfigError(ValueError):
@@ -59,6 +61,12 @@ class AppSettings:
     name: str
     timezone: str
 
+    def __post_init__(self) -> None:
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ConfigError(f"[app] timezone: unknown time zone {self.timezone!r}") from None
+
 
 @dataclass(frozen=True)
 class SparkSettings:
@@ -70,6 +78,10 @@ class SparkSettings:
         if self.shuffle_partitions < 1:
             raise ConfigError(
                 f"[spark] shuffle_partitions must be >= 1, got {self.shuffle_partitions}"
+            )
+        if self.master is not None and not _MASTER.fullmatch(self.master):
+            raise ConfigError(
+                f"[spark] master must be local, local[N], local[*] or yarn, got {self.master!r}"
             )
 
 

@@ -4,11 +4,13 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from dataclasses import fields
 from datetime import date
 from pathlib import Path
 
 import pytest
 
+from gtdp.config import LakePaths
 from gtdp.jobs.run import main
 
 REPO = Path(__file__).resolve().parents[2]
@@ -18,6 +20,35 @@ RUN_PY = REPO / "src" / "gtdp" / "jobs" / "run.py"
 def clean_env(**extra):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GTDP_")}
     return {**env, **extra}
+
+
+def lake_args(tmp_path):
+    """run.py options that put every lake area under ``tmp_path / "lake"``."""
+    lake = tmp_path / "lake"
+    return [
+        arg
+        for area in fields(LakePaths)
+        for arg in ("--set", f"paths.{area.name}={lake / area.name}")
+    ]
+
+
+def run_module(*args, env=None):
+    return subprocess.run(
+        [sys.executable, "-m", "gtdp.jobs.run", *args],
+        capture_output=True,
+        text=True,
+        env=env or clean_env(),
+        timeout=300,
+        check=False,
+    )
+
+
+def json_lines(text):
+    return [json.loads(line) for line in text.splitlines() if line.startswith("{")]
+
+
+def raw_tracebacks(text):
+    return [line for line in text.splitlines() if line.startswith("Traceback")]
 
 
 def test_list_prints_every_job_with_its_layer(capsys):
@@ -61,6 +92,27 @@ def test_invalid_configuration_exits_before_spark_starts(stderr_lines):
     assert entry["level"] == "ERROR"
     assert entry["job"] == "smoke"
     assert "spark.shuffle_partitions" in entry["message"]
+
+
+@pytest.mark.parametrize("setting", ["app.timezone=Mars/Phobos", "spark.master=nope"])
+def test_an_unknown_timezone_or_master_exits_2_before_spark_starts(tmp_path, setting):
+    result = run_module("smoke", "--env", "local", *lake_args(tmp_path), "--set", setting)
+
+    assert result.returncode == 2
+    [error] = [entry for entry in json_lines(result.stderr) if entry["level"] == "ERROR"]
+    assert setting.partition("=")[0].partition(".")[2] in error["message"]
+    assert not (tmp_path / "lake").exists()
+
+
+def test_spark_that_cannot_start_exits_2_with_a_json_error(tmp_path):
+    result = run_module(
+        "smoke", "--env", "local", *lake_args(tmp_path), env=clean_env(JAVA_HOME="/nonexistent")
+    )
+
+    assert result.returncode == 2
+    [error] = [entry for entry in json_lines(result.stderr) if entry["level"] == "ERROR"]
+    assert error["message"] == "could not start Spark"
+    assert raw_tracebacks(result.stderr) == []
 
 
 def test_runs_as_a_module():
