@@ -1,12 +1,15 @@
 import logging
 import os
+import shutil
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
 from pyspark.errors import AnalysisException
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, IntegerType, StringType, StructField, StructType
 
+from gtdp.config import load_config
 from gtdp.io import (
     INGESTION_DATE,
     LaterPartitionError,
@@ -20,6 +23,8 @@ from gtdp.io import (
 )
 
 pytestmark = pytest.mark.slow
+
+REPO = Path(__file__).resolve().parents[2]
 
 SCHEMA = "id int, ingestion_date string"
 TABLE = StructType([StructField("id", IntegerType()), StructField(INGESTION_DATE, DateType())])
@@ -401,3 +406,26 @@ def test_a_later_day_without_new_row_still_blocks_an_earlier_replay(spark, tmp_p
 
     with pytest.raises(LaterPartitionError, match="ingestion_date=2026-01-03"):
         silver_day(spark, tmp_path, JAN_2)
+
+
+def test_a_lake_under_a_space_and_an_accent_is_written_where_configured(spark, tmp_path):
+    lake = tmp_path / "Hélène Dupont" / "lake"
+    cfg = load_config("local", overrides={"paths.bronze": str(lake / "bronze")})
+
+    df = spark.createDataFrame([(1, "2026-01-02")], SCHEMA)
+    write_partitions(df, cfg.paths.bronze, {INGESTION_DATE: [JAN_2]})
+
+    assert (lake / "bronze" / "ingestion_date=2026-01-02").is_dir()
+    assert [tuple(r) for r in read_table(spark, cfg.paths.bronze).collect()] == [(1, JAN_2)]
+
+
+def test_a_checkout_under_a_space_reads_its_landing_files(spark, tmp_path):
+    checkout = tmp_path / "projet bigdata"
+    shutil.copytree(REPO / "conf", checkout / "conf")
+    landing = checkout / "data" / "lake" / "landing"
+    landing.mkdir(parents=True)
+    (landing / "orders.csv").write_text("id\n1\n")
+
+    cfg = load_config("local", checkout / "conf")
+
+    assert spark.read.option("header", True).csv(cfg.paths.landing).count() == 1
