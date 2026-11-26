@@ -4,6 +4,7 @@ many, and each count equals what the generator's manifest predicts under the dis
 import hashlib
 import json
 import re
+import shutil
 from datetime import date
 
 import pytest
@@ -11,11 +12,12 @@ from pyspark.sql import functions as F
 
 from gtdp.io import read_table
 from gtdp.schemas import SOURCES, bronze_schema
+from gtdp.silver.pipelines import rejects_path
 from gtdp.silver.products import violations, with_applicable_price
 from gtdp.silver.reconcile import compare, expected, manifest_expected, table_measures
 from gtdp.silver.report import contents, price_history, print_report, reconciliation
 
-from .lakes import DAYS, SALT, bronze_lake
+from .lakes import DAYS, SALT, bronze_lake, local
 
 PERSONAL_DATA = re.compile(
     r"[^@\s|]+@[^@\s|]+\.[a-z]{2,}"  # an email
@@ -150,6 +152,56 @@ def test_the_report_prints_no_personal_data(published, capsys):
     assert PERSONAL_DATA.findall(printed) == []
     email_hash = hashlib.sha256(f"{SALT}{person.email.strip().lower()}".encode()).hexdigest()
     assert email_hash in printed
+
+
+def test_the_report_flags_a_count_the_manifest_or_the_tables_disagree_with(fresh_lake):
+    lake, day = fresh_lake, DAYS[0]
+    lake.run("silver", day)
+    landing = local(lake.cfg.paths.landing)
+    manifest_file = landing / "_manifests" / f"ingestion_date={day}" / "_MANIFEST.json"
+    manifest = json.loads(manifest_file.read_text())
+    [orders] = [entry for entry in manifest["files"] if entry["source"] == "orders"]
+    orders["anomalies"]["NULL_CUSTOMER"] += 1
+    manifest_file.write_text(json.dumps(manifest))
+
+    def mismatches():
+        return {
+            (source, measure): counts
+            for source, at, measure, *counts, status in reconciliation(lake.spark, lake.cfg)
+            if at == day and status == "MISMATCH"
+        }
+
+    found = mismatches()
+    assert set(found) == {
+        ("orders", "rejected.NULL_CUSTOMER"),
+        ("orders", "rejected"),
+        ("orders", "clean"),
+    }
+    predicted, audited, shown = found[("orders", "rejected.NULL_CUSTOMER")]
+    assert predicted == audited + 1 == shown + 1
+
+    orders["anomalies"]["NULL_CUSTOMER"] -= 1
+    manifest_file.write_text(json.dumps(manifest))
+    shutil.rmtree(local(rejects_path(lake.cfg.paths.silver, "orders")) / f"ingestion_date={day}")
+
+    found = mismatches()
+    assert ("orders", "rejected") in found
+    assert {key[0] for key in found} == {"orders"}
+    assert all(shown == 0 < audited == predicted for predicted, audited, shown in found.values())
+
+
+def test_the_report_explains_a_classification_that_its_outputs_read_from_memory(published, capsys):
+    status = print_report(published.spark, published.cfg, explained=("orders", date(2026, 1, 2)))
+    printed = capsys.readouterr().out
+
+    assert status == 0
+    before = printed.split("== classification of orders 2026-01-02, before persist")[1]
+    plan, outputs = before.split("== rejects, reading the persisted classification")
+    rejects_plan, clean_plan = outputs.split("== clean rows, reading the persisted classification")
+    assert "FileScan parquet" in plan
+    assert "InMemoryTableScan" not in plan
+    assert "InMemoryTableScan" in rejects_plan
+    assert "InMemoryTableScan" in clean_plan
 
 
 def test_the_report_fails_while_a_landed_day_is_incomplete(fresh_lake, capsys):
