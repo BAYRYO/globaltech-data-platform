@@ -2,7 +2,9 @@
 
 It imports nothing from the generator: it re-reads every file, recounts each anomaly with its own
 rules (regular expressions, reference sets of the identifiers seen in the reference files, duplicate
-detection) and compares the counts, row numbers and checksums with the manifests.
+detection) and compares the counts, row numbers and checksums with the manifests. It also checks
+what a count cannot see: the contract's drops and files, empty keys, headers, transaction ids
+reused within or across drops, and anomalies on a product's first version.
 """
 
 import csv
@@ -19,7 +21,7 @@ from typing import Any
 ORDERS_HEADER = (
     "transaction_id,event_time,customer_id,product_id,quantity,unit_price_eur,channel,status"
 )
-ORDERS_HEADERS = (ORDERS_HEADER, f"{ORDERS_HEADER},discount_pct")
+DISCOUNT_HEADER = f"{ORDERS_HEADER},discount_pct"
 CUSTOMERS_HEADER = "customer_id,full_name,email,phone,region,segment,signup_date,updated_at"
 PRODUCTS_HEADER = "product_id,product_name,category,unit_price_eur,updated_at"
 CHANNELS = frozenset(("web", "store", "partner"))
@@ -42,7 +44,17 @@ ALERTS: dict[str, Callable[[float], bool]] = {
     "vibration": lambda value: value > 7.1,
     "pressure": lambda value: value < 4 or value > 8,
 }
-LANDING_ORDER = ("customers", "products", "orders", "weblogs")
+LANDING_DAYS = ("2026-01-01", "2026-01-02", "2026-01-03")
+SCHEMA_CHANGE = date(2026, 1, 3)
+"""J3 appends `discount_pct` to the orders."""
+SENSOR_DAY = "2026-01-01"
+LANDING_FILES = {
+    "customers": "customers/customers_{tag}.csv",
+    "products": "products/products_{tag}.csv",
+    "orders": "orders/orders_{tag}.csv",
+    "weblogs": "weblogs/weblogs_{tag}.log",
+}
+"""The file of each source in every drop."""
 MAX_PROBLEMS_PER_FILE = 5
 
 
@@ -68,7 +80,20 @@ class References:
 
     customers: set[str] = field(default_factory=set)
     products: set[str] = field(default_factory=set)
-    orders_files: list[Path] = field(default_factory=list)
+    later_order_ids: set[str] = field(default_factory=set)
+    """Transaction ids of the J2 and J3 orders, the only ids an earlier drop must remember."""
+    orders: dict[str, tuple[list[str], bool]] = field(default_factory=dict)
+    """First row of each remembered id in an earlier drop: its first 8 fields, and whether it
+    carries no anomaly."""
+
+    def resends(self, row: list[str], width: int) -> bool | None:
+        """None when no earlier drop holds the row's id, else whether the row is a resend: a copy
+        of the sane first row of that id, plus an empty `discount_pct` in a 9-column file."""
+        earlier = self.orders.get(row[0])
+        if earlier is None:
+            return None
+        fields, sane = earlier
+        return sane and row == fields + [""] * (width - 8)
 
 
 @dataclass
@@ -128,16 +153,6 @@ def _skip_header(lines: Iterator[str]) -> Iterator[str]:
     return lines
 
 
-def _earlier_orders(paths: list[Path], wanted: set[str]) -> dict[str, list[str]]:
-    found = {}
-    for path in paths:
-        for line in _skip_header(_lines(path)):
-            transaction_id = line.split(",", 1)[0]
-            if transaction_id in wanted:
-                found[transaction_id] = _fields(line)[:8]
-    return found
-
-
 def _order_value_codes(row: list[str], refs: References, future: str) -> list[str]:
     _, stamp, customer, product, quantity, price, channel, status = row[:8]
     codes = []
@@ -163,32 +178,43 @@ def _order_value_codes(row: list[str], refs: References, future: str) -> list[st
 def count_orders(path: Path, ingestion_date: date, refs: References) -> Counted:
     counted = Counted()
     future = f"{ingestion_date + timedelta(days=1)}T00:00:00"
-    resent: dict[str, list[str]] = {}
-    if refs.orders_files:
-        wanted = {line.split(",", 1)[0] for line in _skip_header(_lines(path))}
-        resent = _earlier_orders(refs.orders_files, wanted)
-    with path.open(encoding="utf-8") as handle:
-        width = len(handle.readline().rstrip("\n").split(","))
-    seen: set[int] = set()
-    for number, line in enumerate(_rows(path, ORDERS_HEADERS, counted), start=2):
-        codes = []
-        key = hash(line)
-        if key in seen:
-            codes.append("DUPLICATE_EXACT")
-        seen.add(key)
+    header = DISCOUNT_HEADER if ingestion_date >= SCHEMA_CHANGE else ORDERS_HEADER
+    width = header.count(",") + 1
+    line_of_id: dict[int, int] = {}  # hash(transaction_id) -> hash(line) of its first row
+    remembered: dict[str, tuple[list[str], bool]] = {}
+    for number, line in enumerate(_rows(path, (header,), counted), start=2):
         row = _fields(line)
-        if len(row) != width:
-            counted.add(number, [*codes, "MALFORMED_ROW"])
-            continue
-        discount = row[8] if width == 9 else ""
-        if resent.get(row[0]) == row[:8]:
+        transaction_id = row[0]
+        if not transaction_id:
+            counted.problem(f"line {number}: empty transaction_id")
+        codes = []
+        key, digest = hash(transaction_id), hash(line)
+        first_line = line_of_id.get(key)
+        if first_line is None:
+            line_of_id[key] = digest
+        elif first_line == digest:
+            codes.append("DUPLICATE_EXACT")
+        else:
+            counted.problem(f"line {number}: {transaction_id} repeated with other content")
+        resend = refs.resends(row, width)
+        if resend:
             codes.append("DUPLICATE_CROSS_DAY")
-            if discount:
-                counted.problem(f"line {number}: resent row carries a discount")
-        if discount and not (DISCOUNT.fullmatch(discount) and float(discount) <= 0.3):
-            counted.problem(f"line {number}: discount_pct {discount!r} out of contract")
-        counted.add(number, codes + _order_value_codes(row, refs, future))
-    refs.orders_files.append(path)
+        elif resend is not None:
+            counted.problem(
+                f"line {number}: {transaction_id} of an earlier drop, not a copy of its sane row"
+            )
+        if len(row) != width:
+            codes.append("MALFORMED_ROW")
+        else:
+            discount = row[8] if width == 9 else ""
+            if discount and not (DISCOUNT.fullmatch(discount) and float(discount) <= 0.3):
+                counted.problem(f"line {number}: discount_pct {discount!r} out of contract")
+            codes += _order_value_codes(row, refs, future)
+        counted.add(number, codes)
+        if transaction_id in refs.later_order_ids:
+            remembered.setdefault(transaction_id, (row[:8], not codes))
+    for transaction_id, first_row in remembered.items():
+        refs.orders.setdefault(transaction_id, first_row)
     return counted
 
 
@@ -202,6 +228,8 @@ def count_customers(path: Path, ingestion_date: date, refs: References) -> Count
             counted.problem(f"line {number}: {len(row)} fields")
             continue
         customer_id, _, email, _, region, _, signup, updated_at = row
+        if not customer_id:
+            counted.problem(f"line {number}: empty customer_id")
         email = email.strip().lower()
         codes = []
         if line in seen:
@@ -231,14 +259,20 @@ def count_customers(path: Path, ingestion_date: date, refs: References) -> Count
 
 def count_products(path: Path, ingestion_date: date, refs: References) -> Counted:
     counted = Counted()
+    rows = [(line, _fields(line)) for line in _rows(path, (PRODUCTS_HEADER,), counted)]
+    first_version: dict[str, str] = {}  # updated_at, for the products new in this drop
+    for _, row in rows:
+        if len(row) == 5 and row[0] not in refs.products:
+            first_version[row[0]] = min(row[4], first_version.get(row[0], row[4]))
     seen: set[str] = set()
     first_line_of_key: dict[tuple[str, str], str] = {}
-    for number, line in enumerate(_rows(path, (PRODUCTS_HEADER,), counted), start=2):
-        row = _fields(line)
+    for number, (line, row) in enumerate(rows, start=2):
         if len(row) != 5:
             counted.problem(f"line {number}: {len(row)} fields")
             continue
         product_id, _, category, price, updated_at = row
+        if not product_id:
+            counted.problem(f"line {number}: empty product_id")
         codes = []
         if line in seen:
             codes.append("DUPLICATE_EXACT")
@@ -251,6 +285,8 @@ def count_products(path: Path, ingestion_date: date, refs: References) -> Counte
             codes.append("NULL_CATEGORY")
         if not _is_timestamp(updated_at):
             counted.problem(f"line {number}: updated_at {updated_at!r} out of contract")
+        if codes and first_version.get(product_id) == updated_at:
+            counted.problem(f"line {number}: {codes[0]} on the first version of {product_id}")
         counted.add(number, codes)
         refs.products.add(product_id)
     return counted
@@ -282,6 +318,7 @@ COUNTERS = {
     "orders": count_orders,
     "weblogs": count_weblogs,
 }
+"""In reading order: orders check the ids seen in the customers and products of the drop."""
 
 
 def _sensor_codes(
@@ -328,6 +365,8 @@ def count_sensor_day(directory: Path, names: list[str]) -> dict[str, Counted]:
                 malformed += 1
                 counted.add(number, ["MALFORMED_JSON"])
                 continue
+            if not event["event_id"]:
+                counted.problem(f"line {number}: empty event_id")
             codes, reading = _sensor_codes(event, start, earlier_ids, counted, number)
             counted.add(number, codes)
             file_ids.add(event["event_id"])
@@ -369,47 +408,83 @@ def _unlisted(directory: Path, listed: set[str]) -> list[str]:
     return sorted(present - listed - {"_MANIFEST.json"})
 
 
+def _unexpected_dirs(parent: Path, expected: tuple[str, ...]) -> list[str]:
+    present = (
+        {path.name for path in parent.iterdir() if path.is_dir()} if parent.is_dir() else set()
+    )
+    return sorted(present - set(expected))
+
+
+def _manifest(directory: Path, label: str, report: Report) -> dict[str, Any] | None:
+    path = directory / "_MANIFEST.json"
+    if not path.is_file():
+        report.problems.append(f"{label}/_MANIFEST.json: missing")
+        return None
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if manifest["ingestion_date"] != directory.name:
+        report.problems.append(
+            f"{label}/_MANIFEST.json: ingestion_date {manifest['ingestion_date']}"
+        )
+    return manifest
+
+
+def _landing_manifests(landing: Path, report: Report) -> dict[str, dict[str, dict[str, Any]]]:
+    """Per drop of the contract, its manifest entries by source; a drop listing other files is
+    reported and skipped."""
+    report.problems += [
+        f"landing/{name}: not a drop of the contract"
+        for name in _unexpected_dirs(landing, LANDING_DAYS)
+    ]
+    drops = {}
+    for day in LANDING_DAYS:
+        manifest = _manifest(landing / day, f"landing/{day}", report)
+        if manifest is None:
+            continue
+        tag = day.replace("-", "")
+        expected = {source: path.format(tag=tag) for source, path in LANDING_FILES.items()}
+        listed = {entry["source"]: entry["path"] for entry in manifest["files"]}
+        if listed != expected or len(manifest["files"]) != len(expected):
+            report.problems.append(f"landing/{day}/_MANIFEST.json: lists {listed}, not {expected}")
+            continue
+        drops[day] = {entry["source"]: entry for entry in manifest["files"]}
+    return drops
+
+
 def verify(root: Path) -> Report:
     report = Report()
     refs = References()
-    manifests = sorted(root.glob("landing/*/_MANIFEST.json"))
-    if not manifests:
-        report.problems.append(f"no landing manifest under {root}")
-    for manifest_path in manifests:
-        directory = manifest_path.parent
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        ingestion_date = date.fromisoformat(directory.name)
-        if manifest["ingestion_date"] != directory.name:
-            report.problems.append(f"{manifest_path}: ingestion_date {manifest['ingestion_date']}")
-        entries = sorted(manifest["files"], key=lambda e: LANDING_ORDER.index(e["source"]))
-        for entry in entries:
+    landing = root / "landing"
+    drops = _landing_manifests(landing, report)
+    for day in LANDING_DAYS[1:]:
+        orders = landing / day / LANDING_FILES["orders"].format(tag=day.replace("-", ""))
+        if day in drops and orders.is_file():
+            refs.later_order_ids |= {line.split(",", 1)[0] for line in _skip_header(_lines(orders))}
+    for day, entries in drops.items():
+        directory = landing / day
+        for source, counter in COUNTERS.items():
+            entry = entries[source]
             path = directory / entry["path"]
-            label = f"{directory.name}/{entry['path']}"
+            label = f"{day}/{entry['path']}"
             if not path.is_file():
                 report.problems.append(f"{label}: missing")
                 continue
-            counted = COUNTERS[entry["source"]](path, ingestion_date, refs)
-            _compare(report, label, entry, path, counted)
-        listed = {entry["path"] for entry in manifest["files"]}
-        report.problems += [
-            f"{directory.name}/{p}: not in the manifest" for p in _unlisted(directory, listed)
-        ]
-    sensor_manifests = sorted(root.glob("sensors/*/_MANIFEST.json"))
-    if not sensor_manifests:
-        report.problems.append(f"no sensor manifest under {root}")
-    for manifest_path in sensor_manifests:
-        directory = manifest_path.parent
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        entries = {entry["path"]: entry for entry in manifest["files"]}
-        present = [name for name in entries if (directory / name).is_file()]
-        report.problems += [
-            f"sensors/{directory.name}/{n}: missing" for n in entries if n not in present
-        ]
-        for name, counted in count_sensor_day(directory, present).items():
-            label = f"sensors/{directory.name}/{name}"
-            _compare(report, label, entries[name], directory / name, counted)
-        report.problems += [
-            f"sensors/{directory.name}/{p}: not in the manifest"
-            for p in _unlisted(directory, set(entries))
-        ]
+            _compare(report, label, entry, path, counter(path, date.fromisoformat(day), refs))
+        listed = {entry["path"] for entry in entries.values()}
+        report.problems += [f"{day}/{p}: not in the manifest" for p in _unlisted(directory, listed)]
+    report.problems += [
+        f"sensors/{name}: not a sensor day of the contract"
+        for name in _unexpected_dirs(root / "sensors", (SENSOR_DAY,))
+    ]
+    directory = root / "sensors" / SENSOR_DAY
+    manifest = _manifest(directory, f"sensors/{SENSOR_DAY}", report)
+    if manifest is None:
+        return report
+    entries = {entry["path"]: entry for entry in manifest["files"]}
+    present = [name for name in entries if (directory / name).is_file()]
+    report.problems += [f"sensors/{SENSOR_DAY}/{n}: missing" for n in entries if n not in present]
+    for name, counted in count_sensor_day(directory, present).items():
+        _compare(report, f"sensors/{SENSOR_DAY}/{name}", entries[name], directory / name, counted)
+    report.problems += [
+        f"sensors/{SENSOR_DAY}/{p}: not in the manifest" for p in _unlisted(directory, set(entries))
+    ]
     return report
