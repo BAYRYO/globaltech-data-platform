@@ -6,7 +6,7 @@ import pytest
 from pyspark.sql import functions as F
 
 from gtdp.audit import audit_path
-from gtdp.bronze.report import file_counts, partitions, runs, unmatched
+from gtdp.bronze.report import discounts, file_counts, partitions, runs, unmatched
 
 pytestmark = pytest.mark.slow
 
@@ -135,6 +135,26 @@ def test_j3_orders_carry_discount_pct_that_earlier_days_read_as_null(ingested):
     assert j3_rows == j3["rows"]
     # Rows resent from earlier days carry an empty discount_pct; malformed rows have no 9th field.
     assert 0 < j3_discounts < j3_rows
+
+
+def test_the_report_counts_the_orders_holding_a_discount_per_day(ingested):
+    lake, manifests, _ = ingested
+    expected = {}
+    for day in DAYS:
+        [entry] = [e for e in manifests[day]["files"] if e["source"] == "orders"]
+        header, *lines = lake.landing_file(day, entry["path"]).read_text().splitlines()
+        if "discount_pct" not in header.split(","):
+            expected[day] = (entry["rows"], 0)
+            continue
+        position = header.split(",").index("discount_pct")
+        fields = [line.split(",") for line in lines]
+        discounted = sum(1 for f in fields if len(f) > position and f[position])
+        expected[day] = (entry["rows"], discounted)
+
+    rows = discounts(lake.spark, lake.cfg.paths.bronze).collect()
+
+    assert {r.ingestion_date.isoformat(): (r.rows, r.with_discount_pct) for r in rows} == expected
+    assert 0 < expected[DAYS[2]][1] < expected[DAYS[2]][0]
 
 
 def test_the_report_counts_each_partition_and_finds_only_csv_headers_missing(ingested):
