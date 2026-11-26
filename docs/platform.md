@@ -354,6 +354,11 @@ tolérée. `hdfs fsck` montre les 3 cellules sur 3 DataNodes différents.
 `hdfs ec -getPolicy -path /benchmarks/rep3` répond `unspecified`. La politique de réplication
 posée par `-replicate` n'a pas de nom d'erasure coding.
 
+L'image installe `libisal2` (ISA-L 2.30 de Debian bookworm). `hadoop checknative -a` répond
+`ISA-L: true /lib/x86_64-linux-gnu/libisal.so.2`, et `io.erasurecode.codec.xor.rawcoders` vaut
+`xor_native,xor_java` : clients et DataNodes codent et décodent XOR avec le codec natif, le codec
+Java ne sert que de repli. Le benchmark d'erasure coding (lot 7) mesure donc le codec natif.
+
 ## Panne d'un DataNode
 
 Le NameNode déclare un DataNode mort après
