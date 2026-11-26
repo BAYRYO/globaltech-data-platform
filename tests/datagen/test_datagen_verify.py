@@ -22,16 +22,20 @@ def lines_of(root: Path, day: str, source: str) -> list[str]:
     return landing_file(root, day, source).read_text(encoding="utf-8").splitlines()
 
 
-def rewrite(root: Path, day: str, source: str, lines: list[str]) -> None:
-    """Write the file and sign it in the manifest, as a buggy generator would."""
+def write_signed(path: Path, lines: list[str]) -> None:
+    """Write the file and sign it in its manifest, as a buggy generator would."""
     data = ("\n".join(lines) + "\n").encode()
-    landing_file(root, day, source).write_bytes(data)
-    manifest_path = root / "landing" / day / "_MANIFEST.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    entry = next(entry for entry in manifest["files"] if entry["source"] == source)
+    path.write_bytes(data)
+    directory = next(parent for parent in path.parents if (parent / "_MANIFEST.json").is_file())
+    manifest = json.loads((directory / "_MANIFEST.json").read_text(encoding="utf-8"))
+    entry = next(entry for entry in manifest["files"] if directory / entry["path"] == path)
     entry["sha256"] = hashlib.sha256(data).hexdigest()
-    entry["rows"] = len(lines) - (source != "weblogs")
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    entry["rows"] = len(lines) - (path.suffix == ".csv")
+    (directory / "_MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def rewrite(root: Path, day: str, source: str, lines: list[str]) -> None:
+    write_signed(landing_file(root, day, source), lines)
 
 
 def native_j2_orders(root: Path) -> tuple[list[str], list[int]]:
@@ -116,6 +120,26 @@ def duplicate_a_first_version(root: Path) -> None:
     rewrite(root, J1, "products", lines)
 
 
+def is_json(line: str) -> bool:
+    try:
+        json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return True
+
+
+def single_quote_a_malformed_sensor_line(root: Path) -> None:
+    path = next(
+        p
+        for p in sorted((root / "sensors" / J1).glob("*.jsonl"))
+        if not all(is_json(line) for line in p.read_text(encoding="utf-8").splitlines())
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    malformed = next(i for i, line in enumerate(lines) if not is_json(line))
+    lines[malformed] = next(line for line in lines if is_json(line)).replace('"', "'")
+    write_signed(path, lines)
+
+
 MUTATIONS = {
     "m0-missing-manifest": (delete_j3_manifest, "landing/2026-01-03/_MANIFEST.json: missing"),
     "m1-missing-drop": (delete_j3_drop, "landing/2026-01-03/_MANIFEST.json: missing"),
@@ -140,6 +164,10 @@ MUTATIONS = {
     "m8-duplicate-of-first-version": (
         duplicate_a_first_version,
         "DUPLICATE_EXACT on the first version of P00042",
+    ),
+    "single-quoted-sensor-line": (
+        single_quote_a_malformed_sensor_line,
+        "single-quoted JSON, which Spark reads as valid",
     ),
 }
 

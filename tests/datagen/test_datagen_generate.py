@@ -218,6 +218,24 @@ def test_customers_start_from_the_kit_base_and_new_ids_follow_it(ci_root):
     assert min(new_ids) == "C005001"
 
 
+def test_malformed_sensor_lines_stay_invalid_when_single_quotes_are_allowed(ci_root):
+    def parses(line: str) -> bool:
+        try:
+            json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        return True
+
+    malformed = [
+        line
+        for path in sorted((ci_root / "sensors" / J1).glob("sensors_*.jsonl"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not parses(line)
+    ]
+    assert len(malformed) == 14
+    assert [line for line in malformed if parses(line.replace("'", '"'))] == []
+
+
 def test_sensor_day_spikes_one_machine_per_site_for_two_minutes(ci_root):
     files = sorted((ci_root / "sensors" / J1).glob("sensors_*.jsonl"))
     assert len(files) == 48

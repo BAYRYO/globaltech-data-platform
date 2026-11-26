@@ -346,6 +346,14 @@ def _sensor_codes(
     return codes, on_time and not duplicate
 
 
+def _json_object(text: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def count_sensor_day(directory: Path, names: list[str]) -> dict[str, Counted]:
     earlier_ids: set[str] = set()
     results = {}
@@ -357,13 +365,14 @@ def count_sensor_day(directory: Path, names: list[str]) -> dict[str, Counted]:
         malformed = 0
         for number, line in enumerate(_lines(directory / name), start=1):
             counted.rows += 1
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                event = None
-            if not isinstance(event, dict):
+            event = _json_object(line)
+            if event is None:
                 malformed += 1
                 counted.add(number, ["MALFORMED_JSON"])
+                if _json_object(line.replace("'", '"')) is not None:
+                    counted.problem(
+                        f"line {number}: single-quoted JSON, which Spark reads as valid"
+                    )
                 continue
             if not event["event_id"]:
                 counted.problem(f"line {number}: empty event_id")
