@@ -156,6 +156,14 @@ scripts/cluster/client.sh yarn application -list -appStates ALL
 scripts/cluster/client.sh                      # shell interactif
 ```
 
+Le conteneur ne lit l'entrée standard que si elle est un terminal. Une boucle `while read` qui
+appelle `client.sh` garde donc toutes ses lignes. Pour envoyer un fichier par l'entrée standard,
+exporter `GTDP_CLIENT_STDIN=1` :
+
+```bash
+GTDP_CLIENT_STDIN=1 scripts/cluster/client.sh hdfs dfs -put -f - /user/etl/README.md < README.md
+```
+
 L'utilisateur `hadoop` est le super-utilisateur HDFS. L'authentification est simple. HDFS fait
 confiance à `HADOOP_USER_NAME`. Les droits protègent contre les erreurs, pas contre un attaquant.
 

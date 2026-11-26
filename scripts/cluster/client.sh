@@ -8,6 +8,8 @@
 #   GTDP_*            exported variables are forwarded and win over .env, except
 #                     GTDP_CONF_DIR, always /opt/project/conf
 #   GTDP_GIT_SHA      defaults to the checkout's commit (git rev-parse --short HEAD)
+#   GTDP_CLIENT_STDIN 1 forwards stdin to the command, e.g. to pipe a file into it. Otherwise only
+#                     a terminal's stdin is, so a caller's `while read` loop keeps its input.
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -20,7 +22,7 @@ docker network inspect "$GTDP_NETWORK" >/dev/null 2>&1 ||
 
 # A resolvable name: Spark executors connect back to a client-mode driver by its hostname.
 name="gtdp-client-$$-$RANDOM"
-args=(--rm -i --network "$GTDP_NETWORK" --name "$name" --hostname "$name"
+args=(--rm --network "$GTDP_NETWORK" --name "$name" --hostname "$name"
   -v "$(host_path "$ROOT"):/opt/project" -w /opt/project
   -e "HADOOP_USER_NAME=${HADOOP_USER_NAME:-etl}" -e PYTHONPATH=/opt/project/src)
 [[ -f $ROOT/.env ]] && args+=(--env-file "$(host_path "$ROOT")/.env")
@@ -31,6 +33,7 @@ while IFS= read -r var; do
 done < <(compgen -e | grep '^GTDP_' || true)
 args+=(-e GTDP_CONF_DIR=/opt/project/conf)
 
+if [[ -t 0 || ${GTDP_CLIENT_STDIN:-} == 1 ]]; then args+=(-i); fi
 launcher=()
 if [[ -t 0 && -t 1 ]]; then
   args+=(-t)
