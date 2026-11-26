@@ -2,10 +2,10 @@
 
     scripts/cluster/submit.sh src/gtdp/gold/report.py [--env local] [--explain YYYY-MM-DD]
 
-1. Orders per ``order_date``: the silver orders of each drop (``ingestion_date``) and the rows of
-   ``fact_sales``. ``ok`` when the counts are equal, ``not built`` when no gold run covered the
-   date yet, ``MISMATCH`` otherwise. Shown for the last 7 order dates, the dates whose orders
-   came in several drops (late orders) and every date that is not ``ok``.
+1. Orders per ``order_date``: the silver orders of each complete drop (``ingestion_date``) and
+   the rows of ``fact_sales``. ``ok`` when the counts are equal, ``not built`` when no gold run
+   covered the date yet, ``MISMATCH`` otherwise. Shown for the last 7 order dates, the dates
+   whose orders came in several drops (late orders) and every date that is not ``ok``.
 2. The invariants of the star (unique keys, no orphan fact) and the optional references.
 3. Rows and content checksum of each gold table: a replay that rewrites the same rows keeps the
    same ``content_sum``.
@@ -34,6 +34,7 @@ from gtdp.gold import checks, facts
 from gtdp.gold.kpis import KPIS
 from gtdp.gold.tables import DIM_CUSTOMER, DIM_PRODUCT, FACT_SALES, ORDER_DATE, STAR, table_path
 from gtdp.io import INGESTION_DATE, read_table
+from gtdp.silver.days import complete_days
 from gtdp.silver.pipelines import PIPELINES
 from gtdp.silver.pipelines import table_path as silver_path
 from gtdp.spark import build_spark
@@ -48,7 +49,9 @@ def _gold(spark: SparkSession, cfg: AppConfig, name: str, schema=None) -> DataFr
 
 
 def _silver_orders(spark: SparkSession, cfg: AppConfig) -> DataFrame:
-    return read_table(spark, silver_path(cfg.paths.silver, "orders"), PIPELINES["orders"].schema)
+    """The silver orders of the days silver completed, the only ones gold reads."""
+    orders = read_table(spark, silver_path(cfg.paths.silver, "orders"), PIPELINES["orders"].schema)
+    return orders.where(F.col(INGESTION_DATE).isin(complete_days(spark, cfg.paths.silver)))
 
 
 def order_dates(spark: SparkSession, cfg: AppConfig) -> DataFrame:

@@ -18,6 +18,7 @@ from gtdp.io import INGESTION_DATE, read_table, replace_table, write_partitions
 from gtdp.jobs.catalog import JOBS
 from gtdp.jobs.registry import JobContext
 from gtdp.schemas import SILVER_REJECTS
+from gtdp.silver.days import mark_complete, mark_source
 from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
 
@@ -144,8 +145,17 @@ class SilverLake:
         else:
             write_partitions(rows_frame, path, {INGESTION_DATE: [day]})
 
-    def orders(self, day: date, *rows: dict) -> None:
+    def orders(self, day: date, *rows: dict, complete: bool = True) -> None:
+        """Publish the orders of ``day``; ``complete`` also marks the day complete in silver."""
         self._write("orders", rows, day)
+        if complete:
+            self.complete(day)
+
+    def complete(self, day: date) -> None:
+        silver = self.cfg.paths.silver
+        for source in PIPELINES:
+            mark_source(self.spark, silver, day, source, "test-run")
+        mark_complete(self.spark, silver, day, PIPELINES, "test-run")
 
     def weblogs(self, day: date, *rows: dict) -> None:
         self._write("weblogs", rows, day)
