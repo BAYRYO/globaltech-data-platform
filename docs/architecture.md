@@ -71,7 +71,7 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 ├── silver/rejects/<source>/ingestion_date=…/     lignes rejetées + motifs
 ├── gold/<table>/                                 modèle en étoile et indicateurs
 ├── gold/sensor_aggregates/, gold/sensor_alerts/  agrégats et alertes du flux capteurs
-├── streaming/{checkpoints,rejects}/              état technique du streaming
+├── streaming/{sensors/checkpoints,rejects}/      état technique du streaming
 └── ops/audit/                                    table d'audit des exécutions
 /spark-logs                                       event logs Spark (History Server)
 /benchmarks                                       jeux de mesure (réplication contre EC)
@@ -99,7 +99,7 @@ Justification :
 | `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x` (défaut hérité) | 10 Go | 200 000 |
 | `/datalake/streaming` | `etl:datalake` | `750` | — | 5 Go | 500 000 |
 | `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x` | 2 Go | 100 000 |
-| `/spark-logs` | `spark:hadoop` | `1777` | — | 5 Go | 100 000 |
+| `/spark-logs` | `spark:hadoop` | `1777` | — | 15 Go | 100 000 |
 | `/benchmarks` | `etl:datalake` | `755` | — | 20 Go | 100 000 |
 
 Les quotas d'espace HDFS comptent l'espace physique (réplication incluse) : 30 Go de quota pour

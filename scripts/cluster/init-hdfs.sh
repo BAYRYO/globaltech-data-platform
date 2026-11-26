@@ -26,10 +26,11 @@ TREE="
 /datalake/silver/rejects          etl:datalake   750   -      -      -               group:analysts:---,default:group:analysts:---
 /datalake/gold                    etl:datalake   755   10g    200k   -               group:analysts:r-x,default:group:analysts:r-x
 /datalake/streaming               etl:datalake   750   5g     500k   -               -
-/datalake/streaming/checkpoints   etl:datalake   750   -      -      -               -
+/datalake/streaming/sensors       etl:datalake   750   -      -      -               -
+/datalake/streaming/sensors/checkpoints etl:datalake   750   -      -      -               -
 /datalake/streaming/rejects       etl:datalake   750   -      -      -               -
 /datalake/ops                     etl:datalake   750   2g     100k   -               group:ops:r-x,default:group:ops:r-x
-/spark-logs                       spark:hadoop   1777  5g     100k   -               -
+/spark-logs                       spark:hadoop   1777  15g    100k   -               -
 /app-logs                         hadoop:hadoop  1777  -      -      -               -
 /mr-history                       hadoop:hadoop  755   -      -      -               -
 /tmp                              hadoop:hadoop  1777  -      -      -               -
