@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
+    DateType,
     DoubleType,
     IntegerType,
     LongType,
@@ -28,7 +29,11 @@ WATERMARK_DELAY = "2 minutes"
 """Ordinary delays reach 90 s and are kept; delays beyond 5 min are dropped (data contract)."""
 WINDOW_DURATION = "1 minute"
 BATCH_ID = "batch_id"
-"""Partition column of every output: the micro-batch that wrote the rows."""
+"""Second partition column of every output: the micro-batch that wrote the rows."""
+WINDOW_DATE = "window_date"
+"""First partition column of the aggregates and the alerts: the UTC date of ``window_start``."""
+ARRIVAL_DATE = "arrival_date"
+"""First partition column of the rejects: the UTC date its file arrived (modification time)."""
 
 _CORRUPT = "_corrupt_record"
 _VALUES = "_json_values"
@@ -50,6 +55,7 @@ _EVENT_FIELDS = (
     StructField("emitted_at", TimestampType()),
 )
 EVENT_COLUMNS = tuple(field.name for field in _EVENT_FIELDS)
+_LINE_COLUMNS = ("raw_line", "source_file", ARRIVAL_DATE)
 _PARSE_SCHEMA = StructType(
     [StructField("event", StructType(list(_EVENT_FIELDS))), StructField(_CORRUPT, StringType())]
 )
@@ -93,6 +99,7 @@ AGGREGATES_SCHEMA = StructType(
         StructField("avg_value", DoubleType()),
         StructField("min_value", DoubleType()),
         StructField("max_value", DoubleType()),
+        StructField(WINDOW_DATE, DateType()),
         StructField(BATCH_ID, IntegerType()),
     ]
 )
@@ -110,6 +117,7 @@ ALERTS_SCHEMA = StructType(
         StructField("direction", StringType()),
         StructField("event_time", TimestampType()),
         StructField("event_id", StringType()),
+        StructField(WINDOW_DATE, DateType()),
         StructField(BATCH_ID, IntegerType()),
     ]
 )
@@ -118,6 +126,7 @@ REJECTS_SCHEMA = StructType(
         StructField("reject_reason", StringType()),
         StructField("raw_line", StringType()),
         StructField("source_file", StringType()),
+        StructField(ARRIVAL_DATE, DateType()),
         StructField(BATCH_ID, IntegerType()),
     ]
 )
@@ -126,9 +135,9 @@ REJECTS_SCHEMA = StructType(
 def parse(lines: DataFrame, future_tolerance_s: int) -> DataFrame:
     """Parse ``raw_line`` against the contract schema and add ``reject_reason`` (null if valid).
 
-    ``lines`` holds ``raw_line`` and ``source_file``. A line is valid JSON for the contract when
-    it is exactly one JSON object. The JSON reader stops at the end of the first value and
-    ignores what follows, so the line is read twice: as the value of an object,
+    ``lines`` holds ``raw_line``, ``source_file`` and ``arrival_date``. A line is valid JSON for
+    the contract when it is exactly one JSON object. The JSON reader stops at the end of the first
+    value and ignores what follows, so the line is read twice: as the value of an object,
     ``{"event": <line>}``, which fails if anything but ``}`` follows the object, and as an array,
     ``[<line>]``, which fails if anything but ``]`` follows it or holds more than one value.
     Garbage after the object cannot start with both ``}`` and ``]``: it breaks one of the two
@@ -138,11 +147,10 @@ def parse(lines: DataFrame, future_tolerance_s: int) -> DataFrame:
     listed = F.concat(F.lit("["), "raw_line", F.lit("]"))
     options = {**_STRICT_JSON, "columnNameOfCorruptRecord": _CORRUPT}
     parsed = lines.select(
-        "raw_line",
-        "source_file",
+        *_LINE_COLUMNS,
         F.from_json(wrapped, _PARSE_SCHEMA, options).alias("parsed"),
         F.from_json(listed, "array<string>", _STRICT_JSON).alias(_VALUES),
-    ).select("raw_line", "source_file", "parsed.event.*", f"parsed.{_CORRUPT}", _VALUES)
+    ).select(*_LINE_COLUMNS, "parsed.event.*", f"parsed.{_CORRUPT}", _VALUES)
     reason = F.coalesce(
         *(
             F.when(F.expr(rule.format(future_tolerance_s=future_tolerance_s)), F.lit(code))
@@ -154,7 +162,7 @@ def parse(lines: DataFrame, future_tolerance_s: int) -> DataFrame:
 
 def rejects(parsed: DataFrame) -> DataFrame:
     return parsed.where(F.col("reject_reason").isNotNull()).select(
-        "reject_reason", "raw_line", "source_file"
+        "reject_reason", "raw_line", "source_file", ARRIVAL_DATE
     )
 
 
@@ -199,6 +207,7 @@ def window_aggregates(events: DataFrame) -> DataFrame:
             "avg_value",
             "min_value",
             "max_value",
+            F.to_date("window.start").alias(WINDOW_DATE),
         )
     )
 
@@ -231,6 +240,7 @@ def threshold_breaches(events: DataFrame, thresholds: DataFrame) -> DataFrame:
             "direction",
             "event_time",
             "event_id",
+            F.to_date(window.start).alias(WINDOW_DATE),
         )
     )
 

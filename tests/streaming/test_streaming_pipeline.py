@@ -1,16 +1,22 @@
 import hashlib
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from pyspark.errors import StreamingQueryException
 from pyspark.sql import functions as F
 from pyspark.sql.types import TimestampType
-from stream_helpers import drop_files, event, file_name, lake, run_stream
+from stream_helpers import drop_files, event, file_name, lake, local_path, run_stream
 
 from gtdp.io import read_table
 from gtdp.streaming import stream
-from gtdp.streaming.sensors import AGGREGATES_SCHEMA, ALERTS_SCHEMA, BATCH_ID, REJECTS_SCHEMA
+from gtdp.streaming.sensors import (
+    AGGREGATES_SCHEMA,
+    ALERTS_SCHEMA,
+    BATCH_ID,
+    REJECTS_SCHEMA,
+    WINDOW_DATE,
+)
 from gtdp.streaming.stream import AGGREGATES, ALERTS, REJECTS, SCHEMAS, checkpoint_state
 
 T1, T2 = "FR-LYON-M01-TEMP", "FR-LYON-M02-TEMP"
@@ -162,6 +168,32 @@ def test_every_output_table_has_its_documented_schema(spark, late_and_duplicate_
     assert table(spark, paths, REJECTS).schema == REJECTS_SCHEMA
 
 
+def test_each_output_partition_is_a_date_then_a_micro_batch_holding_one_file(
+    spark, late_and_duplicate_stream
+):
+    paths, _ = late_and_duplicate_stream
+
+    layout = {}
+    for name in (AGGREGATES, REJECTS):
+        root = local_path(paths.tables[name])
+        layout[name] = {
+            str(part.relative_to(root)): len(list(part.glob("*.parquet")))
+            for part in root.glob("*=*/batch_id=*")
+        }
+
+    assert layout[AGGREGATES] == {
+        "window_date=2026-01-01/batch_id=2": 1,
+        "window_date=2026-01-01/batch_id=5": 1,
+    }
+    # The rejects of a file go to the day the file arrived, its modification time.
+    [(partition, files)] = layout[REJECTS].items()
+    assert (partition.startswith("arrival_date="), partition.endswith("/batch_id=0"), files) == (
+        True,
+        True,
+        1,
+    )
+
+
 def test_one_value_beyond_its_threshold_raises_exactly_one_alert(spark, stream_lake):
     paths, settings = stream_lake
     drop_files(
@@ -188,6 +220,7 @@ def test_one_value_beyond_its_threshold_raises_exactly_one_alert(spark, stream_l
         "direction": "above",
         "event_time": "00:00:20",
         "event_id": "E2",
+        WINDOW_DATE: date(2026, 1, 1),
         BATCH_ID: 0,
     }
     assert table(spark, paths, ALERTS).schema == ALERTS_SCHEMA
