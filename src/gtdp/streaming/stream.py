@@ -4,7 +4,8 @@ Each output is its own query with its own checkpoint directory: ``aggregates`` a
 gold, ``rejects`` in the streaming area. A ``foreachBatch`` sink writes micro-batch ``n`` to the
 partition ``batch_id=n`` with ``write_partitions``, which replaces that partition: Spark replays an
 uncommitted batch with the same id and the same files after a restart, so the replay overwrites
-the partial result instead of adding to it (ADR-0008).
+the partial result instead of adding to it (ADR-0008). The alerts sink writes the first breach
+of each window that no earlier micro-batch alerted.
 """
 
 from __future__ import annotations
@@ -22,16 +23,17 @@ from pyspark.sql import functions as F
 from pyspark.sql.streaming import StreamingQuery
 
 from gtdp.config import LakePaths, StreamingSettings
-from gtdp.io import write_partitions
+from gtdp.io import read_table, write_partitions
 from gtdp.streaming.sensors import (
     AGGREGATES_SCHEMA,
     ALERTS_SCHEMA,
     BATCH_ID,
     REJECTS_SCHEMA,
     events,
+    first_alerts,
     parse,
     rejects,
-    threshold_alerts,
+    threshold_breaches,
     thresholds_frame,
     window_aggregates,
 )
@@ -116,7 +118,7 @@ def start_queries(
     parsed = parse(lines)
     outputs = {
         AGGREGATES: window_aggregates(events(parsed)),
-        ALERTS: threshold_alerts(events(parsed), thresholds_frame(spark, settings.thresholds)),
+        ALERTS: threshold_breaches(events(parsed), thresholds_frame(spark, settings.thresholds)),
         REJECTS: rejects(parsed),
     }
     # A query copies the session configuration when it starts, and a new checkpoint keeps the
@@ -129,7 +131,7 @@ def start_queries(
             .outputMode("append")
             .trigger(**trigger)
             .option("checkpointLocation", paths.checkpoint(name))
-            .foreachBatch(_batch_writer(name, paths.tables[name], written))
+            .foreachBatch(_batch_writer(name, paths.tables[name], written, _SELECT.get(name)))
             .start()
             for name, output in outputs.items()
         }
@@ -137,16 +139,35 @@ def start_queries(
         spark.conf.set(_SHUFFLE_PARTITIONS, previous)
 
 
-def _batch_writer(query: str, table: str, written: Written) -> Callable[[DataFrame, int], None]:
+def _new_alerts(batch: DataFrame, batch_id: int, table: str) -> DataFrame:
+    """The first breach of each window of ``batch`` that no earlier micro-batch alerted.
+
+    Batch ``n`` reads the alerts of batches below ``n`` only, so its replay finds the same ones.
+    """
+    alerted = read_table(batch.sparkSession, table, ALERTS_SCHEMA)
+    return first_alerts(batch, alerted.where(F.col(BATCH_ID) < batch_id))
+
+
+_SELECT: dict[str, Callable[[DataFrame, int, str], DataFrame]] = {ALERTS: _new_alerts}
+"""Rows of a micro-batch to write, for the queries that do not write the whole batch."""
+
+
+def _batch_writer(
+    query: str,
+    table: str,
+    written: Written,
+    select: Callable[[DataFrame, int, str], DataFrame] | None,
+) -> Callable[[DataFrame, int], None]:
     def write(batch: DataFrame, batch_id: int) -> None:
-        batch.persist()
+        rows_of_batch = select(batch, batch_id, table) if select else batch
+        # Cached: the count and the write must not compute the stateful plan of the batch twice.
+        output = _as_table(rows_of_batch, query, batch_id).persist()
         try:
-            rows = batch.count()
+            rows = output.count()
             if rows:
-                rows_of_table = _as_table(batch, query, batch_id)
-                write_partitions(rows_of_table, table, {BATCH_ID: [str(batch_id)]})
+                write_partitions(output, table, {BATCH_ID: [str(batch_id)]})
         finally:
-            batch.unpersist()
+            output.unpersist()
         written.add(query, rows)
         if rows:
             logger.info(

@@ -26,7 +26,7 @@ TABLES = {
 }
 VALUES = {
     "aggregates": ("event_count", "min_value", "max_value"),
-    "alerts": ("sensor_id", "window_start", "direction", "threshold"),
+    "alerts": ("sensor_id", "window_start", "direction", "threshold", "value", "event_id"),
     "rejects": ("reject_reason",),
 }
 
