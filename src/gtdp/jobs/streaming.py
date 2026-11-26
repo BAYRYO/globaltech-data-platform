@@ -4,6 +4,8 @@ import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
 
+from pyspark.sql.streaming import StreamingQuery
+
 from gtdp.audit import Layer, Run, RunStopped
 from gtdp.config import ConfigError, StreamingSettings
 from gtdp.io import STALE_AFTER_CONF, path_exists
@@ -52,9 +54,10 @@ def streaming_sensors(ctx: JobContext) -> None:
 
     totals = Totals()
     trigger = {"processingTime": f"{settings.trigger_interval_s} seconds"}
-    queries = start_queries(spark, paths, settings, totals, trigger)
+    queries: dict[str, StreamingQuery] = {}
     reason = "query failed"
     try:
+        queries = start_queries(spark, paths, settings, totals, trigger)
         reason = wait_for_stop(
             queries, totals, settings, lambda: path_exists(spark, paths.stop_marker)
         )
