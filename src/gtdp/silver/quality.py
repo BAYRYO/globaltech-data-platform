@@ -7,7 +7,7 @@ Order of operations (data-model.md, "Ordre des opérations et réconciliation"),
    ``quality_flags``. A record with a ``_corrupt_record`` gets ``MALFORMED_ROW`` alone: its other
    columns are shifted or null, and one record must count under one code only;
 3. key duplicates among the records left: one survivor per key, the lowest ``_record_hash``, the
-   others are ``duplicated.key``;
+   others are ``duplicated.key``. A record whose key is partly null is never a key duplicate;
 4. cross-day duplicates: a key published on an earlier day is ``duplicated.cross_day``.
 
 ``rejected`` records go to ``silver/rejects``; ``clean`` records, flags included, to the silver
@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import reduce
 
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
@@ -166,7 +167,11 @@ def classify(
         by_key = Window.partitionBy(INGESTION_DATE, *entity.key).orderBy(
             candidate.desc(), F.col(RECORD_HASH)
         )
-        checked = checked.withColumn(_KEY_RANK, F.row_number().over(by_key))
+        # A record with part of its key unreadable, such as a customer's updated_at, restates
+        # no other record: it is never a key duplicate.
+        incomplete = reduce(Column.__or__, [F.col(column).isNull() for column in entity.key])
+        rank = F.when(incomplete, F.lit(1)).otherwise(F.row_number().over(by_key))
+        checked = checked.withColumn(_KEY_RANK, rank)
     else:
         checked = checked.withColumn(_KEY_RANK, F.lit(1))
     if earlier_keys is None:

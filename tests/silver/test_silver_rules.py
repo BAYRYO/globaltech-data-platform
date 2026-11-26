@@ -9,6 +9,7 @@ from pyspark.sql.types import IntegerType
 from gtdp.bronze.transform import raw_line
 from gtdp.config import Secret
 from gtdp.schemas import RECORD_HASH, bronze_schema
+from gtdp.silver import customers
 from gtdp.silver.pipelines import PIPELINES
 from gtdp.silver.pseudonymize import salt_frame
 from gtdp.silver.quality import DISPOSITION, classify, with_references
@@ -52,12 +53,12 @@ ESCAPED_AGENT = 'Mozilla/5.0 (tablet) \\"Foo\\" \\\\'
 """A user agent holding a quote and a backslash, escaped as Apache writes them."""
 
 
-def classified(spark, source, rows, *, earlier=None, day=DAY):
-    """``rows`` (dicts of raw strings, ``_corrupt_record`` optional) as bronze would hold them,
-    classified; returned in input order."""
+def classified_frame(spark, source, rows, *, earlier=None, day=DAY):
+    """``rows`` (dicts of raw strings, ``_corrupt_record`` and ``ingestion_date`` optional) as
+    bronze would hold them, classified."""
     entity = PIPELINES[source].entity
     schema = bronze_schema(entity.source).add("_row", IntegerType())
-    values = [{**row, "ingestion_date": day, "_row": i} for i, row in enumerate(rows)]
+    values = [{"ingestion_date": day, **row, "_row": i} for i, row in enumerate(rows)]
     records = (
         spark.createDataFrame([tuple(v.get(f.name) for f in schema) for v in values], schema)
         .withColumn("_source_file", F.lit("file"))
@@ -71,8 +72,12 @@ def classified(spark, source, rows, *, earlier=None, day=DAY):
     if earlier is not None:
         keys = spark.createDataFrame([(k,) for k in earlier], "transaction_id string")
     salt = salt_frame(spark, Secret(SALT))
-    result = classify(with_references(records, identifiers), entity, salt, keys)
-    return result.orderBy("_row").collect()
+    return classify(with_references(records, identifiers), entity, salt, keys)
+
+
+def classified(spark, source, rows, **kwargs):
+    """``classified_frame`` collected, in input order."""
+    return classified_frame(spark, source, rows, **kwargs).orderBy("_row").collect()
 
 
 def reasons(spark, source, base, change, **kwargs):
@@ -208,6 +213,45 @@ def test_customer_values_are_repaired_where_the_flag_says(spark):
 
     assert [row.country for row in rows] == ["UNKNOWN", "FR", "FR"]
     assert [row.signup_date for row in rows] == [date(2024, 2, 27), date(2024, 2, 27), None]
+
+
+@pytest.mark.parametrize("updated_at", ["N/A", "01/01/2026 08:00", "2026-01-01", None])
+def test_a_customer_with_an_unreadable_updated_at_is_kept_and_flagged(spark, updated_at):
+    (row,) = classified(spark, "customers", [{**CUSTOMER, "updated_at": updated_at}])
+
+    assert (row.quality_flags, row[DISPOSITION]) == (["BAD_UPDATED_AT"], "clean")
+
+
+def test_distinct_customer_records_without_updated_at_never_collapse(spark):
+    records = [
+        {**CUSTOMER, "updated_at": "N/A", "region": "DE-BY"},
+        {**CUSTOMER, "updated_at": "01/01/2026 08:00", "region": "ES-MD"},
+    ]
+
+    current = [
+        customers.table(
+            classified_frame(spark, "customers", rows).where(F.col(DISPOSITION) == "clean")
+        ).collect()
+        for rows in (records, records[::-1])
+    ]
+    dispositions = [row[DISPOSITION] for row in classified(spark, "customers", records)]
+
+    assert dispositions == ["clean", "clean"]
+    assert len(current[0]) == 1
+    assert current[0] == current[1]
+
+
+def test_an_unreadable_updated_at_ranks_last_in_the_scd1_choice(spark):
+    readable = {**CUSTOMER, "region": "FR-IDF", "ingestion_date": date(2026, 1, 1)}
+    unreadable = {**CUSTOMER, "updated_at": "N/A", "region": "DE-BY"}
+
+    (row,) = customers.table(
+        classified_frame(spark, "customers", [readable, unreadable]).where(
+            F.col(DISPOSITION) == "clean"
+        )
+    ).collect()
+
+    assert row.region == "FR-IDF"
 
 
 def test_a_customer_without_id_is_rejected(spark):
