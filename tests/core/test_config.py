@@ -53,6 +53,46 @@ def test_each_layer_overrides_the_previous_one(conf_dir, monkeypatch):
     assert cfg.spark.shuffle_partitions == 40  # explicit override
 
 
+def with_shipped_streaming(conf_dir):
+    """Append the repository's [streaming] section, with its nested [streaming.thresholds]."""
+    shipped = (REPO / "conf" / "app.toml").read_text(encoding="utf-8")
+    with (conf_dir / "app.toml").open("a", encoding="utf-8") as app:
+        app.write("\n" + shipped[shipped.index("[streaming]") :])
+    return conf_dir
+
+
+def test_a_nested_table_merges_key_by_key_across_layers(conf_dir, monkeypatch):
+    write_env_file(
+        with_shipped_streaming(conf_dir),
+        "[streaming.thresholds]\ntemperature = { above = 90.0 }\npressure = { above = 9.0 }\n",
+    )
+    monkeypatch.setenv("GTDP_STREAMING__THRESHOLDS__VIBRATION__ABOVE", "7.5")
+
+    cfg = load_config("local", conf_dir, overrides={"streaming.thresholds.pressure.below": "3.5"})
+
+    assert cfg.streaming.thresholds == {
+        "temperature": {"above": 90.0},  # env file
+        "vibration": {"above": 7.5},  # env var
+        "pressure": {"below": 3.5, "above": 9.0},  # explicit override, then env file
+    }
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("GTDP_STREAMING__THRESHOLDS__TEMPERATURE__ABOVE", "hot"),
+        ("GTDP_STREAMING__TRIGGER_INTERVAL_S__SECONDS", "3"),
+        ("GTDP_SPARK__ADAPTIVE__ON", "true"),
+    ],
+    ids=["leaf-not-a-number", "key-not-a-table", "other-section"],
+)
+def test_an_invalid_nested_override_fails_at_load(conf_dir, monkeypatch, variable, value):
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ConfigError, match=variable):
+        load_config("local", with_shipped_streaming(conf_dir))
+
+
 def test_text_overrides_are_typed_like_the_files(conf_dir, monkeypatch):
     monkeypatch.setenv("GTDP_SPARK__ADAPTIVE", "False")
 
