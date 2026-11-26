@@ -4,7 +4,7 @@ The functions map streaming DataFrames to streaming DataFrames (they also work o
 except ``first_alerts``, applied to each micro-batch. The semantics are those of ADR-0008: a
 2-minute watermark on ``event_time``, deduplication by ``event_id`` within the watermark, 1-minute
 tumbling windows written once in append mode, and alerts emitted in the micro-batch where the
-first breach of their window arrives.
+first breach of their window arrives (see ``first_alerts`` for which breach the alert carries).
 """
 
 from __future__ import annotations
@@ -239,8 +239,12 @@ def first_alerts(breaches: DataFrame, alerted: DataFrame) -> DataFrame:
     """The earliest breach of each sensor and window of ``breaches`` not in ``alerted`` yet.
 
     Applied to each micro-batch, with ``alerted`` the alerts of the earlier batches: a window
-    alerts in the micro-batch of its first breach, without waiting for its end, and never again.
-    Among breaches of one window that arrive together, the earliest ``event_time`` wins.
+    alerts in the micro-batch where its first breach arrives, without waiting for its end, and
+    never again. The alert carries the breach of smallest ``event_time`` (then ``event_id``) among
+    those of that micro-batch only: a breach with a smaller ``event_time`` that arrives in a later
+    micro-batch does not replace it. The alert's event fields therefore follow the arrival order,
+    the files and how ``maxFilesPerTrigger`` cuts them into micro-batches: the same files in the
+    same micro-batches give the same alert, and a replayed micro-batch rewrites the same alert.
     """
     earliest = Window.partitionBy("alert_id").orderBy("event_time", "event_id")
     return (
