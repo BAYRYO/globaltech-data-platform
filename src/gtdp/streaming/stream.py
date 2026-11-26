@@ -2,32 +2,38 @@
 
 Each output is its own query with its own checkpoint directory: ``aggregates`` and ``alerts`` in
 gold, ``rejects`` in the streaming area. A ``foreachBatch`` sink writes micro-batch ``n`` to the
-partition ``batch_id=n`` with ``write_partitions``, which replaces that partition: Spark replays an
-uncommitted batch with the same id and the same files after a restart, so the replay overwrites
-the partial result instead of adding to it (ADR-0008). The alerts sink writes the first breach
-of each window that no earlier micro-batch alerted.
+partitions ``<date>=<d>/batch_id=n`` with ``write_partitions``, which replaces them: Spark replays
+an uncommitted batch with the same id and the same files after a restart, so the replay
+overwrites the partial result instead of adding to it (ADR-0008). The alerts sink writes the
+first breach of each window that no earlier micro-batch alerted.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date
+from types import MappingProxyType
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.streaming import StreamingQuery
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from gtdp.config import LakePaths, StreamingSettings
-from gtdp.io import read_table, write_partitions
+from gtdp.io import list_partition_values, read_table, write_partitions
 from gtdp.streaming.sensors import (
     AGGREGATES_SCHEMA,
     ALERTS_SCHEMA,
+    ARRIVAL_DATE,
     BATCH_ID,
     REJECTS_SCHEMA,
+    WINDOW_DATE,
     events,
     first_alerts,
     parse,
@@ -42,10 +48,6 @@ logger = logging.getLogger(__name__)
 FILE_PATTERN = "sensors_" + "[0-9]" * 8 + "T" + "[0-9]" * 6 + ".jsonl"
 """Files the stream reads in ``incoming``: ``sensors_<yyyyMMdd>T<HHmmss>.jsonl`` (data contract)."""
 AGGREGATES, ALERTS, REJECTS = "aggregates", "alerts", "rejects"
-SCHEMAS = {AGGREGATES: AGGREGATES_SCHEMA, ALERTS: ALERTS_SCHEMA, REJECTS: REJECTS_SCHEMA}
-_SHUFFLE_PARTITIONS = "spark.sql.shuffle.partitions"
-_STOP_GRACE_S = 60.0
-_WATERMARK_KEY = "spark.watermarkDelayMs"
 METRICS = (
     "batches",
     "input_rows",
@@ -53,6 +55,34 @@ METRICS = (
     "rows_dropped_by_watermark",
     "rows_deduplicated",
 )
+_SHUFFLE_PARTITIONS = "spark.sql.shuffle.partitions"
+_STOP_GRACE_S = 60.0
+_WATERMARK_KEY = "spark.watermarkDelayMs"
+_ALERTED_SCHEMA = StructType(
+    [StructField("alert_id", StringType()), StructField(BATCH_ID, IntegerType())]
+)
+
+
+@dataclass(frozen=True)
+class Output:
+    """The table a query writes, partitioned by ``date_column`` then ``batch_id``.
+
+    ``closes_with_watermark``: no row of a date arrives once the watermark passes its end.
+    """
+
+    schema: StructType
+    date_column: str
+    closes_with_watermark: bool
+
+
+OUTPUTS: Mapping[str, Output] = MappingProxyType(
+    {
+        AGGREGATES: Output(AGGREGATES_SCHEMA, WINDOW_DATE, closes_with_watermark=True),
+        ALERTS: Output(ALERTS_SCHEMA, WINDOW_DATE, closes_with_watermark=True),
+        REJECTS: Output(REJECTS_SCHEMA, ARRIVAL_DATE, closes_with_watermark=False),
+    }
+)
+SCHEMAS = MappingProxyType({name: output.schema for name, output in OUTPUTS.items()})
 
 
 @dataclass(frozen=True)
@@ -90,8 +120,8 @@ class Totals:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._counts = {name: dict.fromkeys(METRICS, 0) for name in SCHEMAS}
-        self._last_batch = dict.fromkeys(SCHEMAS, -1)
+        self._counts = {name: dict.fromkeys(METRICS, 0) for name in OUTPUTS}
+        self._last_batch = dict.fromkeys(OUTPUTS, -1)
 
     def add_written(self, query: str, rows: int) -> None:
         with self._lock:
@@ -138,7 +168,11 @@ def start_queries(
         spark.readStream.option("maxFilesPerTrigger", settings.max_files_per_trigger)
         .option("pathGlobFilter", FILE_PATTERN)
         .text(paths.incoming)
-        .select(F.col("value").alias("raw_line"), F.input_file_name().alias("source_file"))
+        .select(
+            F.col("value").alias("raw_line"),
+            F.input_file_name().alias("source_file"),
+            F.to_date("_metadata.file_modification_time").alias(ARRIVAL_DATE),
+        )
     )
     parsed = parse(lines, settings.future_tolerance_s)
     outputs = {
@@ -156,7 +190,7 @@ def start_queries(
             .outputMode("append")
             .trigger(**trigger)
             .option("checkpointLocation", paths.checkpoint(name))
-            .foreachBatch(_batch_writer(name, paths.tables[name], totals, _SELECT.get(name)))
+            .foreachBatch(_batch_writer(name, paths.tables[name], totals))
             .start()
             for name, output in outputs.items()
         }
@@ -168,31 +202,47 @@ def _new_alerts(batch: DataFrame, batch_id: int, table: str) -> DataFrame:
     """The first breach of each window of ``batch`` that no earlier micro-batch alerted.
 
     Batch ``n`` reads the alerts of batches below ``n`` only, so its replay finds the same ones.
+    It reads only the dates from its earliest window on: a breach is never older than the
+    watermark, and the housekeeping compacts only the dates that the watermark has passed.
     """
-    alerted = read_table(batch.sparkSession, table, ALERTS_SCHEMA)
-    return first_alerts(batch, alerted.where(F.col(BATCH_ID) < batch_id))
+    since: date | None = batch.agg(F.min(WINDOW_DATE)).first()[0]
+    if since is None:
+        return batch
+    dates = list_partition_values(batch.sparkSession, table, WINDOW_DATE)
+    alerted = [
+        read_table(batch.sparkSession, f"{table}/{WINDOW_DATE}={d}", _ALERTED_SCHEMA)
+        .where(F.col(BATCH_ID) < batch_id)
+        .select("alert_id")
+        for d in dates
+        if d >= since.isoformat()
+    ]
+    none = batch.sparkSession.createDataFrame([], _ALERTED_SCHEMA).select("alert_id")
+    return first_alerts(batch, functools.reduce(DataFrame.unionByName, alerted, none))
 
 
 _SELECT: dict[str, Callable[[DataFrame, int, str], DataFrame]] = {ALERTS: _new_alerts}
 """Rows of a micro-batch to write, for the queries that do not write the whole batch."""
 
 
-def _batch_writer(
-    query: str,
-    table: str,
-    totals: Totals,
-    select: Callable[[DataFrame, int, str], DataFrame] | None,
-) -> Callable[[DataFrame, int], None]:
+def _batch_writer(query: str, table: str, totals: Totals) -> Callable[[DataFrame, int], None]:
+    output, select = OUTPUTS[query], _SELECT.get(query)
+
     def write(batch: DataFrame, batch_id: int) -> None:
-        rows_of_batch = select(batch, batch_id, table) if select else batch
-        # Cached: the count and the write must not compute the stateful plan of the batch twice.
-        output = _as_table(rows_of_batch, query, batch_id).persist()
+        # Cached: the stateful plan of the batch must run once, whatever reads it afterwards.
+        batch.persist()
+        frame = None
         try:
-            rows = output.count()
+            selected = select(batch, batch_id, table) if select else batch
+            frame = _as_table(selected, output.schema, batch_id).persist()
+            dates = dict(frame.groupBy(output.date_column).count().collect())
+            rows = sum(dates.values())
             if rows:
-                write_partitions(output, table, {BATCH_ID: [str(batch_id)]})
+                partitions = {output.date_column: sorted(dates), BATCH_ID: [str(batch_id)]}
+                write_partitions(frame.coalesce(1), table, partitions)
         finally:
-            output.unpersist()
+            if frame is not None:
+                frame.unpersist()
+            batch.unpersist()
         totals.add_written(query, rows)
         if rows:
             logger.info(
@@ -203,15 +253,15 @@ def _batch_writer(
     return write
 
 
-def _as_table(batch: DataFrame, query: str, batch_id: int) -> DataFrame:
-    """The rows of ``batch`` with the columns, order and types of their table.
+def _as_table(batch: DataFrame, schema: StructType, batch_id: int) -> DataFrame:
+    """The rows of ``batch`` with the columns, order and types of ``schema``.
 
     The watermark column keeps the stream's watermark marker in its metadata through any alias
     or cast the optimizer can remove, and a table must not keep it: it is rebuilt from its
     microseconds instead.
     """
     columns = []
-    for column in SCHEMAS[query].fields:
+    for column in schema.fields:
         if column.name == BATCH_ID:
             value = F.lit(batch_id)
         elif _WATERMARK_KEY in batch.schema[column.name].metadata:
