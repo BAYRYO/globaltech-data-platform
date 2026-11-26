@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import itertools
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -30,23 +31,41 @@ def write_partitions(
 
     ``partitions`` maps each partition column, in directory order, to the values this run
     (re)produces, for example ``{"source": ["orders"], "ingestion_date": [date(2026, 1, 2)]}``.
-    Every named partition is deleted first, so one that ``df`` no longer has a row for does not
-    keep stale rows. ``df`` must only hold rows of the named partitions. Writing the same ``df``
-    again gives the same table (ADR-0002).
+    ``df`` is written in full to a staging directory of its own, the hidden sibling
+    ``_<name>.staging-<id>``. Only after that write succeeds is each named partition deleted and
+    replaced by its staged copy, so a failed write leaves the table as it was. A named partition
+    without rows becomes an empty directory holding a ``_SUCCESS`` marker: it still counts as
+    produced for ``ensure_no_later_partition``, and ``read_table`` reads it as empty. A row outside
+    the named partitions raises ``ValueError`` and publishes nothing. Writing the same ``df`` again
+    gives the same table (ADR-0002). A crash between the delete and the rename of a partition
+    leaves that partition missing until the day is replayed.
     """
-    if not partitions:
-        raise ValueError("write_partitions needs at least one partition column")
     spark = df.sparkSession
-    for values in itertools.product(*partitions.values()):
-        fs, directory = _filesystem(spark, f"{path}/{_partition_dir(spark, partitions, values)}")
-        fs.delete(directory, True)
-    # Set on the writer, not only in the session: static mode would wipe every other partition.
-    (
-        df.write.mode("overwrite")
-        .option("partitionOverwriteMode", "dynamic")
-        .partitionBy(*partitions)
-        .parquet(path)
-    )
+    named = [
+        _partition_dir(spark, partitions, values)
+        for values in itertools.product(*_value_lists(partitions))
+    ]
+    fs, target = _filesystem(spark, path)
+    staging = f"{target.getParent().toString()}/_{target.getName()}.staging-{uuid.uuid4().hex}"
+    try:
+        df.write.partitionBy(*partitions).parquet(staging)
+        staged = _partition_dirs(fs, _hadoop_path(spark, staging), len(partitions))
+        if stray := sorted(staged - set(named)):
+            raise ValueError(f"df has rows outside the partitions named for {path}: {stray}")
+        for directory in named:
+            source = _hadoop_path(spark, f"{staging}/{directory}")
+            if directory not in staged:
+                fs.mkdirs(source)
+                fs.create(_hadoop_path(spark, f"{staging}/{directory}/_SUCCESS")).close()
+            destination = _hadoop_path(spark, f"{path}/{directory}")
+            fs.delete(destination, True)
+            fs.mkdirs(destination.getParent())
+            if not fs.rename(source, destination):
+                raise OSError(f"could not rename {source} to {destination}")
+    finally:
+        fs.delete(_hadoop_path(spark, staging), True)
+    # A cached read of the table would keep serving the partitions that were just replaced.
+    spark.catalog.refreshByPath(path)
 
 
 def replace_table(df: DataFrame, path: str) -> None:
@@ -152,12 +171,42 @@ def _has_data_file(fs: Any, directory: Any) -> bool:
     return False
 
 
+def _value_lists(
+    partitions: Mapping[str, Sequence[PartitionValue]],
+) -> list[Sequence[PartitionValue]]:
+    """The value lists of ``partitions``; ``TypeError`` for values that name other directories."""
+    if not partitions:
+        raise ValueError("write_partitions needs at least one partition column")
+    for column, values in partitions.items():
+        if isinstance(values, str) or not isinstance(values, Sequence):
+            raise TypeError(f"partitions[{column!r}] must be a list of values, got {values!r}")
+        if datetimes := [value for value in values if isinstance(value, datetime)]:
+            raise TypeError(f"partitions[{column!r}] must hold dates, not datetimes: {datetimes}")
+    return list(partitions.values())
+
+
+def _partition_dirs(fs: Any, root: Any, depth: int) -> set[str]:
+    """The ``col1=v1/col2=v2`` directories found ``depth`` levels under ``root``."""
+    level: list[tuple[tuple[str, ...], Any]] = [((), root)]
+    for _ in range(depth):
+        level = [
+            ((*names, status.getPath().getName()), status.getPath())
+            for names, directory in level
+            for status in fs.listStatus(directory)
+            if status.isDirectory() and not status.getPath().getName().startswith(("_", "."))
+        ]
+    return {"/".join(names) for names, _ in level}
+
+
 def _catalog_utils(spark: SparkSession) -> Any:
     return spark.sparkContext._jvm.org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 
 
 def _filesystem(spark: SparkSession, path: str) -> tuple[Any, Any]:
     """The Hadoop FileSystem that owns ``path``, and ``path`` as a Hadoop Path (py4j objects)."""
-    context = spark.sparkContext
-    hadoop_path = context._jvm.org.apache.hadoop.fs.Path(path)
-    return hadoop_path.getFileSystem(context._jsc.hadoopConfiguration()), hadoop_path
+    hadoop_path = _hadoop_path(spark, path)
+    return hadoop_path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()), hadoop_path
+
+
+def _hadoop_path(spark: SparkSession, path: str) -> Any:
+    return spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
