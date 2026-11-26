@@ -3,7 +3,8 @@
 Every file holds one base reading per sensor. Anomalies are planned over the whole day: extra
 events (late, very late, duplicates) go to eligible files, damaged readings replace base ones,
 and one machine per site spikes for two minutes from minute 3, or earlier when the stream is
-too short to hold the whole spike.
+too short to hold the whole spike. Over its spike, a sensor reads nothing but values beyond its
+threshold: no other anomaly has an event time inside that span.
 """
 
 import json
@@ -36,8 +37,8 @@ class Metric:
     mean: float
     sigma: float
     decimals: int
-    spikes: tuple[tuple[float, float], ...]
-    """Value ranges beyond the alert threshold."""
+    spike_range: tuple[float, float]
+    """Values beyond the alert threshold, all on one side of it."""
 
     def normal(self, rng: random.Random) -> float:
         """Gaussian reading clipped to 3 sigma, which keeps it inside the alert thresholds."""
@@ -46,13 +47,13 @@ class Metric:
         return round(value, self.decimals)
 
     def spike(self, rng: random.Random) -> float:
-        return round(rng.uniform(*rng.choice(self.spikes)), self.decimals)
+        return round(rng.uniform(*self.spike_range), self.decimals)
 
 
 METRICS = (
-    Metric("TEMP", "temperature", "C", 60, 8, 1, ((86, 110),)),
-    Metric("VIB", "vibration", "mm/s", 3, 1, 2, ((7.5, 15),)),
-    Metric("PRES", "pressure", "bar", 6, 0.5, 2, ((2, 3.5), (8.5, 10))),
+    Metric("TEMP", "temperature", "C", 60, 8, 1, (86, 110)),
+    Metric("VIB", "vibration", "mm/s", 3, 1, 2, (7.5, 15)),
+    Metric("PRES", "pressure", "bar", 6, 0.5, 2, (8.5, 10)),
 )
 SENSORS = tuple(
     (site, f"{site}-M{machine:02d}", metric)
@@ -88,8 +89,13 @@ class DayPlan:
     """Codes of the extra events of each file."""
     damaged: list[dict[int, str]]
     """Per file, sensor index -> code of the damaged base reading."""
-    spiking: list[frozenset[int]]
-    """Per file, indexes of the sensors reading above threshold."""
+    spike_sensors: frozenset[int]
+    """One machine metric per site, beyond its threshold in every file of `spike_files`."""
+    spike_files: range
+
+    def spiking(self, ms: int) -> frozenset[int]:
+        """Indexes of the sensors reading beyond threshold `ms` milliseconds after midnight."""
+        return self.spike_sensors if ms // FILE_MS in self.spike_files else frozenset()
 
 
 def file_name(index: int) -> str:
@@ -109,11 +115,12 @@ def plan_day(rng: random.Random, n_files: int) -> DayPlan:
         )
         for site in SITES
     )
-    spiking = [
-        spike_sensors if spike_start <= index < spike_start + SPIKE_FILES else frozenset()
-        for index in range(n_files)
-    ]
-    plan = DayPlan([[] for _ in range(n_files)], [{} for _ in range(n_files)], spiking)
+    plan = DayPlan(
+        [[] for _ in range(n_files)],
+        [{} for _ in range(n_files)],
+        spike_sensors,
+        range(spike_start, spike_start + SPIKE_FILES),
+    )
     n_base = n_files * len(SENSORS)
     for anomaly in ANOMALIES:
         for _ in range(max(1, round(anomaly.rate * n_base))):
@@ -122,7 +129,10 @@ def plan_day(rng: random.Random, n_files: int) -> DayPlan:
                 continue
             while True:
                 index, sensor = divmod(rng.randrange(n_base), len(SENSORS))
-                if sensor not in spiking[index] and sensor not in plan.damaged[index]:
+                if (
+                    sensor not in plan.spiking(index * FILE_MS)
+                    and sensor not in plan.damaged[index]
+                ):
                     plan.damaged[index][sensor] = anomaly.code
                     break
     return plan
@@ -156,7 +166,7 @@ class SensorFile:
         base = []
         for sensor in range(len(SENSORS)):
             event_ms = self._start + rng.randrange(FILE_MS)
-            spiking = sensor in plan.spiking[index]
+            spiking = sensor in plan.spiking(self._start)
             code = "SPIKE" if spiking else plan.damaged[index].get(sensor)
             event = self.event(sensor, event_ms, event_ms + rng.randint(100, 1900), spiking)
             base.append((code, event))
@@ -171,7 +181,8 @@ class SensorFile:
             else:
                 event_ms = self._start - rng.randint(*LATENESS_MS[code])
                 emitted_ms = self._start + rng.randrange(FILE_MS)
-                extra = self.event(rng.randrange(len(SENSORS)), event_ms, emitted_ms, False)
+                calm = [s for s in range(len(SENSORS)) if s not in plan.spiking(event_ms)]
+                extra = self.event(rng.choice(calm), event_ms, emitted_ms, False)
             rows.insert(rng.randrange(len(rows) + 1), (code, extra))
         return rows
 
