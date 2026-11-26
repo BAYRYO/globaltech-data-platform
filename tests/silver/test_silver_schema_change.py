@@ -4,7 +4,7 @@ unknown extra column reported in the audit (ADR-0007)."""
 import pytest
 from pyspark.sql import functions as F
 
-from .lakes import DAYS, local
+from .lakes import DAYS
 
 pytestmark = pytest.mark.slow
 
@@ -45,19 +45,16 @@ def test_revenue_is_never_null_and_equals_quantity_times_price_before_j3(publish
 
 def test_an_unknown_column_is_reported_and_ignored(fresh_lake):
     lake = fresh_lake
-    landed = (
-        local(lake.cfg.paths.landing) / "orders" / f"ingestion_date={J3}" / "orders_20260103.csv"
+    lake.change_landed(
+        J3,
+        "orders",
+        lambda lines: [f"{lines[0]},coupon_code", *[f"{line},X" for line in lines[1:]]],
     )
-    header, *lines = landed.read_text(encoding="utf-8").splitlines()
-    landed.write_text("\n".join([f"{header},coupon_code", *[f"{line},X" for line in lines]]) + "\n")
-    lake.run("bronze", J3, "orders")
 
-    runs = [lake.run("silver", day, "orders") for day in DAYS]
+    runs = [lake.run("silver", day) for day in DAYS]
 
-    assert [run.metrics["unknown_columns"] for run in runs] == [
-        {"orders": []},
-        {"orders": []},
-        {"orders": ["coupon_code"]},
-    ]
+    assert [run.metrics["unknown_columns"]["orders"] for run in runs] == [[], [], ["coupon_code"]]
     assert "coupon_code" not in lake.table("orders").columns
-    assert runs[2].counters.rows_in == len(lines)
+    assert (
+        runs[2].metrics["sources"]["orders"]["rows_in"] == len(lake.landed_lines(J3, "orders")) - 1
+    )

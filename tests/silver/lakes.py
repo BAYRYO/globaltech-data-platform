@@ -1,7 +1,9 @@
 """A local lake of generated ``ci`` drops, and the jobs that fill it."""
 
+import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from datetime import date
 from pathlib import Path
@@ -48,6 +50,31 @@ class Lake:
 
     def manifest(self, day: str) -> dict:
         return json.loads((self.drops / day / "_MANIFEST.json").read_text())
+
+    def change_landed(
+        self, day: str, source: str, change: Callable[[list[str]], list[str]]
+    ) -> None:
+        """Replace the lines of the landed file of ``source`` for ``day`` (its header included)
+        with ``change(lines)``, update its manifest entry, and ingest it in bronze again."""
+        landing = local(self.cfg.paths.landing)
+        manifest_file = landing / "_manifests" / f"ingestion_date={day}" / "_MANIFEST.json"
+        manifest = json.loads(manifest_file.read_text())
+        (entry,) = [entry for entry in manifest["files"] if entry["source"] == source]
+        landed = landing / source / f"ingestion_date={day}" / entry["path"].split("/")[1]
+        lines = change(landed.read_text(encoding="utf-8").splitlines())
+        data = "".join(f"{line}\n" for line in lines).encode()
+        landed.write_bytes(data)
+        header = 0 if source == "weblogs" else 1
+        entry.update(rows=len(lines) - header, sha256=hashlib.sha256(data).hexdigest())
+        manifest_file.write_text(json.dumps(manifest))
+        self.run("bronze", day, source)
+
+    def append_lines(self, day: str, source: str, lines: list[str]) -> None:
+        self.change_landed(day, source, lambda landed: [*landed, *lines])
+
+    def landed_lines(self, day: str, source: str) -> list[str]:
+        (path,) = (local(self.cfg.paths.landing) / source / f"ingestion_date={day}").iterdir()
+        return path.read_text(encoding="utf-8").splitlines()
 
     def run(self, job: str, day: str, source: str | None = None, *, force: bool = False) -> Run:
         """Run a registered job inside its audited run, as run.py does."""
