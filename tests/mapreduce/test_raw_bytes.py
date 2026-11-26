@@ -1,8 +1,9 @@
-"""Both engines read raw bytes as Hadoop's line reader does, beyond what the data contract promises.
+"""Both engines agree on raw bytes beyond what the data contract promises.
 
 Hadoop Streaming and Spark both split files with Hadoop's LineRecordReader: a line ends with LF,
 CR LF or a lone CR, and a UTF-8 BOM at the start of a file is dropped. The local pipe must give the
-mapper the same lines, one orders file per mapper as one split per map task.
+mapper the same lines, one orders file per mapper as one split per map task. A region whose
+country prefix holds an ASCII control character gives the country UNKNOWN in both engines.
 """
 
 import subprocess
@@ -77,6 +78,21 @@ CASES = {
         [ORDERS_HEADER + order(end=b""), ORDERS_HEADER + order(b"C2")],
         [CUSTOMERS.removesuffix(b"\n")],
         (["DE\t21.00\t1", "FR\t21.00\t1"], {"Lines.HEADER": 2, "Lines.COMPLETED": 2}),
+    ),
+    "control characters in a country": (
+        [ORDERS_HEADER + b"".join(order(cid) for cid in (b"C1", b"C2", b"C3", b"C4", b"C5"))],
+        [
+            CUSTOMERS_HEADER
+            + customer(b"C1", b"F\tR-IDF")
+            + customer(b"C2", b"A\x01-1")
+            + customer(b"C3", b"A-1")
+            + customer(b"C4", b"F\x7fR-1")
+            + customer(b"C5", b"FR-\t1")
+        ],
+        (
+            ["A\t21.00\t1", "FR\t21.00\t1", "UNKNOWN\t63.00\t3"],
+            {"Lines.HEADER": 1, "Lines.COMPLETED": 5},
+        ),
     ),
 }
 """Order files, customer files, and the (revenue, counters) both engines must give."""

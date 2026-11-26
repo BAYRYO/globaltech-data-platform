@@ -37,6 +37,7 @@ QUANTITY_FORMAT = r"\A[1-9][0-9]{0,8}\z"
 PRICE_FORMAT = r"\A[0-9]{1,8}(\.[0-9]{1,2})?\z"
 TIMESTAMP_FORMAT = r"\A[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\z"
 DISCOUNT_FORMAT = r"\A0\.[0-9]{3}\z"
+CONTROL_CHARACTER = r"[\x00-\x1f\x7f]"
 HEADER, INVALID, COMPLETED, OTHER_STATUS = "HEADER", "INVALID", "COMPLETED", "OTHER_STATUS"
 
 
@@ -81,8 +82,8 @@ def customer_countries(lines: DataFrame) -> DataFrame:
     """``customer_id``, ``country`` from raw customer lines (column ``value``) of any files.
 
     A customer's row is the one with the greatest (updated_at, region); its country is the region
-    prefix before ``-``, or UNKNOWN when that prefix is empty. Lines without 8 fields, the header
-    and empty ids are ignored.
+    prefix before ``-``, or UNKNOWN when that prefix is empty or holds an ASCII control character.
+    Lines without 8 fields, the header and empty ids are ignored.
     """
     fields = F.split("value", ",", -1)
     customer_id = F.get(fields, CUSTOMER_ID)
@@ -96,7 +97,10 @@ def customer_countries(lines: DataFrame) -> DataFrame:
     )
     prefix = F.substring_index("latest.region", "-", 1)
     return latest.select(
-        "customer_id", F.when(prefix == "", "UNKNOWN").otherwise(prefix).alias("country")
+        "customer_id",
+        F.when((prefix == "") | prefix.rlike(CONTROL_CHARACTER), "UNKNOWN")
+        .otherwise(prefix)
+        .alias("country"),
     )
 
 
