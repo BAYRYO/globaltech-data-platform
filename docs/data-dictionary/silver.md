@@ -6,7 +6,7 @@ table de rejets par source. L'exploitation (exécution, rejeu, vérification) es
 [runbook silver](../runbook/silver.md). Les règles viennent du
 [modèle de données](../data-model.md#règles-de-qualité-et-disposition).
 
-| Table | Chemin | Clé (unicité vérifiée après écriture) | Partition | Écriture |
+| Table | Chemin | Clé (unicité vérifiée avant et après écriture) | Partition | Écriture |
 | --- | --- | --- | --- | --- |
 | `orders` | `silver/orders` | `transaction_id` | `ingestion_date` | partition du jour remplacée (`write_partitions`) |
 | `customers` | `silver/customers` | `customer_id` | aucune | table reconstruite depuis bronze jusqu'au jour, échangée (`replace_table`) |
@@ -18,6 +18,15 @@ Les schémas explicites (`StructType`) sont `SILVER_ORDERS`, `SILVER_CUSTOMERS`,
 `SILVER_PRODUCTS_SCD2`, `SILVER_WEBLOGS` et `SILVER_REJECTS` dans `src/gtdp/schemas.py`. Les
 exemples sont des lignes du profil `dev` (graine 42) publiées sur le cluster.
 
+## Jours complets
+
+`silver/_days/ingestion_date=D/` tient un marqueur par source publiée et vérifiée pour `D`
+(`<source>.json` : `run_id`, `published_at`), puis `_SUCCESS` quand les quatre sources le sont
+(`gtdp.silver.days`). Un jour sans `_SUCCESS` est en cours, échoué, ou rendu incomplet par le
+rejeu d'un jour antérieur ou d'une source dont il dépend. Les doublons inter-jours ne regardent
+que les jours complets ; un lecteur qui doit voir des jours entiers ne lit des tables
+partitionnées que les partitions de `complete_days(spark, silver)`.
+
 ## Disposition d'une ligne bronze
 
 Chaque ligne bronze d'un jour reçoit exactement une disposition, évaluée dans cet ordre
@@ -27,8 +36,8 @@ Chaque ligne bronze d'un jour reçoit exactement une disposition, évaluée dans
 | --- | --- | --- |
 | `duplicated.exact` | même `_record_hash` qu'une autre ligne du jour, sauf la première | écartée, comptée |
 | `rejected` | au moins un code dans `reject_reasons` | `silver/rejects/<source>` |
-| `duplicated.key` | même clé qu'une autre ligne retenue du jour ; la survivante est celle du plus petit `_record_hash` | écartée, comptée |
-| `duplicated.cross_day` | clé déjà publiée dans une partition silver antérieure au jour (commandes, [ADR-0005](../adr/0005-silver-incremental.md)) | écartée, comptée |
+| `duplicated.key` | même clé qu'une autre ligne retenue du jour ; la survivante est celle du plus petit `_record_hash`. Une ligne dont une colonne de la clé est nulle n'est jamais un doublon de clé | écartée, comptée |
+| `duplicated.cross_day` | clé déjà publiée par un jour complet antérieur (`transaction_id` des commandes, `log_id` des logs, [ADR-0005](../adr/0005-silver-incremental.md)) | écartée, comptée |
 | `clean` | aucune des précédentes, drapeaux compris | table silver |
 
 Identité vérifiée à chaque exécution : `lignes bronze du jour = clean + rejected + duplicated`.
@@ -57,14 +66,13 @@ contrôlé avant la conversion : une conversion seule accepterait `1.5` comme en
 | --- | --- | --- | --- |
 | `transaction_id` | string | Texte bronze. Clé : unique sur toute la table, une commande renvoyée un autre jour reste dans la partition de sa première arrivée. | `T000992703` |
 | `event_time` | timestamp | Horodatage ISO du fichier, UTC. | `2026-01-02 23:46:37` |
-| `customer_id` | string | Identifiant présent dans bronze `customers` jusqu'au jour, ligne rejetée comprise. | `C003781` |
-| `product_id` | string | Identifiant présent dans bronze `products` jusqu'au jour. | `P00113` |
+| `customer_id` | string | Identifiant d'une ligne de `silver/customers` publiée pour le jour. | `C003781` |
+| `product_id` | string | Identifiant d'au moins une version de `silver/products_scd2` publiée pour le jour : toute commande trouve exactement un prix. | `P00113` |
 | `quantity` | int | Entier strictement positif. | `3` |
 | `unit_price_eur` | decimal(10,2) | Prix facturé sur la ligne, strictement positif. | `1061.33` |
 | `channel` | string | `web`, `store` ou `partner`. | `web` |
 | `status` | string | `COMPLETED`, `CANCELLED` ou `RETURNED`. | `COMPLETED` |
 | `discount_pct` | decimal(4,3) | `0.000` quand la colonne est absente (J1, J2) ou vide (doublon renvoyé dans J3), sinon la valeur du fichier dans `[0 ; 0,30]` ([ADR-0007](../adr/0007-evolution-schema.md)). Jamais nulle. | `0.000` |
-| `_record_hash` | string | `_record_hash` de la ligne bronze : relie la ligne à son origine. | `f13c7f16…93164c1` |
 | `ingestion_date` | date | Partition : jour de première arrivée de la commande. | `2026-01-03` |
 
 Règles de rejet (`src/gtdp/silver/orders.py`), une ligne pouvant en cumuler plusieurs :
@@ -73,8 +81,8 @@ Règles de rejet (`src/gtdp/silver/orders.py`), une ligne pouvant en cumuler plu
 | --- | --- | --- |
 | `MISSING_KEY` | `transaction_id` vide (règle défensive, rien d'injecté) | — |
 | `NULL_CUSTOMER` | `customer_id` vide ou fait d'espaces | `NULL_CUSTOMER` |
-| `UNKNOWN_CUSTOMER` | `customer_id` non vide absent des identifiants clients vus en bronze jusqu'au jour | `UNKNOWN_CUSTOMER` |
-| `UNKNOWN_PRODUCT` | `product_id` absent des identifiants produits vus en bronze jusqu'au jour | `UNKNOWN_PRODUCT` |
+| `UNKNOWN_CUSTOMER` | `customer_id` non vide sans ligne dans `silver/customers` publiée pour le jour, client vu seulement dans une fiche rejetée compris | `UNKNOWN_CUSTOMER` |
+| `UNKNOWN_PRODUCT` | `product_id` sans version dans `silver/products_scd2` publiée pour le jour, produit vu seulement dans des lignes rejetées compris | `UNKNOWN_PRODUCT` |
 | `BAD_QUANTITY` | quantité non entière, nulle ou négative | `BAD_QUANTITY` |
 | `BAD_PRICE` | prix non décimal, nul ou négatif | `BAD_PRICE` |
 | `BAD_TIMESTAMP` | `event_time` hors format | `BAD_TIMESTAMP` |
@@ -86,10 +94,17 @@ Règles de rejet (`src/gtdp/silver/orders.py`), une ligne pouvant en cumuler plu
 Doublons : `DUPLICATE_EXACT` du manifeste → `duplicated.exact`, `DUPLICATE_CROSS_DAY` →
 `duplicated.cross_day`. Le contrat n'injecte pas de doublon de clé dans un même dépôt.
 
+Les commandes de `D` sont contrôlées contre les dimensions publiées pour `D` : le job traite
+`customers` et `products` avant `orders`, refuse `--source orders` tant qu'elles ne sont pas
+publiées pour `D`, et rend `orders` à refaire quand l'une d'elles est rejouée. Sur les données du
+contrat, les comptes `UNKNOWN_CUSTOMER` et `UNKNOWN_PRODUCT` restent ceux du manifeste : aucun
+client ni produit n'y existe seulement dans des lignes rejetées.
+
 ## `customers`
 
 Type SCD 1 : par `customer_id`, la ligne propre de plus grand `updated_at` parmi tous les jours
-jusqu'à `D` (à égalité, le jour le plus récent).
+jusqu'à `D`. Une ligne sans `updated_at` lisible ne l'emporte que si le client n'en a pas
+d'autre ; à égalité, le jour le plus récent, puis le plus petit `_record_hash`, départagent.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -99,12 +114,12 @@ jusqu'à `D` (à égalité, le jour le plus récent).
 | `country` | string | Préfixe de la région avant `-`, `UNKNOWN` si la région est vide. | `FR` |
 | `segment` | string | Texte du fichier. | `MID` |
 | `signup_date` | date | Date ISO, sinon relue au format `dd/MM/yyyy`, sinon nulle. | `2022-10-13` |
-| `updated_at` | timestamp | Horodatage ISO de la fiche. | `2026-01-02 03:01:42` |
+| `updated_at` | timestamp | Horodatage ISO de la fiche, nul s'il est illisible (drapeau `BAD_UPDATED_AT`). | `2026-01-02 03:01:42` |
 | `quality_flags` | array<string> | Drapeaux de la fiche retenue, vide si aucun. | `[FUTURE_SIGNUP]` |
-| `_record_hash` | string | Ligne bronze de la version retenue. | `f72f7bd4…2316e59` |
 | `ingestion_date` | date | Jour où la version retenue est arrivée (colonne simple). | `2026-01-03` |
 
-`full_name`, `phone` et l'email en clair ne sont pas écrits.
+`full_name`, `phone`, l'email en clair et le `_record_hash` de la ligne bronze ne sont pas
+écrits : un hachage non salé de la ligne confirmerait un nom, un email et un téléphone devinés.
 
 | Code | Action | Condition | Code du manifeste |
 | --- | --- | --- | --- |
@@ -115,10 +130,12 @@ jusqu'à `D` (à égalité, le jour le plus récent).
 | `MISSING_REGION` | drapeau | région vide ; `country = UNKNOWN` | `MISSING_REGION` |
 | `BAD_DATE` | drapeau | `signup_date` hors format ISO | `BAD_DATE` |
 | `FUTURE_SIGNUP` | drapeau | `signup_date > ingestion_date` (incohérence connue du kit, 688 clients en J1) | — |
+| `BAD_UPDATED_AT` | drapeau | `updated_at` vide ou hors format ISO ; la fiche est gardée, dernière dans le choix SCD 1 | — |
 
 Doublons : `DUPLICATE_EXACT` → `duplicated.exact` ; `DUPLICATE_KEY` → `duplicated.key`, clé
 (`customer_id`, `updated_at`) : la fiche est répétée avec son email en majuscules ou entouré
-d'espaces, donc identique une fois l'email normalisé.
+d'espaces, donc identique une fois l'email normalisé. Deux fiches sans `updated_at` lisible ne
+sont jamais doublons de clé l'une de l'autre.
 
 ## `products_scd2`
 
@@ -143,7 +160,7 @@ bronze jusqu'à `D`. Une ligne ne crée une version que si `product_name`, `cate
 
 Le prix applicable à une commande est celui de la version telle que
 `valid_from <= event_time < valid_to` (`gtdp.silver.products.with_applicable_price`). La
-version 1 valant depuis 1900, toute commande trouve exactement une version. Contrôles après
+version 1 valant depuis 1900, toute commande trouve exactement une version. Contrôles avant et après
 écriture, chacun à zéro ligne : clé (`product_id`, `valid_from`) unique, intervalle non vide,
 ni recouvrement ni trou entre deux versions, `is_current` vrai pour la seule version ouverte,
 version 1 depuis 1900.
@@ -165,18 +182,20 @@ Exemple, historique de `P00042` après J3 : version 1 à 504,06 € (`Security`)
 ## `weblogs`
 
 Lignes au *Combined Log Format* découpées par `regexp_extract` (aucune UDF) avec
-`COMBINED_LOG` de `src/gtdp/silver/weblogs.py`.
+`COMBINED_LOG` de `src/gtdp/silver/weblogs.py`. Sont acceptés un client IPv4 ou IPv6, un
+champ entre guillemets contenant un guillemet ou une barre oblique inverse échappés (gardés
+tels quels) et la requête `"-"` d'une connexion fermée avant toute requête.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `log_id` | string | `_record_hash` de la ligne, clé. | `02d79d91…3116f5c13` |
-| `event_ts` | timestamp | `[dd/MMM/yyyy:HH:mm:ss Z]` converti en UTC. | `2026-01-02 00:09:30` |
-| `ip_hash` | string | `sha2(sel ‖ adresse IP, 256)` en hexadécimal. | `0b645cb3…d025c738` |
-| `ip_prefix` | string | Réseau `/24` de l'adresse, pour la géographie grossière. | `198.18.139.0/24` |
+| `log_id` | string | `sha2(sel ‖ ligne brute, 256)` en hexadécimal, clé. Salé : un hachage non salé de la ligne, recalculé depuis les autres colonnes et les 256 adresses du `/24`, redonnait l'adresse. | `24eff5ba…7e51ab063` |
+| `event_ts` | timestamp | `[dd/MMM/yyyy:HH:mm:ss Z]` converti en UTC : jour, mois (`Jan` à `Dec`), heure et décalage contrôlés, puis conversion d'un texte ISO-8601. | `2026-01-02 00:09:30` |
+| `ip_hash` | string | `sha2(sel ‖ lower(adresse IP), 256)` en hexadécimal. | `0b645cb3…d025c738` |
+| `ip_prefix` | string | Réseau `/24` d'une adresse IPv4, `/48` d'une IPv6 (trois premiers groupes, `::` développé), pour la géographie grossière. | `198.18.139.0/24`, `2001:db8:0::/48` |
 | `customer_id` | string | Champ utilisateur, nul pour `-`. | `C000096` |
-| `method` | string | Méthode HTTP. | `POST` |
-| `path` | string | Chemin demandé, requête comprise. | `/cart/add?product=P00968` |
-| `protocol` | string | `HTTP/x.y`. | `HTTP/1.1` |
+| `method` | string | Méthode HTTP, nulle pour la requête `"-"`. | `POST` |
+| `path` | string | Chemin demandé, requête comprise, nul pour `"-"`. | `/cart/add?product=P00968` |
+| `protocol` | string | `HTTP/x.y`, nul pour `"-"`. | `HTTP/1.1` |
 | `http_status` | int | Code de réponse. Les 404 et 500 sont des lignes valides, conservées. | `200` |
 | `bytes_sent` | bigint | Taille de la réponse, nulle pour `-`. | `8497` |
 | `referer` | string | Nul pour `-`. | `NULL` |
@@ -188,10 +207,11 @@ Lignes au *Combined Log Format* découpées par `regexp_extract` (aucune UDF) av
 
 | Code | Condition | Code du manifeste |
 | --- | --- | --- |
-| `MALFORMED_LINE` | ligne hors de l'expression du Combined Log Format, ou horodatage impossible (`31/Feb/2026`) | `MALFORMED_LINE` |
+| `MALFORMED_LINE` | ligne hors de l'expression du Combined Log Format, ou horodatage hors format ou impossible (`1/Jan/2026:…`, `31/Feb/2026`, décalage `+2500`) : la ligne est rejetée, le jour publié | `MALFORMED_LINE` |
 
-`HTTP_404` et `HTTP_500` du manifeste sont conservés. Doublons : même `_record_hash`
-(`duplicated.exact`), rien d'injecté.
+`HTTP_404` et `HTTP_500` du manifeste sont conservés. Doublons : même ligne dans le dépôt
+(`duplicated.exact`), ligne déjà publiée par un jour complet antérieur
+(`duplicated.cross_day`) ; rien d'injecté.
 
 ## Rejets (`silver/rejects/<source>`)
 
@@ -216,16 +236,44 @@ l'ACL `group:analysts:---`, héritée par chaque partition. Un job ne supprime j
 | `email` | `email_hash = sha2(sel ‖ lower(trim(email)), 256)` | compte les clients distincts et permet les jointures sans exposer l'adresse ; la normalisation rend le même hash aux variantes de casse et d'espaces |
 | `full_name`, `phone` | supprimés | aucun usage analytique |
 | `customer_id` | conservé | identifiant interne, non identifiant hors du SI |
-| adresse IP | `ip_hash` salé, `ip_prefix` `/24` | l'IP est une donnée personnelle (RGPD) ; le `/24` suffit à la géographie grossière (troisième octet par pays) |
+| adresse IP | `ip_hash` salé, `ip_prefix` `/24` (IPv4) ou `/48` (IPv6) | l'IP est une donnée personnelle (RGPD) ; le préfixe suffit à la géographie grossière (troisième octet par pays) |
+| ligne de log | `log_id` salé | sans sel, le hachage de la ligne redonnait l'adresse |
+| ligne bronze d'un client ou d'une commande | `_record_hash` non publié | sans sel, il confirmait une identité devinée |
 
 Le sel vient du seul `GTDP_PSEUDO_SALT` ([ADR-0004](../adr/0004-pseudonymisation.md)). Il
 entre dans le calcul comme une donnée : un DataFrame d'une ligne, diffusé et joint
 (`gtdp.silver.pseudonymize`). Les plans ne montrent que le nom de colonne `_salt`. Les tests
 vérifient son absence des plans `explain` (modes `extended`, `formatted`, `cost`, `codegen`) et
-de l'event log d'une exécution réelle. Sur le cluster, les plans servis par le History Server
-pour les exécutions J1 à J3 nomment `_salt` 18 fois et ne contiennent pas sa valeur. Sans le
+de l'event log d'une exécution réelle. Sur le cluster, ce que sert le History Server pour les
+exécutions J1 à J3 (plans, environnement, jobs, étapes) nomme `_salt` 205 fois par exécution et
+ne contient pas sa valeur. Sans le
 sel, retrouver un email demande une attaque par dictionnaire sur un espace inconnu. Avec le
 sel, la correspondance reste calculable : la donnée est pseudonymisée, non anonymisée.
+
+Règle : aucune colonne silver lisible par les analystes n'est une fonction non salée d'une
+valeur personnelle ou d'une ligne qui en contient. Les tests le vérifient : aucune valeur de
+`orders`, `customers` ou `weblogs` n'est le SHA-256 d'une ligne bronze, et l'attaque par les 256
+adresses du `/24` ne retrouve aucune IP. `products_scd2` garde `_record_hash` : une ligne
+produit ne contient aucune donnée personnelle.
+
+Sel : sur le cluster, le job refuse un sel vide, de moins de 16 caractères ou égal au sel de
+développement du dépôt. La première exécution écrit l'empreinte
+`sha256("gtdp-salt-fingerprint" ‖ sel)` dans `<ops>/pseudonymization/salt_fingerprint.json` ;
+une exécution avec un autre sel est refusée avant toute écriture. Changer de sel impose de
+reconstruire silver ([runbook](../runbook/silver.md#changer-le-sel)).
+
+Risque résiduel, accepté par l'[ADR-0004](../adr/0004-pseudonymisation.md) :
+
+| Colonnes | Risque | Pourquoi il est accepté |
+| --- | --- | --- |
+| `ip_hash`, `email_hash` | relier les lignes d'une même adresse ou d'un même client entre tables et jours | c'est l'usage prévu (visiteurs et clients distincts) ; inverser un hachage demande le sel |
+| `ip_prefix` | localiser un visiteur à 256 adresses près (IPv4) ou à un `/48` (IPv6) | géographie grossière ; sans le sel, aucune colonne ne permet de tester les 256 candidates |
+| `customer_id` des logs et des commandes | relier navigation et achats d'un client | identifiant interne, conservé par le modèle ; il ne nomme personne hors du SI |
+| `user_agent`, `event_ts`, `path` | empreinte de navigateur, horaires, termes de recherche (`/search?q=…`) | les agents du jeu de données se réduisent à trois appareils ; sur des données réelles, tronquer l'agent et la requête de `path` serait la mesure suivante |
+| `region`, `segment`, `signup_date`, `updated_at` des clients | quasi-identifiants combinés | nécessaires aux indicateurs ; ni nom, ni email, ni téléphone |
+
+Les rejets gardent les lignes brutes, données personnelles comprises : l'ACL
+`group:analysts:---` les ferme aux analystes.
 
 ## Changement de schéma (J3) et colonnes inconnues
 
