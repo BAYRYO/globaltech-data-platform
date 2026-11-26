@@ -1,0 +1,16 @@
+# Local environment: Spark in local mode on the developer machine or in the test container.
+# Relative paths resolve against the repository root (the parent of conf/).
+
+[spark]
+# Only the local environment sets a master. On the cluster spark-submit passes --master yarn.
+master = "local[*]"
+shuffle_partitions = 4
+
+[paths]
+landing = "data/lake/landing"
+bronze = "data/lake/bronze"
+silver = "data/lake/silver"
+gold = "data/lake/gold"
+streaming = "data/lake/streaming"
+ops = "data/lake/ops"
+checkpoints = "data/lake/streaming/sensors/checkpoints"
