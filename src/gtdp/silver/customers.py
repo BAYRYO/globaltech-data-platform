@@ -10,9 +10,9 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
 from gtdp.io import INGESTION_DATE
-from gtdp.schemas import QUALITY_FLAGS, RECORD_HASH, SILVER_CUSTOMERS, SOURCES
+from gtdp.schemas import RECORD_HASH, SILVER_CUSTOMERS, SOURCES
 from gtdp.silver.parse import blank, day_first_date, iso_date, timestamp
-from gtdp.silver.pseudonymize import with_salted_hashes
+from gtdp.silver.pseudonymize import salted
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$"
@@ -29,7 +29,8 @@ def _columns() -> dict[str, Column]:
     signup = raw("signup_date")
     return {
         "customer_id": raw("customer_id"),
-        "email": _email(),
+        # A missing or malformed email has no hash: its flag says why.
+        "email_hash": F.when(_email().rlike(EMAIL_PATTERN), salted(_email())),
         "region": F.when(~blank(region), region),
         "country": F.when(blank(region), F.lit(UNKNOWN_COUNTRY)).otherwise(
             F.substring_index(region, "-", 1)
@@ -56,15 +57,11 @@ ENTITY = Entity(
 )
 
 
-def table(clean: DataFrame, salt: DataFrame) -> DataFrame:
-    """The latest clean record of each ``customer_id``, its email hashed, its name and phone
-    dropped. A flagged email has no hash."""
+def table(clean: DataFrame) -> DataFrame:
+    """The latest clean record of each ``customer_id``: its email hashed, its name and phone
+    dropped."""
     latest = Window.partitionBy("customer_id").orderBy(
         F.col("updated_at").desc(), F.col(INGESTION_DATE).desc(), F.col(RECORD_HASH)
     )
     current = clean.withColumn("_rank", F.row_number().over(latest)).where(F.col("_rank") == 1)
-    usable = ~F.array_contains(QUALITY_FLAGS, "MISSING_EMAIL") & ~F.array_contains(
-        QUALITY_FLAGS, "BAD_EMAIL"
-    )
-    hashed = with_salted_hashes(current, salt, {"email_hash": F.when(usable, F.col("email"))})
-    return conform(hashed, SILVER_CUSTOMERS)
+    return conform(current, SILVER_CUSTOMERS)

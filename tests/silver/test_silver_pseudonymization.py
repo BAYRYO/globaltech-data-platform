@@ -62,8 +62,8 @@ def test_a_flagged_email_has_no_hash(published):
 
 def test_weblogs_keep_a_salted_ip_hash_and_the_slash_24_network(published):
     lines = {
-        row._record_hash: row.value.split(" ", 1)[0]
-        for row in bronze_rows(published, "weblogs").select("_record_hash", "value").collect()
+        salted(row.value): row.value.split(" ", 1)[0]
+        for row in bronze_rows(published, "weblogs").select("value").collect()
     }
     weblogs = published.table("weblogs").where(F.col("ingestion_date") == J1).limit(50)
 
@@ -72,6 +72,50 @@ def test_weblogs_keep_a_salted_ip_hash_and_the_slash_24_network(published):
         ip = lines[row.log_id]
         assert row.ip_hash == salted(ip)
         assert row.ip_prefix == ip.rsplit(".", 1)[0] + ".0/24"
+
+
+@pytest.mark.parametrize("source", ["orders", "customers", "weblogs"])
+def test_no_silver_value_is_the_unsalted_hash_of_a_bronze_line(published, source):
+    bronze = read_table(
+        published.spark, f"{published.cfg.paths.bronze}/{source}", bronze_schema(SOURCES[source])
+    )
+    lines = {row._record_hash for row in bronze.select("_record_hash").collect()}
+    table = published.table(source)
+    strings = [f.name for f in table.schema.fields if f.dataType.simpleString() == "string"]
+    values = {value for row in table.select(*strings).collect() for value in row}
+
+    assert values.isdisjoint(lines)
+
+
+def test_an_ip_cannot_be_recovered_from_silver_without_the_salt(published):
+    weblogs = published.table("weblogs")
+    dash = lambda column: F.coalesce(F.col(column).cast("string"), F.lit("-"))  # noqa: E731
+    network = F.regexp_replace("ip_prefix", r"\.0/24$", "")
+    guesses = weblogs.withColumn("octet", F.explode(F.sequence(F.lit(0), F.lit(255)))).withColumn(
+        "ip", F.concat_ws(".", network, F.col("octet").cast("string"))
+    )
+    line = F.concat(
+        F.col("ip"),
+        F.lit(" - "),
+        dash("customer_id"),
+        F.lit(" ["),
+        F.date_format("event_ts", "dd/MMM/yyyy:HH:mm:ss Z"),
+        F.lit('] "'),
+        F.concat_ws(" ", "method", "path", "protocol"),
+        F.lit('" '),
+        F.col("http_status").cast("string"),
+        F.lit(" "),
+        dash("bytes_sent"),
+        F.lit(' "'),
+        dash("referer"),
+        F.lit('" "'),
+        F.col("user_agent"),
+        F.lit('"'),
+    )
+    oracle = (F.sha2(line, 256) == F.col("log_id")) | (F.sha2("ip", 256) == F.col("ip_hash"))
+
+    assert weblogs.count() > 0
+    assert guesses.where(oracle).select("log_id").distinct().count() == 0
 
 
 def plans(frame) -> str:
@@ -87,9 +131,9 @@ def plans(frame) -> str:
 @pytest.mark.parametrize("source", ["customers", "weblogs"])
 def test_the_salt_is_absent_from_the_plans(published, source):
     pipeline = PIPELINES[source]
-    records = classified(published.spark, published.cfg.paths, source, date.fromisoformat(J1))
-    clean = records.where(F.col(DISPOSITION) == "clean")
-    rows = pipeline.build(clean, salt_frame(published.spark, published.cfg.pseudonymization.salt))
+    salt = salt_frame(published.spark, published.cfg.pseudonymization.salt)
+    records = classified(published.spark, published.cfg.paths, source, date.fromisoformat(J1), salt)
+    rows = pipeline.build(records.where(F.col(DISPOSITION) == "clean"))
 
     printed = plans(rows)
 

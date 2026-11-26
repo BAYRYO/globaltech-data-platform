@@ -21,7 +21,7 @@ def versions(spark, records):
         "product_id string, product_name string, category string, unit_price_eur decimal(10,2),"
         " updated_at timestamp, ingestion_date date, _record_hash string",
     )
-    return table(frame, salt=None).orderBy("product_id", "version").collect()
+    return table(frame).orderBy("product_id", "version").collect()
 
 
 def test_a_new_version_starts_only_when_an_attribute_changes(spark):

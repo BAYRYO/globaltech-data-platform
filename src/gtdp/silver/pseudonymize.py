@@ -3,11 +3,12 @@
 A ``lit(salt)`` prints the salt in ``explain`` and in the event log that the History Server
 serves. The salt therefore enters the computation as data: a one-row DataFrame, broadcast and
 joined, whose plans show the column name only.
+
+Every silver column computed from a value holding personal data is salted, the raw log line
+included: an unsalted hash of a line rebuilt from the other columns would give the IP back.
 """
 
 from __future__ import annotations
-
-from collections.abc import Mapping
 
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -24,13 +25,11 @@ def salt_frame(spark: SparkSession, salt: Secret) -> DataFrame:
     )
 
 
-def with_salted_hashes(
-    frame: DataFrame, salt: DataFrame, values: Mapping[str, Column]
-) -> DataFrame:
-    """``frame`` plus a column per entry of ``values``: ``sha2(salt || value, 256)`` as hex,
-    null where the value is null."""
-    salted = frame.crossJoin(F.broadcast(salt))
-    hashes = [
-        F.sha2(F.concat(F.col(SALT), value), 256).alias(name) for name, value in values.items()
-    ]
-    return salted.select(*[F.col(column) for column in frame.columns], *hashes)
+def with_salt(frame: DataFrame, salt: DataFrame) -> DataFrame:
+    """``frame`` plus the ``_salt`` column that ``salted`` reads."""
+    return frame.crossJoin(F.broadcast(salt))
+
+
+def salted(value: Column) -> Column:
+    """``sha2(salt || value, 256)`` as hex, null where ``value`` is null."""
+    return F.sha2(F.concat(F.col(SALT), value), 256)

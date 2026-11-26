@@ -10,6 +10,7 @@ from pyspark.sql import functions as F
 
 from gtdp.jobs import silver as silver_job
 from gtdp.silver.pipelines import PIPELINES, classified, rejects_path
+from gtdp.silver.pseudonymize import salt_frame
 from gtdp.silver.quality import DISPOSITION, rejects
 
 from .lakes import DAYS, local
@@ -26,15 +27,16 @@ def leaves(frame) -> list[str]:
 
 
 def test_the_rules_run_in_one_projection_and_the_outputs_read_it_once(published):
-    records = classified(published.spark, published.cfg.paths, "orders", date.fromisoformat(J2))
+    salt = salt_frame(published.spark, published.cfg.pseudonymization.salt)
+    records = classified(
+        published.spark, published.cfg.paths, "orders", date.fromisoformat(J2), salt
+    )
     optimized = records._jdf.queryExecution().optimizedPlan().toString()
     persisted = records.persist()
     try:
         outputs = {
             "rejects": rejects(persisted, ["transaction_id"], source="orders", run_id="r"),
-            "clean": PIPELINES["orders"].build(
-                persisted.where(F.col(DISPOSITION) == "clean"), None
-            ),
+            "clean": PIPELINES["orders"].build(persisted.where(F.col(DISPOSITION) == "clean")),
         }
         read = {name: leaves(frame) for name, frame in outputs.items()}
     finally:

@@ -7,9 +7,13 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType
 
 from gtdp.bronze.transform import raw_line
+from gtdp.config import Secret
 from gtdp.schemas import RECORD_HASH, bronze_schema
 from gtdp.silver.pipelines import PIPELINES
+from gtdp.silver.pseudonymize import salt_frame
 from gtdp.silver.quality import DISPOSITION, classify, with_references
+
+from .lakes import SALT
 
 DAY = date(2026, 1, 2)
 KNOWN = {"customer_id": ["C000001"], "product_id": ["P00001"]}
@@ -64,7 +68,8 @@ def classified(spark, source, rows, *, earlier=None, day=DAY):
     keys = None
     if earlier is not None:
         keys = spark.createDataFrame([(k,) for k in earlier], "transaction_id string")
-    result = classify(with_references(records, identifiers), entity, keys)
+    salt = salt_frame(spark, Secret(SALT))
+    result = classify(with_references(records, identifiers), entity, salt, keys)
     return result.orderBy("_row").collect()
 
 

@@ -36,6 +36,7 @@ from gtdp.schemas import (
     SOURCE_FILE,
     Source,
 )
+from gtdp.silver.pseudonymize import SALT, with_salt
 
 RAW = "raw"
 """Struct of a record's canonical columns, as the strings bronze holds."""
@@ -125,15 +126,17 @@ _DISPOSITIONS: tuple[tuple[Disposition, Callable[[], Column]], ...] = (
 
 
 def classify(
-    records: DataFrame, entity: Entity, earlier_keys: DataFrame | None = None
+    records: DataFrame, entity: Entity, salt: DataFrame, earlier_keys: DataFrame | None = None
 ) -> DataFrame:
     """``records`` with ``raw``, the typed columns, ``reject_reasons``, ``quality_flags`` and
     ``disposition``.
 
     ``records`` holds the canonical columns of ``entity.source`` as strings, ``_corrupt_record``,
     ``_record_hash``, ``_source_file``, ``ingestion_date`` and the ``known`` columns. Every window
-    is per ``ingestion_date``: several days are classified as if each ran alone. ``earlier_keys``
-    holds the ``entity.key`` values that earlier days published.
+    is per ``ingestion_date``: several days are classified as if each ran alone. ``salt`` is the
+    one-row frame of ``salt_frame``, which the typed columns read through ``salted``; the result
+    holds the hashes, not the salt. ``earlier_keys`` holds the ``entity.key`` values that earlier
+    days published.
     """
     columns = entity.source.columns
     same_record = Window.partitionBy(INGESTION_DATE, RECORD_HASH).orderBy(SOURCE_FILE)
@@ -142,7 +145,11 @@ def classify(
         *[column for column in records.columns if column not in columns],
         (F.row_number().over(same_record) > 1).alias(EXACT_DUPLICATE),
     )
-    typed = staged.select("*", *[c.alias(name) for name, c in entity.columns().items()])
+    typed = (
+        with_salt(staged, salt)
+        .select("*", *[c.alias(name) for name, c in entity.columns().items()])
+        .drop(SALT)
+    )
     malformed = F.col(CORRUPT_RECORD).isNotNull()
     checked = typed.select(
         "*",
