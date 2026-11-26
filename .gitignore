@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Spark / Hadoop local artefacts
+spark-warehouse/
+metastore_db/
+derby.log
+checkpoints/
+output/
+*.crc
+
+# Generated data (reproducible with `python -m gtdp.datagen generate`)
+data/generated/
+
+# Secrets and local overrides
+.env
+conf/env/*.local.toml
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
