@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, fields
@@ -52,6 +53,15 @@ class Lake:
     def write_manifest(self, day: str, manifest: dict) -> None:
         self.manifest_file(day).parent.mkdir(parents=True, exist_ok=True)
         self.manifest_file(day).write_text(json.dumps(manifest))
+
+    def rewrite(self, day: str, manifest: dict, key: str, data: bytes, rows: int | None = None):
+        """Land ``data`` as ``key``, its manifest entry updated as the generator would write it."""
+        self.landing_file(day, key).write_bytes(data)
+        [entry] = [entry for entry in manifest["files"] if entry["path"] == key]
+        entry["sha256"] = hashlib.sha256(data).hexdigest()
+        if rows is not None:
+            entry["rows"] = rows
+        self.write_manifest(day, manifest)
 
     def run(self, day: str, source: str | None = None) -> Run:
         """Run the registered ``bronze`` job inside its audited run, as run.py does."""
