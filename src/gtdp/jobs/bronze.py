@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import reduce
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from gtdp.audit import Layer, Run
-from gtdp.bronze.landing import count_data_lines, landed_files, read_header, read_records
+from gtdp.bronze.landing import (
+    check_scans,
+    landed_files,
+    read_header,
+    read_records,
+    scan,
+)
 from gtdp.bronze.transform import check_counts, to_bronze
 from gtdp.io import INGESTION_DATE, read_table, write_partitions
 from gtdp.jobs.registry import JobContext, job
@@ -23,8 +29,8 @@ class FileReport:
     source: str
     manifest_rows: int
     landing_lines: int
-    rows_read: int
-    unknown_columns: list[str]
+    rows_read: int | None = None
+    unknown_columns: list[str] = field(default_factory=list)
     rows_written: int | None = None
     corrupt_records: int | None = None
 
@@ -35,10 +41,11 @@ class FileReport:
     "Copy the files landed for --date (one --source, or all) to bronze/<source>/ingestion_date=",
 )
 def bronze(ctx: JobContext) -> None:
-    """Replace ``bronze/<source>/ingestion_date=<date>`` with the day's landed files.
+    """Make ``bronze/<source>/ingestion_date=<date>`` hold the day's landed files.
 
-    Fails before writing anything if a file's data lines differ from its manifest row count or
-    from the rows read, and after writing if the rows written differ from the data lines.
+    Fails before writing anything if a file differs from its manifest entry (SHA-256, data lines),
+    is not UTF-8, or reads into another row count; and after writing if
+    the rows written differ from the data lines.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -46,18 +53,22 @@ def bronze(ctx: JobContext) -> None:
     spark, paths = ctx.spark, ctx.cfg.paths
     files = landed_files(spark, paths.landing, day, ctx.run.source)
 
-    reports: dict[str, FileReport] = {}
+    scans = {file.key: scan(spark, file) for file in files}
+    reports = {
+        file.key: FileReport(file.source.name, file.manifest_rows, scans[file.key].data_lines)
+        for file in files
+    }
+    ctx.run.counters.rows_in = sum(r.landing_lines for r in reports.values())
+    _record(ctx.run, reports)
+    check_scans(files, scans)
+    headers = {file.key: read_header(spark, file) for file in files}
+
     frames: dict[str, list[DataFrame]] = {}
     for file in files:
-        columns = read_header(spark, file)
+        columns, report = headers[file.key], reports[file.key]
         records = read_records(spark, file, columns)
-        reports[file.key] = FileReport(
-            source=file.source.name,
-            manifest_rows=file.manifest_rows,
-            landing_lines=count_data_lines(spark, file),
-            rows_read=records.count(),
-            unknown_columns=[c for c in columns if c not in file.source.columns],
-        )
+        report.rows_read = records.count()
+        report.unknown_columns = [c for c in columns if c not in file.source.columns]
         frames.setdefault(file.source.name, []).append(
             to_bronze(
                 records,
@@ -68,11 +79,10 @@ def bronze(ctx: JobContext) -> None:
                 ingestion_date=day,
             )
         )
-    ctx.run.counters.rows_in = sum(r.landing_lines for r in reports.values())
     _record(ctx.run, reports)
     check_counts(
         {
-            key: {"manifest": r.manifest_rows, "lines": r.landing_lines, "read": r.rows_read}
+            key: {"manifest": r.manifest_rows, "lines": r.landing_lines, "read": r.rows_read or 0}
             for key, r in reports.items()
         }
     )
