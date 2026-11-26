@@ -60,8 +60,7 @@ def write_partitions(
             destination = _hadoop_path(spark, f"{path}/{directory}")
             fs.delete(destination, True)
             fs.mkdirs(destination.getParent())
-            if not fs.rename(source, destination):
-                raise OSError(f"could not rename {source} to {destination}")
+            _rename(fs, source, destination)
     finally:
         fs.delete(_hadoop_path(spark, staging), True)
     # A cached read of the table would keep serving the partitions that were just replaced.
@@ -71,18 +70,23 @@ def write_partitions(
 def replace_table(df: DataFrame, path: str) -> None:
     """Replace the whole table at ``path`` with ``df``, which may read ``path`` itself.
 
-    ``df`` is written in full to the hidden sibling ``_<name>.tmp``, then renamed over the old
-    table. The next run overwrites a sibling that a crashed run left behind. A crash between the
-    delete and the rename leaves no table until the next run.
+    ``df`` is written in full to the hidden sibling ``_<name>.tmp``. Then the old table moves
+    aside to ``_<name>.old``, the new one moves into place, and the old one is deleted. If a crash
+    left the table missing, ``replace_table``, ``read_table`` and ``path_exists`` first put back the
+    latest complete table: ``_<name>.tmp`` when it holds ``_SUCCESS``, else ``_<name>.old``.
     """
-    fs, target = _filesystem(df.sparkSession, path)
-    staging_uri = f"{target.getParent().toString()}/_{target.getName()}.tmp"
-    _, staging = _filesystem(df.sparkSession, staging_uri)
-    df.write.mode("overwrite").parquet(staging_uri)
+    spark = df.sparkSession
+    fs, target = _recovered(spark, path)
+    staging, aside = _siblings(target)
+    fs.delete(aside, True)
+    df.write.mode("overwrite").parquet(staging.toString())
+    if not fs.exists(staging.suffix("/_SUCCESS")):
+        fs.create(staging.suffix("/_SUCCESS")).close()
     if fs.exists(target):
-        fs.delete(target, True)
-    if not fs.rename(staging, target):
-        raise OSError(f"could not rename {staging_uri} to {path}")
+        _rename(fs, target, aside)
+    _rename(fs, staging, target)
+    fs.delete(aside, True)
+    spark.catalog.refreshByPath(path)
 
 
 def read_table(
@@ -99,7 +103,7 @@ def read_table(
     a table raises ``FileNotFoundError``. ``merge_schema`` reads the union of the schemas of the
     files (ADR-0007).
     """
-    fs, hadoop_path = _filesystem(spark, path)
+    fs, hadoop_path = _recovered(spark, path)
     if not fs.exists(hadoop_path) or not _has_data_file(fs, hadoop_path):
         if schema is None:
             raise FileNotFoundError(f"{path} holds no data file: pass its schema to read it empty")
@@ -108,7 +112,8 @@ def read_table(
 
 
 def path_exists(spark: SparkSession, path: str) -> bool:
-    fs, hadoop_path = _filesystem(spark, path)
+    """Whether ``path`` exists, once an interrupted ``replace_table`` of it is finished."""
+    fs, hadoop_path = _recovered(spark, path)
     return bool(fs.exists(hadoop_path))
 
 
@@ -159,6 +164,29 @@ def _partition_dir(
     escape = _catalog_utils(spark).escapePathName
     pairs = zip(partitions, values, strict=True)
     return "/".join(f"{column}={escape(str(value))}" for column, value in pairs)
+
+
+def _siblings(target: Any) -> tuple[Any, Any]:
+    """``_<name>.tmp`` and ``_<name>.old``: the hidden siblings of a ``replace_table`` swap."""
+    parent, name = target.getParent(), target.getName()
+    return parent.suffix(f"/_{name}.tmp"), parent.suffix(f"/_{name}.old")
+
+
+def _recovered(spark: SparkSession, path: str) -> tuple[Any, Any]:
+    """``_filesystem(spark, path)``, after putting back a table that a crash left missing."""
+    fs, target = _filesystem(spark, path)
+    if not fs.exists(target):
+        staging, aside = _siblings(target)
+        source = staging if fs.exists(staging.suffix("/_SUCCESS")) else aside
+        # A concurrent reader may win the rename: the table is back all the same.
+        if fs.exists(source) and fs.rename(source, target):
+            logger.warning("finished an interrupted replace_table: %s became %s", source, target)
+    return fs, target
+
+
+def _rename(fs: Any, source: Any, destination: Any) -> None:
+    if not fs.rename(source, destination):
+        raise OSError(f"could not rename {source} to {destination}")
 
 
 def _has_data_file(fs: Any, directory: Any) -> bool:
