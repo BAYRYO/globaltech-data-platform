@@ -1,0 +1,146 @@
+import gzip
+import hashlib
+import json
+import re
+from bisect import bisect_right
+from pathlib import Path
+
+J1, J2, J3 = "2026-01-01", "2026-01-02", "2026-01-03"
+
+
+def tree_digest(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def data_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines()[1:]
+
+
+def orders_file(root: Path, day: str) -> Path:
+    return root / "landing" / day / "orders" / f"orders_{day.replace('-', '')}.csv"
+
+
+def manifest_anomalies(root: Path, day: str, source: str) -> dict[str, int]:
+    manifest = json.loads((root / "landing" / day / "_MANIFEST.json").read_text())
+    return next(f["anomalies"] for f in manifest["files"] if f["source"] == source)
+
+
+def test_runs_with_the_same_seed_write_identical_bytes(ci_root, generate_ci, tmp_path):
+    second = generate_ci(tmp_path)
+    assert tree_digest(second) == tree_digest(ci_root)
+    generate_ci(tmp_path)
+    assert tree_digest(second) == tree_digest(ci_root)
+    assert not [p for p in second.rglob("*.tmp")]
+
+
+def test_another_seed_writes_different_data(ci_root, generate_ci, tmp_path):
+    other = generate_ci(tmp_path, seed=7)
+    assert tree_digest(other) != tree_digest(ci_root)
+
+
+def test_j1_keeps_the_first_kit_transactions_verbatim_and_in_order(ci_root, kit_dir):
+    with gzip.open(kit_dir / "transactions.csv.gz", "rt", encoding="utf-8", newline="") as kit:
+        kit_lines = kit.read().splitlines()[1:10_001]
+    j1 = data_lines(orders_file(ci_root, J1))
+    position = {line: index for index, line in reversed(list(enumerate(j1)))}
+    assert all(line in position for line in kit_lines)
+    first_seen = [position[line] for line in kit_lines]
+    assert first_seen == sorted(first_seen)
+    synthetic_ids = {line[:10] for line in j1} - {line[:10] for line in kit_lines}
+    assert min(synthetic_ids) == "T000200001"
+
+
+def test_j3_appends_discount_pct_as_last_column(ci_root):
+    j3 = orders_file(ci_root, J3).read_text(encoding="utf-8").splitlines()
+    assert j3[0].split(",")[-1] == "discount_pct"
+    assert orders_file(ci_root, J2).read_text().splitlines()[0].split(",")[-1] == "status"
+    discounts = [line.split(",")[8] for line in j3[1:] if line.count(",") == 8]
+    assert all(d == "" or 0 <= float(d) <= 0.30 for d in discounts)
+    assert len({d for d in discounts if d}) > 5
+
+
+def test_cross_day_duplicates_resend_rows_of_earlier_drops(ci_root):
+    earlier: dict[str, list[str]] = {}
+    for day in (J1, J2, J3):
+        rows = [line.split(",") for line in data_lines(orders_file(ci_root, day))]
+        resent = [row for row in rows if row[0] in earlier]
+        assert len(resent) == manifest_anomalies(ci_root, day, "orders").get(
+            "DUPLICATE_CROSS_DAY", 0
+        )
+        for row in resent:
+            assert row[:8] == earlier[row[0]]
+            assert row[8:] == ([""] if day == J3 else [])
+        earlier.update((row[0], row[:8]) for row in rows if len(row) >= 8)
+
+
+def test_daily_drops_carry_late_orders_from_earlier_days(ci_root):
+    earlier = {line.split(",", 1)[0] for line in data_lines(orders_file(ci_root, J1))}
+    for day, window in ((J2, ("2025-12-29", "2026-01-01")), (J3, ("2025-12-30", "2026-01-02"))):
+        rows = [line.split(",") for line in data_lines(orders_file(ci_root, day))]
+        native = [row for row in rows if len(row) > 1 and row[0] not in earlier]
+        assert any(window[0] <= row[1] < window[1] for row in native)
+        earlier |= {row[0] for row in rows}
+
+
+def _catalog(root: Path) -> dict[str, list[tuple[str, set[float]]]]:
+    """Valid versions per product; a key restated with another price keeps every candidate."""
+    path = root / "landing" / J1 / "products" / "products_20260101.csv"
+    versions: dict[str, dict[str, set[float]]] = {}
+    for product_id, _, category, price, updated_at in (
+        line.split(",") for line in data_lines(path)
+    ):
+        if category and re.fullmatch(r"\d+(\.\d+)?", price) and float(price) > 0:
+            versions.setdefault(product_id, {}).setdefault(updated_at, set()).add(float(price))
+    return {pid: sorted(stamps.items()) for pid, stamps in versions.items()}
+
+
+def test_synthetic_orders_follow_the_catalog_price_and_the_hot_product(ci_root):
+    catalog = _catalog(ci_root)
+    rows = [line.split(",") for line in data_lines(orders_file(ci_root, J1))]
+    synthetic = [
+        row
+        for row in rows
+        if len(row) == 8
+        and row[0] >= "T000200001"
+        and row[3] in catalog
+        and row[1].startswith("2025-")
+        and re.fullmatch(r"\d+\.\d{2}", row[5])
+    ]
+    assert len(synthetic) > 9_000
+    for row in synthetic:
+        history = catalog[row[3]]
+        _, prices = history[bisect_right([stamp for stamp, _ in history], row[1]) - 1]
+        assert any(0.9 * p - 0.005 <= float(row[5]) <= p + 0.005 for p in prices), row
+    hot_share = sum(row[3] == "P00042" for row in synthetic) / len(synthetic)
+    assert 0.17 < hot_share < 0.23
+
+
+def test_product_anomalies_never_touch_a_first_version(ci_root):
+    first_versions: dict[str, set[str]] = {}
+    for day in (J1, J2, J3):
+        path = ci_root / "landing" / day / "products" / f"products_{day.replace('-', '')}.csv"
+        for line in data_lines(path):
+            product_id, _, _, _, updated_at = line.split(",")
+            if updated_at == "2024-12-31T00:00:00" or product_id >= "P01001":
+                first_versions.setdefault(product_id, set()).add(line)
+    assert {f"P{n:05d}" for n in range(1, 1001)} < first_versions.keys()
+    for lines in first_versions.values():
+        assert len(lines) == 1
+        _, _, category, price, _ = lines.pop().split(",")
+        assert category
+        assert re.fullmatch(r"\d+(\.\d{1,2})?", price)
+
+
+def test_customers_start_from_the_kit_base_and_new_ids_follow_it(ci_root):
+    def ids(day: str) -> set[str]:
+        path = ci_root / "landing" / day / "customers" / f"customers_{day.replace('-', '')}.csv"
+        return {line.split(",", 1)[0] for line in data_lines(path)}
+
+    kit_base = {f"C{n:06d}" for n in range(1, 5001)}
+    assert ids(J1) == kit_base
+    new_ids = (ids(J2) | ids(J3)) - kit_base
+    assert min(new_ids) == "C005001"
