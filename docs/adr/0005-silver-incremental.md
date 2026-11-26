@@ -18,15 +18,24 @@ Pour traiter `D` :
    à `D` : une clé déjà connue est un doublon inter-jours ;
 3. réécrire la partition `D` seule.
 
-Comme l'étape 2 ignore la partition `D` elle-même, rejouer `D` produit le même résultat.
+Comme l'étape 2 ignore la partition `D` elle-même, rejouer `D` produit le même résultat (vérifié
+lors de la revue du Lot 0 : contenu identique après rejeu de J2).
+
+Garde-fous, issus de la même revue :
+
+- **ordre** : le job refuse de traiter `D` si une partition postérieure à `D` existe déjà, sauf
+  option explicite `--cascade` qui retraite ensuite les jours suivants. Traiter J3 avant J2 laissait
+  sinon une clé en double, chaque réconciliation journalière restant vraie ;
+- **unicité globale** de `transaction_id` contrôlée après écriture et tracée dans l'audit ;
+- **premier jour** : une table silver absente est une table vide (pas d'erreur
+  `PATH_NOT_FOUND`).
 
 ## Conséquences
 
 - Coût de l'anti-jointure : lecture de la seule colonne `transaction_id` des partitions
   antérieures (Parquet colonnaire).
-- Gold repartitionne par `order_date` pour les requêtes métier.
-- Rejouer un jour antérieur (`D-1`) après `D` impose de rejouer aussi les jours suivants ; le
-  runbook le documente.
+- Gold repartitionne par `order_date` et recalcule les dates touchées (voir ADR-0002).
+- Rejouer un jour antérieur (`D-1`) après `D` passe par `--cascade` ; le runbook le documente.
 
 ## Alternatives écartées
 
