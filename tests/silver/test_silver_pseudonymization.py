@@ -174,7 +174,7 @@ def test_the_salt_is_absent_from_the_event_log(fresh_lake, tmp_path):
 
 def salted_lake(lake, salt: str, env: Env) -> Lake:
     """``lake`` run with ``salt`` in ``env``."""
-    cfg = replace(lake.cfg, env=env, pseudonymization=Pseudonymization(Secret(salt)))
+    cfg = replace(lake.cfg, env=env, pseudonymization=Pseudonymization(env, Secret(salt)))
     return Lake(lake.spark, cfg, lake.drops)
 
 

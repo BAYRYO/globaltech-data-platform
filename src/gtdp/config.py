@@ -118,7 +118,24 @@ class _PathsSection(LakePaths):
 
 @dataclass(frozen=True)
 class Pseudonymization:
-    salt: Secret
+    """The salt of the jobs that pseudonymize personal data, from ``GTDP_PSEUDO_SALT``.
+
+    It is required when such a job reads it, not when the configuration loads: on the cluster a
+    missing salt raises ``ConfigError`` then; locally the fixed development salt stands in, with
+    a warning.
+    """
+
+    env: Env
+    configured: Secret | None = None
+
+    @property
+    def salt(self) -> Secret:
+        if self.configured is not None:
+            return self.configured
+        if self.env is Env.CLUSTER:
+            raise ConfigError(f"{SALT_VAR} is required for env {self.env.value!r}")
+        logger.warning("%s is not set: using the fixed development salt", SALT_VAR)
+        return Secret(DEV_SALT)
 
 
 THRESHOLD_DIRECTIONS = ("above", "below")
@@ -233,7 +250,9 @@ def load_config(
                 for area in fields(LakePaths)
             }
         ),
-        pseudonymization=Pseudonymization(_salt(parsed_env)),
+        pseudonymization=Pseudonymization(
+            parsed_env, Secret(value) if (value := os.environ.get(SALT_VAR)) else None
+        ),
         git_sha=os.environ.get(GIT_SHA_VAR) or None,
         streaming=_section("streaming", StreamingSettings, raw) if "streaming" in raw else None,
     )
@@ -378,15 +397,6 @@ def _file_uri(path: Path) -> str:
     Hadoop reads the characters of a URI string literally: ``%20`` names a directory ``%20``.
     """
     return "file:///" + path.resolve().as_posix().lstrip("/")
-
-
-def _salt(env: Env) -> Secret:
-    if value := os.environ.get(SALT_VAR):
-        return Secret(value)
-    if env is Env.CLUSTER:
-        raise ConfigError(f"{SALT_VAR} is required for env {env.value!r}")
-    logger.warning("%s is not set: using the fixed development salt", SALT_VAR)
-    return Secret(DEV_SALT)
 
 
 def _valid() -> str:

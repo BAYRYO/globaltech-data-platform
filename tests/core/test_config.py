@@ -185,9 +185,12 @@ def test_unknown_env_fails_at_load(conf_dir):
         load_config("prod", conf_dir)
 
 
-def test_cluster_without_salt_fails_at_load(conf_dir):
-    with pytest.raises(ConfigError, match="GTDP_PSEUDO_SALT"):
-        load_config("cluster", conf_dir)
+def test_cluster_without_salt_loads_and_fails_when_the_salt_is_read(conf_dir):
+    cfg = load_config("cluster", conf_dir)
+
+    assert cfg.paths.gold == "hdfs://nn:8020/lake/gold"
+    with pytest.raises(ConfigError, match="GTDP_PSEUDO_SALT is required for env 'cluster'"):
+        cfg.pseudonymization.salt.reveal()
 
 
 def test_salt_comes_from_environment_and_never_prints(conf_dir, monkeypatch):
@@ -200,11 +203,13 @@ def test_salt_comes_from_environment_and_never_prints(conf_dir, monkeypatch):
     assert "s3cret-salt" not in json.dumps(asdict(cfg), default=str)
 
 
-def test_local_without_salt_uses_dev_salt_with_warning(conf_dir, caplog):
+def test_local_without_salt_reads_the_dev_salt_with_warning(conf_dir, caplog):
     with caplog.at_level(logging.WARNING):
         cfg = load_config("local", conf_dir)
+        assert "GTDP_PSEUDO_SALT" not in caplog.text
+        salt = cfg.pseudonymization.salt
 
-    assert cfg.pseudonymization.salt.reveal() == DEV_SALT
+    assert salt.reveal() == DEV_SALT
     assert "GTDP_PSEUDO_SALT" in caplog.text
 
 

@@ -108,6 +108,7 @@ def _broken(violations: dict[str, int]) -> list[str]:
     "silver",
     Layer.SILVER,
     "Check, deduplicate and publish in silver the bronze records of --date (one --source, or all)",
+    pseudonymizes=True,
 )
 def silver(ctx: JobContext) -> None:
     """Publish the silver tables and rejects of ``--date`` for one source, or all of them in

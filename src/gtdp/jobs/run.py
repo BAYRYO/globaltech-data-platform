@@ -69,6 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run(spec: JobSpec, args: argparse.Namespace) -> int:
     try:
         cfg = load_config(args.env, overrides=dict(args.overrides))
+        if spec.pseudonymizes:
+            _ = cfg.pseudonymization.salt  # A missing salt stops the job before Spark starts.
     except ConfigError as exc:
         logger.error("invalid configuration: %s", exc)
         return 2
