@@ -138,6 +138,7 @@ class StreamingSettings:
     stop_after_idle_triggers: int
     future_tolerance_s: int
     stale_after_s: int
+    archive_retention_days: int
     thresholds: Mapping[str, Mapping[str, float]]
 
     def __post_init__(self) -> None:
@@ -148,6 +149,7 @@ class StreamingSettings:
             ("stop_after_idle_triggers", 0),
             ("future_tolerance_s", 0),
             ("stale_after_s", 1),
+            ("archive_retention_days", 0),
         ):
             if getattr(self, key) < minimum:
                 raise ConfigError(
