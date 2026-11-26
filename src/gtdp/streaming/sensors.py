@@ -31,6 +31,13 @@ BATCH_ID = "batch_id"
 """Partition column of every output: the micro-batch that wrote the rows."""
 
 _CORRUPT = "_corrupt_record"
+_VALUES = "_json_values"
+_STRICT_JSON = {
+    "allowNonNumericNumbers": "false",
+    "allowSingleQuotes": "false",
+    "timestampFormat": "yyyy-MM-dd'T'HH:mm:ss[.SSS]XXX",
+}
+"""JSON reader options: standard JSON only, and timestamps with their UTC offset."""
 _EVENT_FIELDS = (
     StructField("event_id", StringType()),
     StructField("sensor_id", StringType()),
@@ -43,16 +50,19 @@ _EVENT_FIELDS = (
     StructField("emitted_at", TimestampType()),
 )
 EVENT_COLUMNS = tuple(field.name for field in _EVENT_FIELDS)
-_PARSE_SCHEMA = StructType([*_EVENT_FIELDS, StructField(_CORRUPT, StringType())])
+_PARSE_SCHEMA = StructType(
+    [StructField("event", StructType(list(_EVENT_FIELDS))), StructField(_CORRUPT, StringType())]
+)
 
 REJECT_RULES: tuple[tuple[str, str], ...] = (
-    ("MALFORMED_JSON", f"{_CORRUPT} IS NOT NULL OR trim(raw_line) = ''"),
+    ("MALFORMED_JSON", f"{_CORRUPT} IS NOT NULL OR coalesce(size({_VALUES}), 0) <> 1"),
     (
         "MISSING_FIELD",
         "event_id IS NULL OR sensor_id IS NULL OR site IS NULL OR machine_id IS NULL"
         " OR metric IS NULL OR event_time IS NULL",
     ),
     ("NULL_VALUE", "value IS NULL"),
+    ("BAD_VALUE", "isnan(value) OR abs(value) = double('Infinity')"),
 )
 """(code, SQL condition) in priority order: a rejected line gets the code of its first match."""
 
@@ -111,15 +121,25 @@ REJECTS_SCHEMA = StructType(
 def parse(lines: DataFrame) -> DataFrame:
     """Parse ``raw_line`` against the contract schema and add ``reject_reason`` (null if valid).
 
-    ``lines`` holds ``raw_line`` and ``source_file``. A line that is not a JSON object of the
-    contract is ``MALFORMED_JSON``, whatever leniency the JSON reader has.
+    ``lines`` holds ``raw_line`` and ``source_file``. A line is valid JSON for the contract when
+    it is exactly one JSON object. The JSON reader stops at the end of the first value and
+    ignores what follows, so the line is read twice: as the value of an object,
+    ``{"event": <line>}``, which fails if anything but ``}`` follows the object, and as an array,
+    ``[<line>]``, which fails if anything but ``]`` follows it or holds more than one value.
+    Garbage after the object cannot start with both ``}`` and ``]``: it breaks one of the two
+    readings.
     """
-    options = {"columnNameOfCorruptRecord": _CORRUPT}
+    wrapped = F.concat(F.lit('{"event":'), "raw_line", F.lit("}"))
+    listed = F.concat(F.lit("["), "raw_line", F.lit("]"))
+    options = {**_STRICT_JSON, "columnNameOfCorruptRecord": _CORRUPT}
     parsed = lines.select(
-        "raw_line", "source_file", F.from_json("raw_line", _PARSE_SCHEMA, options).alias("event")
-    ).select("raw_line", "source_file", "event.*")
+        "raw_line",
+        "source_file",
+        F.from_json(wrapped, _PARSE_SCHEMA, options).alias("parsed"),
+        F.from_json(listed, "array<string>", _STRICT_JSON).alias(_VALUES),
+    ).select("raw_line", "source_file", "parsed.event.*", f"parsed.{_CORRUPT}", _VALUES)
     reason = F.coalesce(*(F.when(F.expr(rule), F.lit(code)) for code, rule in REJECT_RULES))
-    return parsed.withColumn("reject_reason", reason).drop(_CORRUPT)
+    return parsed.withColumn("reject_reason", reason).drop(_CORRUPT, _VALUES)
 
 
 def rejects(parsed: DataFrame) -> DataFrame:
