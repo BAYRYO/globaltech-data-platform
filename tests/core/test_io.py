@@ -130,6 +130,62 @@ def test_crashed_replace_keeps_the_old_table_and_the_next_run_converges(spark, t
     assert os.listdir(tmp_path / "gold") == ["dim"]
 
 
+VERSIONS = "id int, version string"
+VERSIONS_TABLE = StructType(
+    [StructField("id", IntegerType()), StructField("version", StringType())]
+)
+
+
+@pytest.fixture
+def interrupted_swap(spark, tmp_path):
+    """products_scd2 after a crash between the two renames of replace_table.
+
+    Run 1 published v1. Run 2 wrote its complete output, moved the v1 table aside, and died.
+    """
+    gold = tmp_path / "gold"
+    path = str(gold / "products_scd2")
+    replace_table(spark.createDataFrame([(1, "v1"), (2, "v1")], VERSIONS), path)
+    run_2 = spark.createDataFrame([(1, "v1"), (2, "v1"), (3, "v2")], VERSIONS)
+    run_2.write.parquet(str(gold / "_products_scd2.tmp"))
+    os.rename(gold / "products_scd2", gold / "_products_scd2.old")
+    return path
+
+
+def test_the_run_after_an_interrupted_swap_keeps_the_history(spark, interrupted_swap, tmp_path):
+    previous = read_table(spark, interrupted_swap, VERSIONS_TABLE)
+    run_3 = previous.union(spark.createDataFrame([(4, "v3")], VERSIONS))
+
+    replace_table(run_3, interrupted_swap)
+
+    assert rows(spark, interrupted_swap) == [(1, "v1"), (2, "v1"), (3, "v2"), (4, "v3")]
+    assert os.listdir(tmp_path / "gold") == ["products_scd2"]
+
+
+def test_path_exists_finishes_an_interrupted_swap(spark, interrupted_swap):
+    assert path_exists(spark, interrupted_swap)
+    assert rows(spark, interrupted_swap) == [(1, "v1"), (2, "v1"), (3, "v2")]
+
+
+def test_an_incomplete_staged_table_gives_the_old_table_back(spark, tmp_path):
+    gold = tmp_path / "gold"
+    path = str(gold / "dim")
+    replace_table(spark.createDataFrame([(1, "v1")], VERSIONS), path)
+    os.rename(gold / "dim", gold / "_dim.old")
+    (gold / "_dim.tmp").mkdir()
+
+    assert sorted(tuple(r) for r in read_table(spark, path).collect()) == [(1, "v1")]
+
+
+def test_a_cached_read_of_the_table_sees_the_replaced_content(spark, tmp_path):
+    path = str(tmp_path / "gold" / "dim")
+    replace_table(spark.createDataFrame([(1, "v1")], VERSIONS), path)
+    spark.read.parquet(path).cache().count()
+
+    replace_table(spark.createDataFrame([(2, "v2")], VERSIONS), path)
+
+    assert rows(spark, path) == [(2, "v2")]
+
+
 def test_path_exists(spark, tmp_path):
     (tmp_path / "present").mkdir()
 
