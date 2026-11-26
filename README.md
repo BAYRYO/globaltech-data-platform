@@ -17,6 +17,10 @@ Projet du module *Big Data et traitement massif* (Hadoop, MapReduce, Spark), 3IL
 | [Contrat de données](docs/data-contract.md) | Sources J1/J2/J3, anomalies injectées, manifeste |
 | [Modèle de données](docs/data-model.md) | Silver, schéma en étoile gold, indicateurs |
 | [Décisions (ADR)](docs/adr/README.md) | Choix structurants et alternatives écartées |
+| [Dictionnaire de données](docs/data-dictionary/README.md) | Chaque colonne de chaque table : type, règle, exemple |
+| [Runbooks](docs/runbook/README.md) | Lancer, rejouer, vérifier et dépanner chaque couche ; interroger l'audit |
+| [Guide de la plateforme](docs/platform.md) | Services, budget mémoire, droits HDFS, soumission des jobs, dépannage |
+| [MapReduce contre Spark](docs/mapreduce-vs-spark.md) | Même calcul sur les deux moteurs : résultats, durées, compteurs |
 | [Pilotage](docs/project-management.md) | Rôles, jalons, Kanban Jira, définition de « terminé » |
 | [Contribuer](CONTRIBUTING.md) | Branches, commits, PR, règles de code |
 
