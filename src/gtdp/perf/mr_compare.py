@@ -78,7 +78,8 @@ class Measure:
 
     ``elapsed_s`` is the YARN application's elapsed time, ``jobs_s`` the part of it spent in jobs
     (MapReduce job start to finish, first Spark job submitted to last job completed), ``cpu_s``
-    the CPU time of the tasks. ``inputs`` are the order and customer directories read.
+    the JVM CPU time of the tasks, which misses the Python processes of Hadoop Streaming.
+    ``inputs`` are the order and customer directories read.
     """
 
     engine: str
@@ -400,7 +401,7 @@ def report(
     measures: list[Measure], failures: list[str], expected_quality: dict | None, context: str
 ) -> str:
     rows = [
-        "| Moteur | Exécution | Application | Durée (s) | Dont jobs (s) | CPU des tâches (s) "
+        "| Moteur | Exécution | Application | Durée (s) | Dont jobs (s) | CPU JVM des tâches (s) "
         "| Mo·s | vcore·s | Lignes lues | Octets lus | Octets de shuffle | Tâches | Exclusive "
         "| Contrôle YARN avant l'exécution |",
         "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- "
