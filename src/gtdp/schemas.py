@@ -28,8 +28,15 @@ class Source:
     name: str
     format: Format
     columns: tuple[str, ...]
-    """Every column the contract defines, in file order; a file may hold fewer (``discount_pct``
-    appears in J3) or more (unknown columns, kept in bronze and reported in the audit)."""
+    """Every column the contract defines, in file order. A file may lack the ``optional`` ones and
+    hold more (unknown columns, kept in bronze and reported in the audit)."""
+    optional: frozenset[str] = frozenset()
+    """Columns of ``columns`` that appeared after the first drop (ADR-0007): ``discount_pct``."""
+
+    @property
+    def required(self) -> tuple[str, ...]:
+        """The columns every file header of the source must name."""
+        return tuple(column for column in self.columns if column not in self.optional)
 
 
 SOURCES: Mapping[str, Source] = MappingProxyType(
@@ -50,6 +57,7 @@ SOURCES: Mapping[str, Source] = MappingProxyType(
                     "status",
                     "discount_pct",
                 ),
+                optional=frozenset({"discount_pct"}),
             ),
             Source(
                 "customers",

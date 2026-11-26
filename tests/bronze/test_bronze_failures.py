@@ -113,6 +113,18 @@ def test_a_file_that_the_readers_would_alter_fails_before_any_write(lake, line, 
     assert nothing_written(lake, J2)
 
 
+def test_a_csv_header_without_the_columns_of_its_source_fails_before_any_write(lake):
+    manifest = lake.land(J2)
+    text = lake.landing_file(J2, CUSTOMERS).read_text()
+    lake.rewrite(J2, manifest, CUSTOMERS, text.replace(",", ";").encode())
+
+    with pytest.raises(LandingError, match=f"{CUSTOMERS}: header lacks"):
+        lake.run(J2)
+
+    assert "'customer_id'" in failed_row(lake).error_message
+    assert nothing_written(lake, J2)
+
+
 def test_a_failed_replay_leaves_the_published_partition_as_it_was(lake):
     manifest = lake.land(J2)
     lake.run(J2)

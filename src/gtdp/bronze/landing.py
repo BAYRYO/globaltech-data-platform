@@ -158,6 +158,17 @@ def read_header(spark: SparkSession, file: LandedFile) -> tuple[str, ...]:
     return tuple(spark.read.options(**CSV_OPTIONS).csv(file.uri).columns)
 
 
+def check_headers(files: Sequence[LandedFile], headers: Mapping[str, Sequence[str]]) -> None:
+    """``LandingError`` naming each file whose header lacks a required column of its source."""
+    problems = [
+        f"{file.key}: header lacks {missing}"
+        for file in files
+        if (missing := [c for c in file.source.required if c not in headers[file.key]])
+    ]
+    if problems:
+        raise LandingError("; ".join(problems))
+
+
 def read_records(spark: SparkSession, file: LandedFile, columns: tuple[str, ...]) -> DataFrame:
     """One row per data line of ``file``: ``columns`` as strings, then ``_corrupt_record``.
 

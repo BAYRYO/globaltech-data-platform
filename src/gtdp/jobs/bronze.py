@@ -10,6 +10,7 @@ from pyspark.sql import functions as F
 
 from gtdp.audit import Layer, Run
 from gtdp.bronze.landing import (
+    check_headers,
     check_scans,
     landed_files,
     read_header,
@@ -44,7 +45,7 @@ def bronze(ctx: JobContext) -> None:
     """Make ``bronze/<source>/ingestion_date=<date>`` hold the day's landed files.
 
     Fails before writing anything if a file differs from its manifest entry (SHA-256, data lines),
-    is not UTF-8, or reads into another row count; and after writing if
+    is not UTF-8, lacks a required column, or reads into another row count; and after writing if
     the rows written differ from the data lines.
     """
     day = ctx.run.ingestion_date
@@ -62,6 +63,7 @@ def bronze(ctx: JobContext) -> None:
     _record(ctx.run, reports)
     check_scans(files, scans)
     headers = {file.key: read_header(spark, file) for file in files}
+    check_headers(files, headers)
 
     frames: dict[str, list[DataFrame]] = {}
     for file in files:
