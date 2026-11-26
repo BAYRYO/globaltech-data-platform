@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from types import MappingProxyType
@@ -46,18 +46,14 @@ class Pipeline:
     checks: Callable[[DataFrame], dict[str, int]] | None = None
     """Further invariants of the written table: rows breaking each one."""
 
+    @property
+    def depends_on(self) -> tuple[str, ...]:
+        """The sources whose published table holds the identifiers this one references."""
+        return tuple(self.entity.references.values())
+
 
 PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
     {
-        "orders": Pipeline(
-            orders.ENTITY,
-            "orders",
-            SILVER_ORDERS,
-            orders.table,
-            ("transaction_id",),
-            partitioned=True,
-            cross_day=True,
-        ),
         "customers": Pipeline(
             customers.ENTITY,
             "customers",
@@ -75,6 +71,15 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             partitioned=False,
             checks=products.violations,
         ),
+        "orders": Pipeline(
+            orders.ENTITY,
+            "orders",
+            SILVER_ORDERS,
+            orders.table,
+            ("transaction_id",),
+            partitioned=True,
+            cross_day=True,
+        ),
         "weblogs": Pipeline(
             weblogs.ENTITY,
             "weblogs",
@@ -85,6 +90,16 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
         ),
     }
 )
+"""In dependency order: a source comes after the sources it references."""
+
+
+def with_dependents(sources: Iterable[str]) -> list[str]:
+    """``sources`` and every source that references one of them, in dependency order."""
+    found = list(sources)
+    for name, pipeline in PIPELINES.items():
+        if name not in found and set(pipeline.depends_on) & set(found):
+            found.append(name)
+    return found
 
 
 def table_path(silver: str, source: str) -> str:
@@ -127,12 +142,13 @@ def classified(
     """The bronze records that silver reads for ``source`` and ``day``, classified with ``salt``.
 
     A partitioned table reads bronze(D) alone; another reads every day up to D, classified day by
-    day, to rebuild the table.
+    day, to rebuild the table. A referenced identifier is known when the published table of its
+    source holds it: a customer with a silver row, a product with an SCD2 version.
     """
     pipeline = PIPELINES[source]
     records = bronze_records(spark, paths.bronze, source, day, history=not pipeline.partitioned)
     identifiers = {
-        column: bronze_records(spark, paths.bronze, reference, day, history=True)
+        column: read_table(spark, table_path(paths.silver, reference), PIPELINES[reference].schema)
         for column, reference in pipeline.entity.references.items()
     }
     earlier = None

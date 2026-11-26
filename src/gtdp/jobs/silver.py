@@ -33,6 +33,7 @@ from gtdp.silver.pipelines import (
     file_columns,
     rejects_path,
     table_path,
+    with_dependents,
 )
 from gtdp.silver.pseudonymize import check_salt, ensure_fingerprint, salt_frame
 from gtdp.silver.quality import (
@@ -52,7 +53,7 @@ class SilverCheckError(RuntimeError):
 
 
 class DayOrderError(RuntimeError):
-    """An earlier day is not complete in silver."""
+    """An earlier day is not complete in silver, or a source's references are not built yet."""
 
 
 @dataclass
@@ -109,15 +110,17 @@ def _broken(violations: dict[str, int]) -> list[str]:
     "Check, deduplicate and publish in silver the bronze records of --date (one --source, or all)",
 )
 def silver(ctx: JobContext) -> None:
-    """Publish the silver tables and rejects of ``--date`` for one source, or all of them.
+    """Publish the silver tables and rejects of ``--date`` for one source, or all of them in
+    dependency order (customers and products, then orders, then weblogs).
 
     Before any write: the salt must be fit for the environment and match the one silver was
     built with; every earlier day must be complete and no later day complete, unless
-    ``--force``. A run on a day
-    makes every later day incomplete. Each source is checked before it is written (the records
-    add up, the key stays unique, SCD2 holds) and read back after; a failed check after the
-    write removes what the run published for the source. A source gets its marker once
-    verified, the day its ``_SUCCESS`` once every source has one.
+    ``--force``; orders need customers and products published for the same day. A run on a
+    day makes every later day incomplete, and the sources that reference a replayed source due
+    again for the day. Each source is checked before it is written (the records add up, the key
+    stays unique, SCD2 holds) and read back after; a failed check after the write removes what
+    the run published for the source. A source gets its marker once verified, the day its
+    ``_SUCCESS`` once every source has one.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -128,7 +131,7 @@ def silver(ctx: JobContext) -> None:
     spark, paths, salt = ctx.spark, ctx.cfg.paths, ctx.cfg.pseudonymization.salt
 
     check_salt(ctx.cfg.env, salt)
-    _check_order(spark, paths, day, force=ctx.force)
+    _check_order(spark, paths, day, sources, force=ctx.force)
     for source in sources:
         partition = f"{paths.bronze}/{source}/{INGESTION_DATE}={day}"
         if not path_exists(spark, partition):
@@ -137,7 +140,7 @@ def silver(ctx: JobContext) -> None:
 
     if later := days.unmark_after(spark, paths.silver, day):
         logger.warning("days %s are no longer complete: replay them in order", later)
-    days.unmark(spark, paths.silver, day, sources)
+    days.unmark(spark, paths.silver, day, with_dependents(sources))
     salted = salt_frame(spark, salt)
     reports: dict[str, SourceReport] = {}
     for source in sources:
@@ -149,7 +152,9 @@ def silver(ctx: JobContext) -> None:
     days.mark_complete(spark, paths.silver, day, PIPELINES, ctx.run.run_id)
 
 
-def _check_order(spark: SparkSession, paths: LakePaths, day: date, *, force: bool) -> None:
+def _check_order(
+    spark: SparkSession, paths: LakePaths, day: date, sources: list[str], *, force: bool
+) -> None:
     complete = days.complete_days(spark, paths.silver)
     landed = {
         date.fromisoformat(value)
@@ -175,6 +180,15 @@ def _check_order(spark: SparkSession, paths: LakePaths, day: date, *, force: boo
         raise problems[0]
     for problem in problems:
         logger.warning("%s; forced", problem)
+    for source in sources:
+        for dependency in PIPELINES[source].depends_on:
+            built = days.latest_day(spark, paths.silver, dependency)
+            if dependency not in sources and built != day:
+                raise DayOrderError(
+                    f"{source} of {day} are checked against {dependency} as published for "
+                    f"{day}, but {dependency} is published for {built}: run silver --date {day} "
+                    f"--source {dependency} first, or the whole day"
+                )
 
 
 def _publish(
