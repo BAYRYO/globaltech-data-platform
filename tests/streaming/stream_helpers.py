@@ -33,8 +33,15 @@ def lake(root: Path):
     return SensorPaths.of(cfg.paths, JOB), settings
 
 
-def event(event_id: str, at: str, value: float | None, metric="temperature", machine="FR-LYON-M01"):
-    """A contract sensor event at ``2026-01-01T<at>``, as one JSON line."""
+def event(
+    event_id: str,
+    at: str,
+    value: float | None,
+    metric="temperature",
+    machine="FR-LYON-M01",
+    emitted: str | None = None,
+):
+    """A contract sensor event at ``2026-01-01T<at>``, emitted at ``emitted`` (``at`` if None)."""
     stamp = f"2026-01-01T{at}.000Z"
     return json.dumps(
         {
@@ -46,7 +53,7 @@ def event(event_id: str, at: str, value: float | None, metric="temperature", mac
             "value": value,
             "unit": "C",
             "event_time": stamp,
-            "emitted_at": stamp,
+            "emitted_at": f"2026-01-01T{emitted}.000Z" if emitted else stamp,
         }
     )
 

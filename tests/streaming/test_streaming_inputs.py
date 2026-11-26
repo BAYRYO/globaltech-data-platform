@@ -1,6 +1,7 @@
-"""Inputs outside the contract."""
+"""Inputs outside the contract: not strict JSON, not finite, dated after their emission."""
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from stream_helpers import drop_files, event, run_stream
@@ -72,3 +73,40 @@ def test_a_line_that_is_not_exactly_one_strict_json_object_with_a_finite_value_i
     assert reasons[OVERFLOW] == "BAD_VALUE"
     assert windows(spark, paths)[(epoch("00:00:00"), "FR-LYON-M01-TEMP")] == (1, 60.0, 60.0, 60.0)
     assert table(spark, paths, ALERTS).count() == 0
+
+
+def test_an_event_dated_after_its_emission_is_rejected_and_the_stream_goes_on(spark, stream_lake):
+    paths, settings = stream_lake
+    drop_files(
+        paths,
+        [
+            [event("E1", "00:00:05", 60.0)],
+            # A clock glitch: the event says 23:00, its emitter sent it at 00:00:10.
+            [event("E2", "00:00:10", 60.0), event("BAD", "23:00:00", 60.0, emitted="00:00:10")],
+            [event("E3", "00:00:15", 60.0)],
+            [event("E4", "00:01:05", 99.0)],
+            [event("E5", "00:02:05", 60.0)],
+            [event("E6", "00:05:05", 60.0)],
+            [event("E7", "00:08:05", 99.0)],
+        ],
+    )
+
+    metrics = run_stream(spark, paths, replace(settings, future_tolerance_s=60))
+
+    rejected = table(spark, paths, REJECTS).collect()
+    assert [(r.reject_reason, json.loads(r.raw_line)["event_id"]) for r in rejected] == [
+        ("FUTURE_EVENT", "BAD")
+    ]
+    assert metrics[AGGREGATES]["rows_dropped_by_watermark"] == 0
+    assert sum(count for count, *_ in windows(spark, paths).values()) == 6
+    assert sorted(r.event_id for r in table(spark, paths, ALERTS).collect()) == ["E4", "E7"]
+
+
+def test_an_event_within_the_tolerance_after_its_emission_is_kept(spark, stream_lake):
+    paths, settings = stream_lake
+    drop_files(paths, [[event("E1", "00:00:50", 60.0, emitted="00:00:05")], *CLOSING])
+
+    run_stream(spark, paths, replace(settings, future_tolerance_s=60))
+
+    assert table(spark, paths, REJECTS).count() == 0
+    assert windows(spark, paths)[(epoch("00:00:00"), "FR-LYON-M01-TEMP")][0] == 1

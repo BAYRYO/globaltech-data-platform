@@ -35,6 +35,9 @@ state_partitions = 4
 # Stop the job, with a SUCCESS audit row, after this many triggers in a row without new data and
 # without a batch to run. 0 runs until stopped (stop marker, see the runbook).
 stop_after_idle_triggers = 0
+# An event whose event_time is more than this many seconds after its emitted_at is rejected
+# (FUTURE_EVENT): it would move the watermark ahead and drop the rest of the stream as late.
+future_tolerance_s = 60
 
 [streaming.thresholds]
 # Alert limits per metric (docs/data-contract.md#capteurs): an event alerts when its value is

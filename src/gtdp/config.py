@@ -136,6 +136,7 @@ class StreamingSettings:
     max_files_per_trigger: int
     state_partitions: int
     stop_after_idle_triggers: int
+    future_tolerance_s: int
     thresholds: Mapping[str, Mapping[str, float]]
 
     def __post_init__(self) -> None:
@@ -144,6 +145,7 @@ class StreamingSettings:
             ("max_files_per_trigger", 1),
             ("state_partitions", 1),
             ("stop_after_idle_triggers", 0),
+            ("future_tolerance_s", 0),
         ):
             if getattr(self, key) < minimum:
                 raise ConfigError(
