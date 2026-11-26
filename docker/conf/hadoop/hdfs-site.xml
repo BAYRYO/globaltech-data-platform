@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <property>
+    <name>dfs.replication</name>
+    <value>3</value>
+  </property>
+  <property>
+    <name>dfs.namenode.name.dir</name>
+    <value>file:///hadoop/dfs/name</value>
+  </property>
+  <property>
+    <name>dfs.datanode.data.dir</name>
+    <value>file:///hadoop/dfs/data</value>
+  </property>
+  <property>
+    <name>dfs.permissions.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>dfs.namenode.acls.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>dfs.namenode.rpc-bind-host</name>
+    <value>0.0.0.0</value>
+  </property>
+  <!-- Docker's reverse DNS names containers <project>-<service>-<n>.<network>; skip the check. -->
+  <property>
+    <name>dfs.namenode.datanode.registration.ip-hostname-check</name>
+    <value>false</value>
+  </property>
+  <!-- A DataNode is declared dead after 2 * recheck-interval + 10 * heartbeat.interval
+       = 2 * 30 s + 10 * 3 s = 90 s (default 2 * 300 s + 10 * 3 s = 630 s). -->
+  <property>
+    <name>dfs.heartbeat.interval</name>
+    <value>3</value>
+  </property>
+  <property>
+    <name>dfs.namenode.heartbeat.recheck-interval</name>
+    <value>30000</value>
+  </property>
+  <property>
+    <name>dfs.namenode.safemode.extension</name>
+    <value>5000</value>
+  </property>
+  <!-- With 3 DataNodes and replication 3 there is no spare node to replace a failed one in a
+       write pipeline: keep writing on the survivors instead of failing the write. -->
+  <property>
+    <name>dfs.client.block.write.replace-datanode-on-failure.best-effort</name>
+    <value>true</value>
+  </property>
+</configuration>

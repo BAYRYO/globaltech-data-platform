@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <property>
+    <name>yarn.scheduler.capacity.root.queues</name>
+    <value>default</value>
+  </property>
+  <property>
+    <name>yarn.scheduler.capacity.root.default.capacity</name>
+    <value>100</value>
+  </property>
+  <!-- The default 0.1 lets one ApplicationMaster run at a time on this small cluster, so a
+       batch job would wait forever behind the streaming job. -->
+  <property>
+    <name>yarn.scheduler.capacity.maximum-am-resource-percent</name>
+    <value>0.5</value>
+  </property>
+</configuration>
