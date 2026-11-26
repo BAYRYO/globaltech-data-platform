@@ -31,7 +31,9 @@ FIELDS = (
     "referer",
     "user_agent",
 )
-TIME_FORMAT = "dd/MMM/yyyy:HH:mm:ss Z"
+CLF_TIME = r"^(\d{2})/([A-Z][a-z]{2})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-]\d{2})(\d{2})$"
+"""``dd/MMM/yyyy:HH:mm:ss Z``, the time of a Combined Log Format line."""
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 EVENT_TYPES = (
     ("GET", "/products/", "view"),
     ("GET", "/search", "search"),
@@ -49,6 +51,36 @@ def _field(name: str) -> Column:
     return F.regexp_extract(raw("value"), COMBINED_LOG, FIELDS.index(name) + 1)
 
 
+def _event_ts() -> Column:
+    """The line's time in UTC, null when it does not parse.
+
+    The time is rewritten as ISO-8601 text and cast. ``to_timestamp`` and ``try_to_timestamp``
+    both raise ``SparkUpgradeException`` under the default EXCEPTION parser policy on a time
+    that only the legacy parser reads, such as ``1/Jan/2026:20:21:48 +0000``: one such line
+    would fail the day instead of being rejected. A cast returns null on any invalid value.
+    """
+    time = _field("time")
+
+    def part(group: int) -> Column:
+        return F.regexp_extract(time, CLF_TIME, group)
+
+    numbers = F.create_map(*[F.lit(v) for i, name in enumerate(MONTHS, 1) for v in (name, i)])
+    month = numbers[part(2)]
+    iso = F.concat(
+        part(3),
+        F.lit("-"),
+        F.lpad(month.cast("string"), 2, "0"),
+        F.lit("-"),
+        part(1),
+        F.lit("T"),
+        F.concat_ws(":", part(4), part(5), part(6)),
+        part(7),
+        F.lit(":"),
+        part(8),
+    )
+    return F.when(time.rlike(CLF_TIME), iso.cast("timestamp"))
+
+
 def _event_type() -> Column:
     event_type = F.lit(OTHER_EVENT)
     for method, prefix, name in reversed(EVENT_TYPES):
@@ -64,7 +96,7 @@ def _columns() -> dict[str, Column]:
         "log_id": salted(raw("value")),
         "ip_hash": salted(_field("ip")),
         "ip_prefix": F.concat(F.regexp_extract(_field("ip"), SUBNET, 1), F.lit(".0/24")),
-        "event_ts": F.to_timestamp(_field("time"), TIME_FORMAT),
+        "event_ts": _event_ts(),
         "customer_id": null_if(_field("user"), "-"),
         "method": _field("method"),
         "path": _field("path"),
