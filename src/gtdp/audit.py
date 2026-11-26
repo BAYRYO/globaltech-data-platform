@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import signal
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -42,6 +44,15 @@ class Layer(StrEnum):
 class Status(StrEnum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+    STOPPED = "STOPPED"
+
+
+class RunStopped(BaseException):
+    """A stop signal reached the driver. Not an ``Exception``: a job must not swallow it."""
+
+    def __init__(self, sig: signal.Signals) -> None:
+        super().__init__(sig.name)
+        self.signal = sig
 
 
 @dataclass(slots=True)
@@ -118,19 +129,65 @@ def audited_run(
 ) -> Iterator[Run]:
     """Yield the ``Run`` of ``job``; on exit append its audit row, then re-raise any error.
 
-    A failure to write the audit row is logged and never replaces the job's own exception.
+    The Spark jobs of the run carry the tag ``gtdp-run-<run_id>``. ``RunStopped`` cancels them
+    until the ``STOPPED`` row is written. A failure to write the audit row is logged and never
+    replaces the job's own exception.
     """
     started_at = datetime.now(UTC)
     run_id = f"{started_at:%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
     run = Run(run_id, job, layer, source, ingestion_date, started_at)
+    tag = f"gtdp-run-{run_id}"
     with bind(run_id=run_id, job=job):
         logger.info("run started", extra={"layer": layer, "source": source})
+        spark.sparkContext.addJobTag(tag)
         try:
             yield run
+        except RunStopped as stop:
+            _untag(spark, tag)
+            with _cancelling(spark, tag):
+                _append(spark, cfg, run, Status.STOPPED, f"stopped by {stop.signal.name}")
+            raise
         except BaseException as exc:
+            _untag(spark, tag)
             _append(spark, cfg, run, Status.FAILED, f"{type(exc).__name__}: {exc}")
             raise
+        _untag(spark, tag)
         _append(spark, cfg, run, Status.SUCCESS, None)
+
+
+def _untag(spark: SparkSession, tag: str) -> None:
+    """Stop tagging the jobs of this thread: the audit write must escape ``_cancelling``."""
+    try:
+        spark.sparkContext.removeJobTag(tag)
+    except Exception:
+        logger.exception("could not remove the job tag of the run")
+
+
+@contextmanager
+def _cancelling(spark: SparkSession, tag: str) -> Iterator[None]:
+    """Cancel the jobs tagged ``tag`` every 0.2 s until the block ends.
+
+    One cancel is not enough: the JVM may still be planning the interrupted action, whose job
+    then starts after the cancel and holds the executors that the audit row needs.
+    """
+    done = threading.Event()
+
+    def cancel() -> None:
+        try:
+            while True:
+                spark.sparkContext.cancelJobsWithTag(tag)
+                if done.wait(0.2):
+                    return
+        except Exception:
+            logger.exception("could not cancel the Spark jobs of the run")
+
+    canceller = threading.Thread(target=cancel, name="gtdp-cancel-run", daemon=True)
+    canceller.start()
+    try:
+        yield
+    finally:
+        done.set()
+        canceller.join()
 
 
 def _append(
