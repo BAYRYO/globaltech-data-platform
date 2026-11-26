@@ -13,7 +13,9 @@ prenant le kit comme référentiel. Ce document fixe ce qu'il produit. Tout le p
   Chaque fichier a son propre `random.Random` dérivé de `(seed, nom du fichier)`.
 - **Vérité terrain** : chaque dépôt contient un `_MANIFEST.json` qui compte les anomalies
   injectées par type. Une ligne porte **au plus une** anomalie, donc les comptes de rejets
-  attendus sont exacts et testables.
+  attendus sont exacts et testables. Chaque type d'anomalie applicable à un fichier y apparaît
+  **au moins une fois**, même quand le taux appliqué au volume donne moins d'une ligne (profil
+  `ci`, dépôts J2 et J3).
 - **Bibliothèque standard uniquement** (Python ≥ 3.11), pour tourner partout, y compris dans le
   conteneur client du cluster.
 
@@ -32,7 +34,7 @@ Volume journalier de J2 et J3 = volume annuel de J1 / 365, pour une série quoti
 
 | Profil | Commandes J1 | Commandes J2, J3 (chacun) | Logs web J1 | Usage |
 | --- | --- | --- | --- | --- |
-| `ci` | 20 000 (échantillon du kit) | ~55 | 5 000 | tests, CI |
+| `ci` | 20 000 (10 000 lignes du kit + 10 000 synthétiques) | ~55 | 5 000 | tests, CI |
 | `dev` (défaut) | 1 000 000 | ~2 740 | 100 000 | démonstration |
 | `full` | 10 000 000 | ~27 400 | 1 000 000 | benchmarks (10 M+ lignes) |
 

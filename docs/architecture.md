@@ -139,7 +139,7 @@ réécriture d'un micro-batch rejoué idempotente. Le checkpoint HDFS permet la 
 ```
 src/gtdp/
 ├── config.py        configuration TOML + surcharges d'environnement
-├── logging.py       journalisation structurée (JSON)
+├── log.py           journalisation structurée (JSON)
 ├── spark.py         construction de la SparkSession
 ├── audit.py         table d'audit
 ├── schemas.py       schémas explicites des sources
