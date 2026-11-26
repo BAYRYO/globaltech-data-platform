@@ -2,7 +2,7 @@
 
 import logging
 
-from gtdp.audit import Layer
+from gtdp.audit import Layer, Run, RunStopped
 from gtdp.config import ConfigError
 from gtdp.io import path_exists
 from gtdp.jobs.registry import JobContext, job
@@ -46,21 +46,28 @@ def streaming_sensors(ctx: JobContext) -> None:
     totals = Totals()
     trigger = {"processingTime": f"{settings.trigger_interval_s} seconds"}
     queries = start_queries(spark, paths, settings, totals, trigger)
+    reason = "query failed"
     try:
         reason = wait_for_stop(
             queries, totals, settings, lambda: path_exists(spark, paths.stop_marker)
         )
+    except RunStopped as stop:
+        reason = f"signal {stop.signal.name}"
+        raise
     finally:
         stop_queries(queries)
-    collect_progress(queries, totals)
+        collect_progress(queries, totals)
+        _report(ctx.run, totals.snapshot(), reason)
     if reason == "stop marker":
         delete_path(spark, paths.stop_marker)
 
-    metrics = totals.snapshot()
-    counters = ctx.run.counters
+
+def _report(run: Run, metrics: dict[str, dict[str, int]], reason: str) -> None:
+    """Fill the counters and metrics of the audit row, whatever ended the stream."""
+    counters = run.counters
     counters.rows_in = metrics[AGGREGATES]["input_rows"]
     counters.rows_out = metrics[AGGREGATES]["rows_written"] + metrics[ALERTS]["rows_written"]
     counters.rows_rejected = metrics[REJECTS]["rows_written"]
     counters.rows_duplicated = metrics[AGGREGATES]["rows_deduplicated"]
-    ctx.run.metrics.update(stop_reason=reason, queries=metrics)
+    run.metrics.update(stop_reason=reason, queries=metrics)
     logger.info("stream stopped", extra={"stop_reason": reason, "queries": metrics})
