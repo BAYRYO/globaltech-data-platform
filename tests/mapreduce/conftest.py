@@ -210,23 +210,18 @@ def mapreduce_pipe():
 
 
 def _mapreduce_pipe(drop: Drop, *, combine_halves: bool = False) -> Output:
-    """``cat orders | mapper.py customers | sort | reducer.py``, as Hadoop Streaming chains them.
+    """``(mapper.py customers < orders, for each file) | sort | reducer.py``, as Hadoop chains them.
 
-    With ``combine_halves``, each order file goes through its own ``mapper | sort | reducer.py
-    --combine``, as each map task's output goes through the combiner, before the final sort and
-    reduce.
+    Each order file goes to its own mapper, as each split goes to its own map task. With
+    ``combine_halves``, each mapper's output also goes through ``sort | reducer.py --combine``, as
+    each map task's output goes through the combiner, before the final sort and reduce.
     """
     python = shlex.quote(sys.executable)
     mapper = f"{python} {shlex.quote(str(MAPPER))} {_quote(drop.customers)}"
     reducer = f"{python} {shlex.quote(str(REDUCER))}"
-    if combine_halves:
-        maps = "; ".join(
-            f"cat {_quote([f])} | {mapper} | LC_ALL=C sort | {reducer} --combine"
-            for f in drop.orders
-        )
-        command = f"({maps}) | LC_ALL=C sort | {reducer}"
-    else:
-        command = f"cat {_quote(drop.orders)} | {mapper} | LC_ALL=C sort | {reducer}"
+    combiner = f" | LC_ALL=C sort | {reducer} --combine" if combine_halves else ""
+    maps = " && ".join(f"{mapper} < {_quote([f])}{combiner}" for f in drop.orders)
+    command = f"({maps}) | LC_ALL=C sort | {reducer}"
     done = subprocess.run(
         ["bash", "-c", f"set -o pipefail; {command}"],
         capture_output=True,
