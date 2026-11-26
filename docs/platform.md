@@ -335,9 +335,9 @@ scripts/cluster/client.sh bash -c 'hadoop jar "$HADOOP_STREAMING_JAR" \
 | `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x`, par défaut aussi | 30 Go | 200 000 |
 | `/datalake/silver/rejects` | `etl:datalake` | `750` | `group:analysts:---`, par défaut aussi | | |
 | `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x`, par défaut aussi | 10 Go | 200 000 |
-| `/datalake/streaming`, `checkpoints/`, `rejects/` | `etl:datalake` | `750` | | 5 Go | 500 000 |
+| `/datalake/streaming`, `sensors/checkpoints/`, `rejects/` | `etl:datalake` | `750` | | 5 Go | 500 000 |
 | `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x`, par défaut aussi | 2 Go | 100 000 |
-| `/spark-logs` | `spark:hadoop` | `1777` | | 5 Go | 100 000 |
+| `/spark-logs` | `spark:hadoop` | `1777` | | 15 Go | 100 000 |
 | `/app-logs`, `/tmp` | `hadoop:hadoop` | `1777` | | | |
 | `/mr-history`, `/user`, `/apps`, `/apps/spark` | `hadoop:hadoop` | `755` | | | |
 | `/user/etl` | `etl:datalake` | `755` | | | |
@@ -358,6 +358,10 @@ Choix de droits :
   jamais supprimer `/datalake/silver/rejects` lui-même.
 - **Gold et ops.** L'ACL par défaut fait hériter la lecture aux tables et aux fichiers d'audit
   créés plus tard.
+- **Event logs Spark.** Une application de streaming écrit environ 200 Mo d'event log en
+  11 minutes (940 jobs Spark, mesuré au lot 5). Les event logs sont donc compressés (zstd) et
+  découpés en fichiers de 128 Mo (`spark.eventLog.rolling`), le History Server purge au-delà de
+  7 jours, et `/spark-logs` a un quota de 15 Go.
 - **Quotas.** Un quota d'espace HDFS compte les octets répliqués. 30 Go en réplication 3 font
   donc 10 Go de données. Un quota de noms compte les fichiers et répertoires : il borne la
   prolifération de petits fichiers (un micro-batch de streaming en crée plusieurs, d'où 500 000
