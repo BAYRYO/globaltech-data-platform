@@ -98,7 +98,10 @@ def reasons(spark, source, base, change, **kwargs):
     [
         ({}, []),
         ({"transaction_id": None}, ["MISSING_KEY"]),
+        ({"transaction_id": ""}, ["MISSING_KEY"]),
+        ({"transaction_id": "  "}, ["MISSING_KEY"]),
         ({"customer_id": None}, ["NULL_CUSTOMER"]),
+        ({"customer_id": ""}, ["NULL_CUSTOMER"]),
         ({"customer_id": "  "}, ["NULL_CUSTOMER"]),
         ({"customer_id": "C999123"}, ["UNKNOWN_CUSTOMER"]),
         ({"product_id": "P90001"}, ["UNKNOWN_PRODUCT"]),
@@ -108,23 +111,37 @@ def reasons(spark, source, base, change, **kwargs):
         ({"quantity": "abc"}, ["BAD_QUANTITY"]),
         ({"quantity": "1.5"}, ["BAD_QUANTITY"]),
         ({"quantity": None}, ["BAD_QUANTITY"]),
+        ({"quantity": ""}, ["BAD_QUANTITY"]),
+        ({"quantity": "  "}, ["BAD_QUANTITY"]),
         ({"quantity": "12"}, []),
         ({"unit_price_eur": "-12.50"}, ["BAD_PRICE"]),
         ({"unit_price_eur": "0"}, ["BAD_PRICE"]),
         ({"unit_price_eur": None}, ["BAD_PRICE"]),
+        ({"unit_price_eur": ""}, ["BAD_PRICE"]),
+        ({"unit_price_eur": "  "}, ["BAD_PRICE"]),
+        ({"unit_price_eur": "abc"}, ["BAD_PRICE"]),
         ({"unit_price_eur": "12.345"}, ["BAD_PRICE"]),
         ({"unit_price_eur": "26.9"}, []),
         ({"event_time": "2025/03/04 10:00"}, ["BAD_TIMESTAMP"]),
         ({"event_time": "N/A"}, ["BAD_TIMESTAMP"]),
         ({"event_time": None}, ["BAD_TIMESTAMP"]),
+        ({"event_time": ""}, ["BAD_TIMESTAMP"]),
+        ({"event_time": "  "}, ["BAD_TIMESTAMP"]),
+        ({"event_time": " 2026-01-01T10:00:00"}, ["BAD_TIMESTAMP"]),
         ({"event_time": "2025-03-04 10:00:00"}, ["BAD_TIMESTAMP"]),
         ({"event_time": "2025-02-30T10:00:00"}, ["BAD_TIMESTAMP"]),
+        ({"event_time": "2025-13-01T10:00:00"}, ["BAD_TIMESTAMP"]),
+        ({"event_time": "2025-01-01T25:00:00"}, ["BAD_TIMESTAMP"]),
+        ({"event_time": "2026-02-29T10:00:00"}, ["BAD_TIMESTAMP"]),
+        ({"event_time": "2024-02-29T10:00:00"}, []),
         ({"event_time": "2026-01-03T00:00:00"}, []),
         ({"event_time": "2026-01-03T00:00:01"}, ["FUTURE_TIMESTAMP"]),
         ({"channel": "fax"}, ["BAD_ENUM"]),
         ({"channel": "WEB"}, ["BAD_ENUM"]),
         ({"channel": None}, ["BAD_ENUM"]),
+        ({"channel": ""}, ["BAD_ENUM"]),
         ({"status": "UNKNOWN"}, ["BAD_ENUM"]),
+        ({"status": None}, ["BAD_ENUM"]),
         ({"discount_pct": "0.300"}, []),
         ({"discount_pct": "0.301"}, ["BAD_DISCOUNT"]),
         ({"discount_pct": "-0.100"}, ["BAD_DISCOUNT"]),
@@ -137,11 +154,19 @@ def test_order_rules(spark, change, expected):
 
 
 def test_a_discount_absent_or_empty_is_zero(spark):
+    discounts = [None, "0.125", "", "  "]
     rows = classified(
-        spark, "orders", [ORDER, {**ORDER, "transaction_id": "T2", "discount_pct": "0.125"}]
+        spark,
+        "orders",
+        [{**ORDER, "transaction_id": f"T{i}", "discount_pct": d} for i, d in enumerate(discounts)],
     )
 
-    assert [str(row.discount_pct) for row in rows] == ["0.000", "0.125"]
+    assert [(str(row.discount_pct), row.reject_reasons) for row in rows] == [
+        ("0.000", []),
+        ("0.125", []),
+        ("0.000", []),
+        ("0.000", []),
+    ]
 
 
 def test_a_malformed_record_gets_that_reason_alone(spark):
@@ -190,6 +215,7 @@ def test_the_key_survivor_does_not_depend_on_row_order(spark):
     [
         ({}, []),
         ({"email": None}, ["MISSING_EMAIL"]),
+        ({"email": ""}, ["MISSING_EMAIL"]),
         ({"email": "  "}, ["MISSING_EMAIL"]),
         ({"email": "helene.lefevre1example.com"}, ["BAD_EMAIL"]),
         ({"email": "helene.lefevre1@@example.com"}, ["BAD_EMAIL"]),
@@ -197,7 +223,13 @@ def test_the_key_survivor_does_not_depend_on_row_order(spark):
         ({"email": "helene lefevre1@example.com"}, ["BAD_EMAIL"]),
         ({"email": " HELENE.LEFEVRE1@EXAMPLE.COM "}, []),
         ({"region": None}, ["MISSING_REGION"]),
+        ({"region": ""}, ["MISSING_REGION"]),
+        ({"region": "  "}, ["MISSING_REGION"]),
         ({"signup_date": "27/02/2024"}, ["BAD_DATE"]),
+        ({"signup_date": "2024-02-30"}, ["BAD_DATE"]),
+        ({"signup_date": "2024/02/27"}, ["BAD_DATE"]),
+        ({"signup_date": None}, ["BAD_DATE"]),
+        ({"signup_date": "  "}, ["BAD_DATE"]),
         ({"signup_date": "2026-01-03"}, ["FUTURE_SIGNUP"]),
         ({"signup_date": "2026-01-02"}, []),
     ],
@@ -216,14 +248,22 @@ def test_customer_values_are_repaired_where_the_flag_says(spark):
             {**CUSTOMER, "region": None},
             {**CUSTOMER, "customer_id": "C2", "signup_date": "27/02/2024"},
             {**CUSTOMER, "customer_id": "C3", "signup_date": "31/02/2024"},
+            {**CUSTOMER, "customer_id": "C4", "region": "  ", "signup_date": "2024-02-30"},
         ],
     )
 
-    assert [row.country for row in rows] == ["UNKNOWN", "FR", "FR"]
-    assert [row.signup_date for row in rows] == [date(2024, 2, 27), date(2024, 2, 27), None]
+    assert [(row.region, row.country) for row in rows] == [
+        (None, "UNKNOWN"),
+        ("FR-IDF", "FR"),
+        ("FR-IDF", "FR"),
+        (None, "UNKNOWN"),
+    ]
+    assert [row.signup_date for row in rows] == [date(2024, 2, 27), date(2024, 2, 27), None, None]
 
 
-@pytest.mark.parametrize("updated_at", ["N/A", "01/01/2026 08:00", "2026-01-01", None])
+@pytest.mark.parametrize(
+    "updated_at", ["N/A", "01/01/2026 08:00", "2026-01-01", "2026-02-30T08:00:00", "", "  ", None]
+)
 def test_a_customer_with_an_unreadable_updated_at_is_kept_and_flagged(spark, updated_at):
     (row,) = classified(spark, "customers", [{**CUSTOMER, "updated_at": updated_at}])
 
@@ -262,8 +302,9 @@ def test_an_unreadable_updated_at_ranks_last_in_the_scd1_choice(spark):
     assert row.region == "FR-IDF"
 
 
-def test_a_customer_without_id_is_rejected(spark):
-    assert reasons(spark, "customers", CUSTOMER, {"customer_id": None}) == ["MISSING_KEY"]
+@pytest.mark.parametrize("customer_id", [None, "", "  "])
+def test_a_customer_without_id_is_rejected(spark, customer_id):
+    assert reasons(spark, "customers", CUSTOMER, {"customer_id": customer_id}) == ["MISSING_KEY"]
 
 
 def test_a_restated_customer_is_a_key_duplicate(spark):
@@ -279,10 +320,17 @@ def test_a_restated_customer_is_a_key_duplicate(spark):
     [
         ({}, []),
         ({"product_id": None}, ["MISSING_KEY"]),
+        ({"product_id": "  "}, ["MISSING_KEY"]),
         ({"unit_price_eur": "abc"}, ["BAD_PRICE"]),
         ({"unit_price_eur": "-12.50"}, ["BAD_PRICE"]),
+        ({"unit_price_eur": None}, ["BAD_PRICE"]),
         ({"category": None}, ["NULL_CATEGORY"]),
+        ({"category": ""}, ["NULL_CATEGORY"]),
+        ({"category": "  "}, ["NULL_CATEGORY"]),
         ({"updated_at": "2025-06-01"}, ["BAD_TIMESTAMP"]),
+        ({"updated_at": "2025-02-30T00:00:00"}, ["BAD_TIMESTAMP"]),
+        ({"updated_at": None}, ["BAD_TIMESTAMP"]),
+        ({"updated_at": "  "}, ["BAD_TIMESTAMP"]),
     ],
 )
 def test_product_rules(spark, change, expected):
@@ -422,6 +470,12 @@ def test_valid_combined_log_variants_are_parsed(spark, change, expected):
     assert (row.ip_prefix, row.method, row.path, row.user_agent) == expected
 
 
+def test_the_same_log_line_twice_in_a_day_is_one_request(spark):
+    rows = classified(spark, "weblogs", [{"value": LOG}, {"value": LOG}])
+
+    assert sorted(row[DISPOSITION] for row in rows) == ["clean", "duplicated.exact"]
+
+
 def test_one_address_has_one_hash_whatever_its_case(spark):
     lower, upper = (LOG.replace("198.18.12.34", ip) for ip in ("2001:db8::1", "2001:DB8::1"))
 
@@ -433,6 +487,8 @@ def test_one_address_has_one_hash_whatever_its_case(spark):
 @pytest.mark.parametrize(
     "line",
     [
+        "",
+        "   ",
         LOG[:60],
         LOG.replace('"', ""),
         "01/Jan/2026:20:21:48 +0000 worker process exited on signal 9, client: 198.18.12.34",
