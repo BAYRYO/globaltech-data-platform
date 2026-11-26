@@ -22,3 +22,23 @@ shuffle_partitions = 8
 adaptive = true
 
 # [paths] has no common value: each environment sets its own in conf/env/<env>.toml.
+
+[streaming]
+# Sensor stream job streaming-sensors (ADR-0008, docs/runbook/streaming.md).
+# Seconds between two micro-batches; 0 starts the next one as soon as the previous one ends.
+trigger_interval_s = 5
+# Most new files read by one micro-batch: one minute of stream (one file per 5 s). Keep it at 18
+# or less, otherwise an event 5 minutes late can pass the 2-minute watermark after a restart.
+max_files_per_trigger = 12
+# Partitions of the state (deduplication, open windows). Fixed by the checkpoint at its creation.
+state_partitions = 4
+# Stop the job, with a SUCCESS audit row, after this many triggers in a row without new data and
+# without a batch to run. 0 runs until stopped (stop marker, see the runbook).
+stop_after_idle_triggers = 0
+
+[streaming.thresholds]
+# Alert limits per metric (docs/data-contract.md#capteurs): an event alerts when its value is
+# greater than "above" or lower than "below".
+temperature = { above = 85.0 }
+vibration = { above = 7.1 }
+pressure = { below = 4.0, above = 8.0 }
