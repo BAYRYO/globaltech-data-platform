@@ -92,28 +92,52 @@ deux avant tout démon. Chaque valeur est donc fixée explicitement.
 | `mr-history` | 1 | 384 Mio | | 640 Mio | 640 Mio |
 | `spark-history` | 1 | 512 Mio | | 768 Mio | 768 Mio |
 | Cluster | | | | | 12 032 Mio (11,75 Gio) |
-| Conteneur client (driver Spark) | 1 | 1 024 Mio | | 1 408 Mio | 13 440 Mio (13,1 Gio) |
+| Conteneur client (driver Spark en mode client) | 1 | 896 Mio | | 1 280 Mio | 13 312 Mio (13,0 Gio) |
 
 Le plafond par instance vaut le tas plus 256 Mio de mémoire hors tas (métaspace, threads, code
-JIT), plus la mémoire YARN pour un NodeManager. YARN tue un conteneur qui dépasse sa réservation
-(contrôle de mémoire physique actif). `docker stats` mesure 2,6 Gio pour le cluster au repos et
-4,9 Gio au pic de `smoke/run.sh`, client compris.
+JIT), plus la mémoire YARN pour un NodeManager. Pour le conteneur client, il vaut le tas du driver
+plus les 384 Mio de surcoût que Spark réserve aussi pour un conteneur YARN (mémoire hors tas et
+processus Python du driver). YARN tue un conteneur qui dépasse sa réservation (contrôle de mémoire
+physique actif). `docker stats` mesure 2,6 Gio pour le cluster au repos et 4,9 Gio au pic de
+`smoke/run.sh`, client compris.
+
+Deux drivers en mode client en même temps (le streaming et un batch) font deux conteneurs client.
+YARN ne loge alors que deux ApplicationMasters et deux exécuteurs, soit 4 352 Mio au plus. Le
+pire cas vaut donc 6 912 Mio de démons, plus 4 352 Mio de conteneurs YARN, plus 2 × 1 280 Mio de
+drivers : 13 824 Mio (13,5 Gio). Au-delà de deux drivers en mode client, passer les batchs en mode
+`cluster`.
 
 Tailles par défaut des applications, dans `docker/conf/spark/spark-defaults.conf` et
 `docker/conf/hadoop/mapred-site.xml` :
 
 | Application | Conteneur | Mémoire demandée | Réservation YARN |
 | --- | --- | --- | --- |
-| Spark | driver (mode client, hors YARN) | 1 Gio | |
-| Spark | ApplicationMaster | 512 Mio + 384 Mio | 1 024 Mio |
-| Spark | 2 exécuteurs, 2 cœurs chacun | 1 Gio + 384 Mio | 1 536 Mio chacun |
+| Spark | driver en mode client (conteneur client, hors YARN) | 896 Mio | |
+| Spark | ApplicationMaster en mode client | 512 Mio + 384 Mio | 896 Mio |
+| Spark | driver en mode cluster (il est l'ApplicationMaster) | 896 Mio + 384 Mio | 1 280 Mio |
+| Spark | 2 exécuteurs, 2 cœurs chacun | 896 Mio + 384 Mio | 1 280 Mio chacun |
 | MapReduce | ApplicationMaster | 768 Mio | 768 Mio |
 | MapReduce | map ou reduce | 512 Mio | 512 Mio |
 
-YARN arrondit chaque demande au multiple de 256 Mio supérieur. Une application Spark par défaut
-réserve 4 096 Mio sur les 5 120 Mio du cluster. Pour faire tourner deux applications Spark en
-même temps (le streaming et un batch, par exemple), réduire `spark.executor.instances` à 1 pour
-chacune.
+YARN arrondit chaque demande au multiple supérieur de `yarn.scheduler.minimum-allocation-mb`,
+128 Mio, dont toutes ces tailles sont déjà des multiples. Un NodeManager de 2 560 Mio loge deux
+exécuteurs, ou un exécuteur avec un ApplicationMaster Spark en mode client (2 176 Mio), ou
+un exécuteur avec un job MapReduce (1 280 + 768 + 512 = 2 560 Mio).
+
+Placements mesurés sur la machine de référence, une exécution par cas : conteneurs et mémoire par
+l'API REST du ResourceManager, exécuteurs actifs par l'API REST de Spark derrière le proxy YARN.
+
+| Cas | Demandes (Mio) | Résultat |
+| --- | --- | --- |
+| Une application par défaut, mode client | AM 896, 2 × 1 280 | 2 exécuteurs sur 2 |
+| Une application par défaut, mode cluster | driver 1 280, 2 × 1 280 | 2 exécuteurs sur 2 |
+| Streaming (client) et batch (client), `spark.executor.instances=1` chacun | 2 × (896 + 1 280) | 1 exécuteur chacun, en même temps |
+| Streaming (client) et batch (cluster), `spark.executor.instances=1` chacun | 896 + 1 280, 1 280 + 1 280 | 1 exécuteur chacun, en même temps |
+| MapReduce `pi` (AM et 1 map) à côté d'une application à 1 exécuteur | 896 + 1 280, 768 + 512 | `pi` en 14 s, sans attente |
+| MapReduce `pi` à côté d'une application par défaut | 896 + 2 × 1 280, 768 + 512 | `pi` en 14 s, sans attente |
+
+Pour faire tourner deux applications Spark en même temps (le streaming et un batch, par exemple),
+réduire `spark.executor.instances` à 1 pour chacune.
 
 Pour changer la mémoire des NodeManagers, copier `.env.example` en `.env` et modifier
 `YARN_NM_MEMORY_MB` et `YARN_NM_VCORES`, puis relancer `scripts/cluster/up.sh`. La CI utilise
