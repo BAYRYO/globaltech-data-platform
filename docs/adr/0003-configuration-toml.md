@@ -9,16 +9,41 @@ jobs tournent en local (tests) et sur le cluster (YARN, chemins HDFS).
 
 ## Décision
 
-`conf/app.toml` porte les valeurs communes, `conf/env/<env>.toml` les surcharges (`local`,
-`cluster`), et toute clé peut être surchargée par une variable `GTDP_<SECTION>__<CLE>`. Le
-fichier est lu par `tomllib` (bibliothèque standard de Python 3.11), donc sans dépendance. Les
-secrets (sel de pseudonymisation) ne sont jamais dans les fichiers : uniquement en variable
-d'environnement.
+`conf/app.toml` porte les valeurs communes et `conf/env/<env>.toml` les valeurs d'un
+environnement (`local`, `cluster`). Les fichiers sont lus par `tomllib` (bibliothèque standard de
+Python 3.11), donc sans dépendance. Chaque clé peut être surchargée, et la dernière source
+l'emporte :
+
+1. `conf/app.toml` ;
+2. `conf/env/<env>.toml`, où `<env>` est l'option `--env` de `run.py` ;
+3. une variable d'environnement `GTDP_<SECTION>__<CLE>`, par exemple
+   `GTDP_SPARK__SHUFFLE_PARTITIONS=64` ;
+4. l'option `run.py --set <section>.<clé>=<valeur>`.
+
+Une section ou une clé inconnue, ou une valeur du mauvais type, arrête le job avant le démarrage
+de Spark (`ConfigError`, code de sortie 2).
+
+Chemins : une valeur avec schéma (`hdfs://…`, `file://…`) est gardée telle quelle. Sur le
+cluster, un chemin absolu sans schéma reçoit le système de fichiers de `paths.default_fs`
+(`hdfs://namenode:8020`), et il est refusé si `default_fs` manque. En local, un chemin relatif
+part de la racine du dépôt. Aucun chemin ne dépend donc du `fs.defaultFS` du conteneur.
+
+Propriétés Spark : une propriété passée à `spark-submit` (`--conf` ou `spark-defaults.conf`)
+l'emporte sur la configuration gtdp. `build_spark` journalise chaque valeur effective avec son
+origine (`spark-submit` ou `gtdp`).
+
+Secrets : le sel de pseudonymisation n'est jamais dans les fichiers, seulement dans la variable
+`GTDP_PSEUDO_SALT`. Il est obligatoire sur le cluster, et son absence rend le code de sortie 2.
+En local, un sel de développement fixe le remplace, avec un avertissement.
 
 ## Conséquences
 
 - Un job reçoit `--env cluster` et ne contient aucun chemin en dur.
-- La configuration effective est journalisée au démarrage (secrets masqués).
+- La configuration effective est journalisée au démarrage, le sel masqué (`***`).
+- Les journaux sont des lignes JSON (`gtdp.log`) écrites sur la sortie d'erreur du driver
+  Python. Sous `spark-submit`, la JVM recopie cette sortie sur sa propre sortie standard : les
+  lignes JSON sont sur la sortie standard de `spark-submit`, les lignes log4j de Spark sur sa
+  sortie d'erreur.
 
 ## Alternatives écartées
 
