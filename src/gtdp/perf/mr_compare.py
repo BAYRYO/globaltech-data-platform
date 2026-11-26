@@ -11,9 +11,9 @@ the ResourceManager (elapsed time, memory and vcore seconds), the MapReduce JobH
 A run starts only when YARN has no other application to run, and counts as exclusive only if no
 other application overlapped it; ``--no-wait`` skips the wait (correctness runs) and the report
 flags the runs that were not exclusive. Every run of both engines must give the revenue of the
-first MapReduce run to the cent and the same counters, and the Quality counters must equal the
-anomalies of the drop manifests. The tool writes ``report.md``, ``runs.json`` and the logs of
-each run to ``--out``, and exits with 1 when a check fails.
+first MapReduce run byte for byte and the same counters, and the Quality counters must equal the
+non-zero anomalies of the drop manifests. The tool writes ``report.md``, ``runs.json`` and the
+logs of each run to ``--out``, and exits with 1 when a check fails.
 """
 
 from __future__ import annotations
@@ -66,10 +66,14 @@ JOB = "org.apache.hadoop.mapreduce.JobCounter"
 
 @dataclass(frozen=True)
 class Result:
-    """What a run computed: country -> (revenue_eur, completed lines), and its counters."""
+    """What a run computed: its revenue output, byte for byte, and its counters."""
 
-    revenue: dict[str, tuple[Decimal, int]]
+    output: str
     counters: dict[str, int]
+
+    @property
+    def revenue(self) -> dict[str, tuple[Decimal, int]]:
+        return parse_revenue(self.output)
 
 
 @dataclass
@@ -164,12 +168,15 @@ def manifest_quality(manifests: Iterable[dict]) -> dict[str, int]:
                 expected.update(
                     {code: n for code, n in entry["anomalies"].items() if code in QUALITY_CODES}
                 )
+    expected = +expected
     return {f"Quality.{code}": n for code, n in sorted(expected.items())}
 
 
 def differences(reference: Result, other: Result) -> list[str]:
-    """Each country or counter where ``other`` differs from ``reference``, both values shown."""
+    """How ``other`` differs from ``reference``: its output bytes, then each country or counter."""
     found = []
+    if other.output != reference.output:
+        found.append(f"output {other.output!r} != {reference.output!r}")
     for name, ref, got in (
         ("revenue", reference.revenue, other.revenue),
         ("counter", reference.counters, other.counters),
@@ -253,7 +260,9 @@ class Cluster:
         return done.stdout
 
     def hdfs_cat(self, path: str) -> str:
-        return self.run_quiet("hdfs", "dfs", "-cat", path)
+        """The bytes of ``path`` as text; an invalid UTF-8 byte maps to a surrogate, not U+FFFD."""
+        done = subprocess.run(["hdfs", "dfs", "-cat", path], capture_output=True, check=True)
+        return done.stdout.decode("utf-8", "surrogateescape")
 
     def hdfs_ls(self, path: str) -> list[str]:
         done = subprocess.run(
@@ -293,8 +302,7 @@ def run_mapreduce(cluster: Cluster, run: int, landing: str, day: date, output: s
     stdout = cluster.run(
         f"mapreduce-{run}", "bash", "scripts/mapreduce/run_mr.sh", landing, day.isoformat(), output
     )
-    *result_lines, last = stdout.strip().splitlines()
-    job_id = last.removeprefix("job_id=")
+    job_id = stdout.strip().splitlines()[-1].removeprefix("job_id=")
     job = cluster.poll(f"{JHS}/{job_id}", lambda p: p["job"]["state"] == "SUCCEEDED")["job"]
     groups = mr_counters(cluster.get(f"{JHS}/{job_id}/counters"))
     conf = {p["name"]: p["value"] for p in cluster.get(f"{JHS}/{job_id}/conf")["conf"]["property"]}
@@ -318,7 +326,7 @@ def run_mapreduce(cluster: Cluster, run: int, landing: str, day: date, output: s
             conf["mapreduce.input.fileinputformat.inputdir"].split(",")
             + [posixpath.dirname(f) for f in customer_files]
         ),
-        result=Result(parse_revenue("\n".join(result_lines)), result_counters(groups)),
+        result=Result(cluster.hdfs_cat(f"{output}/part-*"), result_counters(groups)),
         details={
             "killed_map_attempts": launched.get("NUM_KILLED_MAPS", 0),
             "map_output_records": task["MAP_OUTPUT_RECORDS"],
@@ -369,7 +377,7 @@ def run_spark(cluster: Cluster, run: int, landing: str, day: date) -> Measure:
         inputs=sorted(
             {posixpath.dirname(path) for path in done["order_files"]} | set(done["customer_dirs"])
         ),
-        result=Result(parse_revenue(cluster.hdfs_cat(f"{output}/revenue/part-*")), counters),
+        result=Result(cluster.hdfs_cat(f"{output}/revenue/part-*"), counters),
         details={
             "spark_jobs": len(jobs),
             "executor_run_ms": stages["executorRunTime"],

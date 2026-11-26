@@ -2,6 +2,8 @@
 
 from decimal import Decimal
 
+import pytest
+
 from gtdp.perf.mr_compare import (
     Measure,
     Result,
@@ -17,7 +19,7 @@ from gtdp.perf.mr_compare import (
     stage_totals,
 )
 
-RESULT = Result({"FR": (Decimal("10.00"), 2)}, {"Lines.COMPLETED": 2, "Quality.BAD_PRICE": 1})
+RESULT = Result("FR\t10.00\t2\n", {"Lines.COMPLETED": 2, "Quality.BAD_PRICE": 1})
 
 
 def measure(engine: str, result: Result = RESULT, inputs=("/orders/d=1",), lines_read=3):
@@ -91,12 +93,54 @@ def test_the_manifests_predict_the_quality_counters_of_their_orders():
     assert manifest_quality(manifests) == {"Quality.BAD_PRICE": 3}
 
 
+def test_an_anomaly_the_manifest_counts_zero_times_is_not_expected():
+    manifests = [{"files": [_orders({"BAD_PRICE": 1, "BAD_ENUM": 0})]}]
+
+    assert checks([measure("mapreduce"), measure("spark")], manifest_quality(manifests)) == []
+
+
 def test_a_one_cent_gap_and_a_missing_counter_are_both_reported():
-    other = Result({"FR": (Decimal("10.01"), 2)}, {"Lines.COMPLETED": 2})
+    other = Result("FR\t10.01\t2\n", {"Lines.COMPLETED": 2})
 
     assert differences(RESULT, other) == [
+        r"output 'FR\t10.01\t2\n' != 'FR\t10.00\t2\n'",
         "revenue FR: (Decimal('10.00'), 2) != (Decimal('10.01'), 2)",
         "counter Quality.BAD_PRICE: 1 != None",
+    ]
+
+
+MR_OUTPUT = "DE\t0.12\t3\nFR\t97.40\t6\n"
+OUTPUTS = {
+    "the same bytes": MR_OUTPUT,
+    "one cent": "DE\t0.13\t3\nFR\t97.40\t6\n",
+    "one line": "DE\t0.12\t4\nFR\t97.40\t6\n",
+    "a missing country": "FR\t97.40\t6\n",
+    "an extra country": MR_OUTPUT + "IT\t1.00\t1\n",
+    "a trailing zero dropped": "DE\t0.12\t3\nFR\t97.4\t6\n",
+    "an exponent and a sign": "DE\t1.2E-1\t3\nFR\t+97.40\t6\n",
+    "reordered lines": "FR\t97.40\t6\nDE\t0.12\t3\n",
+    "padded counts": "DE\t0.12\t 3 \nFR\t97.40\t06\n",
+    "a duplicate country, wrong first": "DE\t0.12\t3\nFR\t1.00\t1\nFR\t97.40\t6\n",
+    "a duplicate line": MR_OUTPUT + "FR\t97.40\t6\n",
+    "digits below the cent": "DE\t0.120\t3\nFR\t97.400000\t6\n",
+    "no final newline": MR_OUTPUT.removesuffix("\n"),
+}
+
+
+@pytest.mark.parametrize("name", OUTPUTS)
+def test_checks_fail_unless_both_outputs_have_the_same_bytes(name):
+    spark = Result(OUTPUTS[name], RESULT.counters)
+    measures = [measure("mapreduce", Result(MR_OUTPUT, RESULT.counters)), measure("spark", spark)]
+
+    assert bool(checks(measures, None)) == (OUTPUTS[name] != MR_OUTPUT)
+
+
+def test_a_counter_moved_to_another_reason_fails_the_checks():
+    moved = Result(RESULT.output, {"Lines.COMPLETED": 1, "Quality.BAD_PRICE": 2})
+
+    assert checks([measure("mapreduce"), measure("spark", moved)], None) == [
+        "spark #1: counter Lines.COMPLETED: 2 != 1",
+        "spark #1: counter Quality.BAD_PRICE: 1 != 2",
     ]
 
 
