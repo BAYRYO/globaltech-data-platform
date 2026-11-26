@@ -1,10 +1,12 @@
 """KAN-32 to KAN-36 on the generated ci drops of seed 42: silver then gold, day after day."""
 
 import json
+from datetime import date
 
 import pytest
 from pyspark.sql import functions as F
 
+from gtdp.gold import report
 from gtdp.gold.kpis import KPIS
 from gtdp.gold.tables import FACT_SALES, table_path
 from gtdp.io import read_table
@@ -66,3 +68,27 @@ def test_each_gold_run_checks_the_star_and_builds_every_indicator(generated):
     assert all(set(m["build_violations"].values()) == {0} for m in metrics)
     assert set(metrics[-1]["kpi_rows"]) == set(KPIS)
     assert all(metrics[-1]["kpi_rows"].values())
+
+
+def test_the_report_finds_every_order_date_built_and_the_star_sound(generated):
+    spark, cfg = generated.spark, generated.cfg
+    dates = report.order_dates(spark, cfg).collect()
+    versions, around = report.price_history(spark, cfg)
+
+    assert {row.status for row in dates} == {"ok"}
+    assert any(row.drops > 1 for row in dates)
+    assert {status for _, _, status in report.integrity(report.star(spark, cfg))} <= {"ok", "info"}
+    assert all(frame.count() > 0 for _, frame in report.samples(spark, cfg))
+    assert {row.applicable_unit_price for row in around.collect()} == {
+        row.unit_price_eur for row in versions.where("version <= 2").collect()
+    }
+
+
+def test_the_explain_shows_the_broadcast_and_the_sort_merge_interval_join(generated, capsys):
+    report.explain(generated.spark, generated.cfg, date(2026, 1, 2))
+
+    default, disabled = capsys.readouterr().out.split("== the same build")
+    assert "BroadcastHashJoin" in default
+    assert "SortMergeJoin" not in default
+    assert "SortMergeJoin" in disabled
+    assert "BroadcastHashJoin" not in disabled
