@@ -1,4 +1,4 @@
-"""Print the silver reconciliation, to check a run or a replay; exit 1 on any mismatch.
+"""Print the silver reconciliation, to check a run or a replay; exit 1 on any gap or mismatch.
 
     scripts/cluster/submit.sh src/gtdp/silver/report.py [--env local] [--customer ID]
         [--explain SOURCE --date YYYY-MM-DD]
@@ -9,14 +9,18 @@
    table). ``rows_in`` compares the manifest's rows with the bronze records the run counted.
    A measure the manifest does not predict, such as ``flagged.FUTURE_SIGNUP``, is ``info``; a
    landed day that no silver run covered yet is ``no run``.
-2. Rows and content checksum of each partition of the silver tables (of the whole table when it
+2. Per landed day: complete or not, each source published with the run that published it, the
+   sources missing. The exit code is 1 on a mismatch, a ``no run`` or an incomplete day.
+3. Rows and content checksum of each partition of the silver tables (of the whole table when it
    has no partition), the rejects' ``_run_id`` aside: a replay that rewrites the same rows keeps
    the same ``content_sum``.
-3. The audit rows of the silver runs.
-4. The SCD2 history of P00042, and the price applicable to its orders on either side of its first
+4. The audit rows of the silver runs.
+5. The SCD2 history of P00042, and the price applicable to its orders on either side of its first
    price change, next to the price invoiced and the current price.
-5. With ``--customer``, the customer's bronze records and its silver row (the salt is not shown).
-6. With ``--explain`` and ``--date``, the plan of the classification, then the plans of the
+6. With ``--customer``, the customer's bronze records and its silver row. The report prints no
+   personal data: a name, an email or a phone shows as its length, the email also as its salted
+   hash, the one silver holds.
+7. With ``--explain`` and ``--date``, the plan of the classification, then the plans of the
    rejects and of the clean rows once it is persisted: both read it from memory.
 """
 
@@ -36,9 +40,10 @@ from gtdp.audit import audit_path
 from gtdp.config import AppConfig, Env, load_config
 from gtdp.io import INGESTION_DATE, list_partition_values, read_table
 from gtdp.schemas import RUN_ID, SILVER_REJECTS, SOURCES, bronze_schema
+from gtdp.silver.days import complete_days, published_sources
 from gtdp.silver.pipelines import PIPELINES, classified, rejects_path, table_path
 from gtdp.silver.products import with_applicable_price
-from gtdp.silver.pseudonymize import salt_frame
+from gtdp.silver.pseudonymize import salt_frame, salted, with_salt
 from gtdp.silver.quality import DISPOSITION, Disposition, rejects
 from gtdp.silver.reconcile import (
     audit_measures,
@@ -178,13 +183,41 @@ def price_history(spark: SparkSession, cfg: AppConfig) -> tuple[DataFrame, DataF
 
 
 def customer(spark: SparkSession, cfg: AppConfig, customer_id: str) -> tuple[DataFrame, DataFrame]:
+    """The customer's bronze records, its name, email and phone shown as lengths and the email
+    as its salted hash, then its silver row."""
     bronze = read_table(
         spark, f"{cfg.paths.bronze}/customers", bronze_schema(SOURCES["customers"])
     ).where(F.col("customer_id") == customer_id)
+    shown = with_salt(bronze, salt_frame(spark, cfg.pseudonymization.salt)).select(
+        "customer_id",
+        F.length("full_name").alias("full_name_length"),
+        F.length("email").alias("email_length"),
+        salted(F.lower(F.trim("email"))).alias("email_hash"),
+        F.length("phone").alias("phone_length"),
+        "region",
+        "segment",
+        "signup_date",
+        "updated_at",
+        INGESTION_DATE,
+    )
     silver = read_table(
         spark, table_path(cfg.paths.silver, "customers"), PIPELINES["customers"].schema
     ).where(F.col("customer_id") == customer_id)
-    return bronze.orderBy(INGESTION_DATE), silver
+    return shown.orderBy(INGESTION_DATE), silver
+
+
+def day_states(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, bool, str, str]]:
+    """``(day, complete, published, missing)`` for every landed day: the sources published,
+    each with its run, and the sources not published."""
+    complete = set(complete_days(spark, cfg.paths.silver))
+    states = []
+    for value in list_partition_values(spark, f"{cfg.paths.landing}/_manifests", INGESTION_DATE):
+        day = date.fromisoformat(value)
+        published = published_sources(spark, cfg.paths.silver, day)
+        shown = [f"{source} {published[source]}" for source in PIPELINES if source in published]
+        missing = [source for source in PIPELINES if source not in published]
+        states.append((value, day in complete, ", ".join(shown), ", ".join(missing)))
+    return states
 
 
 def explain(spark: SparkSession, cfg: AppConfig, source: str, day: date) -> None:
@@ -204,6 +237,41 @@ def explain(spark: SparkSession, cfg: AppConfig, source: str, day: date) -> None
         persisted.unpersist()
 
 
+def print_report(
+    spark: SparkSession,
+    cfg: AppConfig,
+    *,
+    customer_id: str | None = None,
+    explained: tuple[str, date] | None = None,
+) -> int:
+    """Print the report; return 1 on a mismatch, a ``no run`` or an incomplete day, else 0."""
+    lines = reconciliation(spark, cfg)
+    spark.createDataFrame(
+        lines,
+        "source string, ingestion_date string, measure string, manifest long, audit long,"
+        " `table` long, status string",
+    ).show(1000, truncate=False)
+    mismatches = [line for line in lines if line[-1] == "MISMATCH"]
+    not_run = sorted({(line[0], line[1]) for line in lines if line[-1] == "no run"})
+    print(f"{len(lines)} measures, {len(mismatches)} mismatches, not run yet: {not_run}")
+    states = day_states(spark, cfg)
+    spark.createDataFrame(
+        states, "ingestion_date string, complete boolean, published string, missing string"
+    ).show(100, truncate=False)
+    incomplete = [state[0] for state in states if not state[1]]
+    print(f"{len(states)} landed days, incomplete: {incomplete}")
+    contents(spark, cfg).show(100, truncate=False)
+    runs(spark, cfg).show(100, truncate=False)
+    for frame in price_history(spark, cfg):
+        frame.show(20, truncate=False)
+    if customer_id:
+        for frame in customer(spark, cfg, customer_id):
+            frame.show(truncate=False, vertical=True)
+    if explained:
+        explain(spark, cfg, *explained)
+    return 1 if mismatches or not_run or incomplete else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--env", choices=[env.value for env in Env], default=Env.CLUSTER.value)
@@ -216,27 +284,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg = load_config(args.env)
     spark = build_spark(cfg, f"{cfg.app.name}-silver-report")
     try:
-        lines = reconciliation(spark, cfg)
-        spark.createDataFrame(
-            lines,
-            "source string, ingestion_date string, measure string, manifest long, audit long,"
-            " `table` long, status string",
-        ).show(1000, truncate=False)
-        mismatches = [line for line in lines if line[-1] == "MISMATCH"]
-        not_run = sorted({(line[0], line[1]) for line in lines if line[-1] == "no run"})
-        print(f"{len(lines)} measures, {len(mismatches)} mismatches, not run yet: {not_run}")
-        contents(spark, cfg).show(100, truncate=False)
-        runs(spark, cfg).show(100, truncate=False)
-        for frame in price_history(spark, cfg):
-            frame.show(20, truncate=False)
-        if args.customer:
-            for frame in customer(spark, cfg, args.customer):
-                frame.show(truncate=False, vertical=True)
-        if args.explain:
-            explain(spark, cfg, args.explain, args.date)
+        explained = (args.explain, args.date) if args.explain else None
+        return print_report(spark, cfg, customer_id=args.customer, explained=explained)
     finally:
         spark.stop()
-    return 1 if mismatches else 0
 
 
 if __name__ == "__main__":

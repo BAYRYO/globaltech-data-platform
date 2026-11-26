@@ -1,15 +1,26 @@
 """KAN-27 and KAN-49: every record of a day is clean, rejected or duplicated, the audit says how
 many, and each count equals what the generator's manifest predicts under the disposition table."""
 
+import hashlib
 import json
+import re
 from datetime import date
 
 import pytest
+from pyspark.sql import functions as F
 
+from gtdp.io import read_table
+from gtdp.schemas import SOURCES, bronze_schema
 from gtdp.silver.reconcile import compare, expected, manifest_expected, table_measures
-from gtdp.silver.report import contents, price_history, reconciliation
+from gtdp.silver.report import contents, price_history, print_report, reconciliation
 
-from .lakes import DAYS, bronze_lake
+from .lakes import DAYS, SALT, bronze_lake
+
+PERSONAL_DATA = re.compile(
+    r"[^@\s|]+@[^@\s|]+\.[a-z]{2,}"  # an email
+    r"|\+\d{8,}"  # a phone number
+    r"|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"  # an IPv4 address
+)
 
 
 def silver_runs(lake) -> dict[str, object]:
@@ -111,3 +122,34 @@ def test_the_report_compares_manifest_audit_and_tables_without_mismatch(publishe
         == published.table("orders").where(f"ingestion_date = '{DAYS[1]}'").count()
     )
     assert tables[("customers", None)] == published.table("customers").count()
+
+
+def test_the_report_prints_no_personal_data(published, capsys):
+    bronze = read_table(
+        published.spark,
+        f"{published.cfg.paths.bronze}/customers",
+        bronze_schema(SOURCES["customers"]),
+    )
+    person = bronze.where(F.col("email").contains("@") & F.col("phone").isNotNull()).first()
+
+    status = print_report(published.spark, published.cfg, customer_id=person.customer_id)
+    printed = capsys.readouterr().out
+
+    assert status == 0
+    assert person.customer_id in printed
+    assert [p for p in (person.full_name, person.email, person.phone) if p in printed] == []
+    assert PERSONAL_DATA.findall(printed) == []
+    email_hash = hashlib.sha256(f"{SALT}{person.email.strip().lower()}".encode()).hexdigest()
+    assert email_hash in printed
+
+
+def test_the_report_fails_while_a_landed_day_is_incomplete(fresh_lake, capsys):
+    lake = fresh_lake
+    lake.run("silver", DAYS[0])
+    lake.run("silver", DAYS[1])
+
+    status = print_report(lake.spark, lake.cfg)
+    printed = capsys.readouterr().out
+
+    assert status == 1
+    assert f"incomplete: ['{DAYS[2]}']" in printed
