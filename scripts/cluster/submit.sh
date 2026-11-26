@@ -56,16 +56,29 @@ fi
 
 opts=(--master yarn --deploy-mode "$mode" --py-files dist/gtdp.zip)
 if [[ $mode == cluster ]]; then
-  if [[ -f dist/conf.zip ]]; then
-    opts+=(--archives dist/conf.zip#conf --conf spark.yarn.appMasterEnv.GTDP_CONF_DIR=conf)
-  fi
-  while IFS= read -r var; do
-    case $var in
-      GTDP_CONF_DIR | GTDP_DEPLOY_MODE | GTDP_SPARK_SUBMIT_OPTS) ;;
-      *) opts+=(--conf "spark.yarn.appMasterEnv.$var=${!var}") ;;
-    esac
-  done < <(compgen -e | grep '^GTDP_' || true)
+  # GTDP_* (the salt among them) reach the driver as spark.yarn.appMasterEnv.* entries of a
+  # private properties file, never on the command line, which ps shows to every user.
+  # --properties-file replaces spark-defaults.conf, so the file starts with it.
+  props="$(mktemp)"
+  trap 'rm -f "$props"' EXIT
+  {
+    cat "$SPARK_CONF_DIR/spark-defaults.conf"
+    echo
+    if [[ -f dist/conf.zip ]]; then echo "spark.yarn.appMasterEnv.GTDP_CONF_DIR=conf"; fi
+    while IFS= read -r var; do
+      case $var in
+        GTDP_CONF_DIR | GTDP_DEPLOY_MODE | GTDP_SPARK_SUBMIT_OPTS | GTDP_CLIENT_STDIN) ;;
+        *)
+          value=${!var}
+          [[ $value != *$'\n'* ]] || die "$var contains a line break"
+          printf 'spark.yarn.appMasterEnv.%s=%s\n' "$var" "${value//\\/\\\\}"
+          ;;
+      esac
+    done < <(compgen -e | grep '^GTDP_' || true)
+  } >"$props"
+  opts+=(--properties-file "$props")
+  if [[ -f dist/conf.zip ]]; then opts+=(--archives dist/conf.zip#conf); fi
 fi
 read -r -a extra <<<"${GTDP_SPARK_SUBMIT_OPTS:-}"
 
-exec spark-submit "${opts[@]}" "${extra[@]}" "${app[@]}"
+spark-submit "${opts[@]}" "${extra[@]}" "${app[@]}"
