@@ -1,6 +1,4 @@
-"""Spark on YARN smoke test: a shuffle, a Parquet round trip on HDFS, Python on the executors.
-
-Usage: scripts/cluster/submit.sh scripts/cluster/smoke/spark_smoke.py [output_path]
+"""Usage: scripts/cluster/submit.sh scripts/cluster/smoke/spark_smoke.py [output_path]
 Prints one GTDP_SMOKE line with the YARN application id and the executor hosts.
 """
 

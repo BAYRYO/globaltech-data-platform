@@ -10,7 +10,6 @@ in_image || run_in_client "$@"
 SMOKE=scripts/cluster/smoke
 WORK=/user/etl/smoke
 
-# wait_json <url> <dotted.path> <expected>: poll a JSON endpoint until the value matches (90 s).
 wait_json() {
   python3 - "$@" <<'EOF'
 import json
@@ -36,7 +35,6 @@ sys.exit(f"{url}: {path} is {value!r}, expected {expected}")
 EOF
 }
 
-# run_logged <log> <command...>: keep the output in a file, show its tail on failure.
 run_logged() {
   local log=$1
   shift

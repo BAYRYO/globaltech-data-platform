@@ -1,5 +1,3 @@
-# HDFS + YARN cluster (docs/platform.md). Start it with scripts/cluster/up.sh.
-# The project name is fixed so every checkout and worktree drives the same cluster.
 name: gtdp
 
 x-node: &node

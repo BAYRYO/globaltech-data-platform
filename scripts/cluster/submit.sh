@@ -21,7 +21,6 @@ target=$1
 shift
 mode=${GTDP_DEPLOY_MODE:-client}
 
-# gtdp/ at the root of dist/gtdp.zip; conf/ zipped only when the driver leaves this container.
 python3 - "$mode" <<'EOF'
 import os
 import sys
@@ -43,7 +42,8 @@ zip_dir("src/gtdp", "dist/gtdp.zip", "src")
 if sys.argv[1] == "cluster" and os.path.isdir("conf"):
     zip_dir("conf", "dist/conf.zip", "conf")
 EOF
-# The container runs as root: hand dist/ back to the checkout's owner on Linux hosts.
+# The container runs as root: Hadoop's login fails for a host uid that has no passwd entry.
+# Give dist/ back to the checkout's owner.
 chown -R --reference=. dist 2>/dev/null || true
 
 if [[ $target == *.py ]]; then

@@ -50,7 +50,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      # Smaller containers than the 2560 MB default (docs/platform.md, "Budget mémoire").
       YARN_NM_MEMORY_MB: "2048"
       GTDP_SPARK_SUBMIT_OPTS: --conf spark.executor.memory=512m --conf spark.driver.memory=512m
     steps:

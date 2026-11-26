@@ -4,7 +4,6 @@
     <name>fs.defaultFS</name>
     <value>hdfs://namenode:8020</value>
   </property>
-  <!-- Groups come from /etc/group on the NameNode, identical on every node (same image). -->
   <property>
     <name>hadoop.security.group.mapping</name>
     <value>org.apache.hadoop.security.ShellBasedUnixGroupsMapping</value>

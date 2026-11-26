@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Docker healthcheck. Usage: gtdp-healthcheck <role>. Exits 0 when the role serves its purpose.
-
-DataNodes and NodeManagers count as healthy only once registered with their master, so a
-service that depends on them never starts against a half-formed cluster.
-"""
-
 import json
 import socket
 import sys
@@ -60,7 +54,7 @@ CHECKS = {
 if __name__ == "__main__":
     try:
         healthy = CHECKS[sys.argv[1]]()
-    except Exception as err:  # any failure to answer is "not healthy yet"
+    except Exception as err:
         print(f"{type(err).__name__}: {err}")
         healthy = False
     sys.exit(0 if healthy else 1)

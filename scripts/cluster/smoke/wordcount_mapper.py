@@ -1,5 +1,3 @@
-"""Hadoop Streaming mapper: one "word<TAB>1" line per word, plus the Python version it ran on."""
-
 import platform
 import sys
 

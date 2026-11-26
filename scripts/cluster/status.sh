@@ -9,7 +9,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 compose ps --format 'table {{.Service}}\t{{.Status}}'
 
-# Python in the NameNode container reads the JMX and REST endpoints: no JVM to start.
 compose exec -T namenode python3 - <<'EOF'
 import json
 import urllib.request

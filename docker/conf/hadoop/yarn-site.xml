@@ -8,7 +8,6 @@
     <name>yarn.resourcemanager.bind-host</name>
     <value>0.0.0.0</value>
   </property>
-  <!-- Container resources per NodeManager come from the compose environment (.env). -->
   <property>
     <name>yarn.nodemanager.resource.memory-mb</name>
     <value>${env.YARN_NM_MEMORY_MB:-2560}</value>
@@ -29,7 +28,7 @@
     <name>yarn.scheduler.maximum-allocation-vcores</name>
     <value>${env.YARN_NM_VCORES:-4}</value>
   </property>
-  <!-- Java reserves far more virtual memory than it uses; the physical memory check stays on. -->
+  <!-- Java reserves far more virtual memory than it uses. -->
   <property>
     <name>yarn.nodemanager.vmem-check-enabled</name>
     <value>false</value>
