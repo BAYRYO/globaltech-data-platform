@@ -14,11 +14,15 @@ from gtdp.config import AppConfig
 
 @dataclass(frozen=True)
 class JobContext:
-    """Everything a job receives: run.py opens the audited run before calling the job."""
+    """Everything a job receives: run.py opens the audited run before calling the job.
+
+    ``force`` is run.py ``--force``: process ``--date`` even when the target holds a later day.
+    """
 
     spark: SparkSession
     cfg: AppConfig
     run: Run
+    force: bool = False
 
 
 JobFunc = Callable[[JobContext], None]

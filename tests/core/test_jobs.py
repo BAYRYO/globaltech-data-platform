@@ -91,7 +91,7 @@ def cluster_like_checkout(tmp_path):
 @pytest.mark.slow
 def test_smoke_job_runs_from_the_zip_and_writes_its_audit_row(spark, cluster_like_checkout):
     salt = "do-not-print-this-salt"
-    args = ["smoke", "--env", "local", "--date", "2026-01-02", "--source", "orders"]
+    args = ["smoke", "--env", "local", "--date", "2026-01-02", "--source", "orders", "--force"]
     result = subprocess.run(
         [sys.executable, str(RUN_PY), *args],
         cwd=cluster_like_checkout,
@@ -114,6 +114,7 @@ def test_smoke_job_runs_from_the_zip_and_writes_its_audit_row(spark, cluster_lik
     assert (row.job_name, row.layer, row.env, row.status) == ("smoke", "ops", "local", "SUCCESS")
     assert (row.source, row.ingestion_date) == ("orders", date(2026, 1, 2))
     assert (row.rows_in, row.rows_out) == (1000, 10)
+    assert json.loads(row.metrics_json) == {"force": True}
     smoke = spark.read.parquet(f"{lake}/ops/smoke")
     assert smoke.count() == 10
     assert {r.run_id for r in smoke.select("run_id").distinct().collect()} == {row.run_id}

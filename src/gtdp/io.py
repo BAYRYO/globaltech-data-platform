@@ -2,24 +2,48 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import itertools
+import logging
+from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Any
-from urllib.parse import unquote
 
 from pyspark.sql import DataFrame, SparkSession
 
+logger = logging.getLogger(__name__)
 
-def write_partitions(df: DataFrame, path: str, partition_cols: Sequence[str]) -> None:
-    """Rewrite exactly the partitions present in ``df``; leave every other partition as is.
+# Partition column of landing, bronze and incremental silver: ingestion_date=YYYY-MM-DD.
+INGESTION_DATE = "ingestion_date"
 
-    Writing the same ``df`` again gives the same table (ADR-0002).
+PartitionValue = str | date
+
+
+class LaterPartitionError(RuntimeError):
+    """The target already holds a partition later than the one a job is about to produce."""
+
+
+def write_partitions(
+    df: DataFrame, path: str, partitions: Mapping[str, Sequence[PartitionValue]]
+) -> None:
+    """Replace exactly the named partitions with the rows of ``df``; leave the others as is.
+
+    ``partitions`` maps each partition column, in directory order, to the values this run
+    (re)produces, for example ``{"source": ["orders"], "ingestion_date": [date(2026, 1, 2)]}``.
+    Every named partition is deleted first, so one that ``df`` no longer has a row for does not
+    keep stale rows. ``df`` must only hold rows of the named partitions. Writing the same ``df``
+    again gives the same table (ADR-0002).
     """
-    if not partition_cols:
+    if not partitions:
         raise ValueError("write_partitions needs at least one partition column")
+    spark = df.sparkSession
+    for values in itertools.product(*partitions.values()):
+        fs, directory = _filesystem(spark, f"{path}/{_partition_dir(spark, partitions, values)}")
+        fs.delete(directory, True)
+    # Set on the writer, not only in the session: static mode would wipe every other partition.
     (
         df.write.mode("overwrite")
         .option("partitionOverwriteMode", "dynamic")
-        .partitionBy(*partition_cols)
+        .partitionBy(*partitions)
         .parquet(path)
     )
 
@@ -47,14 +71,56 @@ def path_exists(spark: SparkSession, path: str) -> bool:
 
 
 def list_partition_values(spark: SparkSession, path: str, column: str) -> list[str]:
-    """Sorted values of the ``<column>=<value>`` directories directly under ``path``."""
+    """Sorted values of the ``<column>=<value>`` directories under ``path``; ``[]`` if absent."""
     fs, hadoop_path = _filesystem(spark, path)
     if not fs.exists(hadoop_path):
         return []
     prefix = f"{column}="
     names = [status.getPath().getName() for status in fs.listStatus(hadoop_path)]
-    # Spark percent-encodes special characters in partition directory names.
-    return sorted(unquote(name.removeprefix(prefix)) for name in names if name.startswith(prefix))
+    return sorted(
+        _catalog_utils(spark).unescapePathName(name.removeprefix(prefix))
+        for name in names
+        if name.startswith(prefix)
+    )
+
+
+def latest_partition_after(
+    spark: SparkSession, path: str, column: str, value: PartitionValue
+) -> str | None:
+    """The greatest ``column`` partition of ``path`` above ``value``, or ``None``."""
+    later = [v for v in list_partition_values(spark, path, column) if v > str(value)]
+    return later[-1] if later else None
+
+
+def ensure_no_later_partition(
+    spark: SparkSession, path: str, column: str, value: PartitionValue, *, force: bool = False
+) -> None:
+    """Refuse to produce partition ``value`` while ``path`` holds a later one.
+
+    Silver deduplicates day D against the days before it (ADR-0005): processing D after D+1
+    leaves keys duplicated in D+1. With ``force``, log a warning and let the caller replay the
+    later days afterwards.
+    """
+    later = latest_partition_after(spark, path, column, value)
+    if later is None:
+        return
+    message = f"{path} already holds {column}={later}, later than {value}"
+    if not force:
+        raise LaterPartitionError(f"{message}; replay the days in order or force it")
+    logger.warning("%s; forced: replay the later days afterwards", message)
+
+
+def _partition_dir(
+    spark: SparkSession, partitions: Mapping[str, object], values: Sequence[PartitionValue]
+) -> str:
+    """``col1=v1/col2=v2``, escaped the way Spark names partition directories."""
+    escape = _catalog_utils(spark).escapePathName
+    pairs = zip(partitions, values, strict=True)
+    return "/".join(f"{column}={escape(str(value))}" for column, value in pairs)
+
+
+def _catalog_utils(spark: SparkSession) -> Any:
+    return spark.sparkContext._jvm.org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 
 
 def _filesystem(spark: SparkSession, path: str) -> tuple[Any, Any]:
