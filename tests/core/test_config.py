@@ -31,7 +31,7 @@ def conf_dir(tmp_path):
         "[spark]\nshuffle_partitions = 10\nadaptive = true\n" + PATHS
     )
     (conf / "env" / "local.toml").write_text('[app]\nname = "from-env-file"\n')
-    (conf / "env" / "cluster.toml").write_text("")
+    (conf / "env" / "cluster.toml").write_text('[paths]\ndefault_fs = "hdfs://nn:8020"\n')
     return conf
 
 
@@ -163,6 +163,40 @@ def test_local_paths_keep_spaces_and_accents_as_written(tmp_path):
     paths = load_config("local", checkout / "conf").paths
 
     assert paths.ops == f"file://{checkout / 'data' / 'lake' / 'ops'}"
+
+
+@pytest.mark.parametrize(
+    ("value", "uri"),
+    [
+        ("file:/tmp/lake/bronze", "file:/tmp/lake/bronze"),
+        ("s3a://bucket/lake/bronze/", "s3a://bucket/lake/bronze"),
+        ("viewfs://cluster/lake/bronze", "viewfs://cluster/lake/bronze"),
+    ],
+)
+def test_a_value_with_a_uri_scheme_is_kept(conf_dir, value, uri):
+    assert load_config("local", conf_dir, overrides={"paths.bronze": value}).paths.bronze == uri
+
+
+def test_an_absolute_cluster_path_without_scheme_goes_to_the_default_filesystem(monkeypatch):
+    monkeypatch.setenv("GTDP_PSEUDO_SALT", "x")
+    checkpoints = "/datalake/streaming/sensors/checkpoints_v2"
+
+    cfg = load_config("cluster", overrides={"paths.checkpoints": checkpoints})
+
+    assert cfg.paths.checkpoints == f"hdfs://namenode:8020{checkpoints}"
+
+
+def test_an_absolute_cluster_path_without_default_filesystem_fails_at_load(conf_dir, monkeypatch):
+    monkeypatch.setenv("GTDP_PSEUDO_SALT", "x")
+    (conf_dir / "env" / "cluster.toml").write_text("")
+
+    with pytest.raises(ConfigError, match="default_fs"):
+        load_config("cluster", conf_dir)
+
+
+def test_default_filesystem_must_name_a_scheme_and_an_authority(conf_dir):
+    with pytest.raises(ConfigError, match="default_fs"):
+        load_config("local", conf_dir, overrides={"paths.default_fs": "namenode:8020"})
 
 
 def test_git_sha_comes_from_environment(conf_dir, monkeypatch):

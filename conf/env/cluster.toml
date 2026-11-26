@@ -14,3 +14,6 @@ gold = "hdfs://namenode:8020/datalake/gold"
 streaming = "hdfs://namenode:8020/datalake/streaming"
 ops = "hdfs://namenode:8020/datalake/ops"
 checkpoints = "hdfs://namenode:8020/datalake/streaming/sensors/checkpoints"
+# Filesystem of an absolute path written without scheme, for example
+# GTDP_PATHS__CHECKPOINTS=/datalake/streaming/sensors/checkpoints_v2.
+default_fs = "hdfs://namenode:8020"
