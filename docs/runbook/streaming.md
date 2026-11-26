@@ -75,8 +75,9 @@ GTDP_SPARK_SUBMIT_OPTS="--conf spark.executor.instances=1" \
 ```
 
 Le job tourne en mode client, avec un exécuteur pour laisser la place à un batch à côté
-([budget mémoire](../platform.md#budget-mémoire)). `GTDP_PSEUDO_SALT` doit être défini comme pour
-tout job `--env cluster`. Pour qu'il s'arrête seul une fois le flux épuisé :
+([budget mémoire](../platform.md#budget-mémoire)). Les jobs du flux et `report.py` ne
+pseudonymisent rien : ils n'ont pas besoin de `GTDP_PSEUDO_SALT`. Pour qu'il s'arrête seul une
+fois le flux épuisé :
 
 ```bash
 scripts/cluster/submit.sh streaming-sensors --set streaming.stop_after_idle_triggers=4
