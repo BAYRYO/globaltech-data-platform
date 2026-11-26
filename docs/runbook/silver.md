@@ -8,42 +8,70 @@ commandes se lancent depuis la racine du dépôt, cluster démarré et bronze du
 
 ## Ce que fait une exécution
 
-1. **Garde d'ordre.** Pour chaque source traitée, elle refuse la date si
-   `silver/rejects/<source>` contient déjà une partition postérieure, sauf `--force`
-   ([ADR-0005](../adr/0005-silver-incremental.md)). Chaque exécution écrit la partition de
-   rejets du jour, même vide : c'est la trace des jours traités.
-2. **Lecture.** Elle compte les lignes de la partition bronze du jour, à part. Elle lit ensuite
-   bronze avec le schéma canonique : la partition du jour pour `orders` et `weblogs`, tous les
-   jours jusqu'à la date pour `customers` et `products`, dont les tables sont reconstruites.
-   Une colonne inconnue d'un fichier est notée dans l'audit. Une partition bronze absente fait
-   échouer l'exécution avant toute écriture.
-3. **Classement en une passe.** Doublons exacts, codes de rejet et drapeaux calculés en une
-   projection à partir du registre de règles, doublons de clé, doublons inter-jours (clés des
-   partitions `orders` antérieures à la date). Le résultat est persisté (`MEMORY_AND_DISK`) :
-   les comptes, les rejets et la table le relisent en mémoire au lieu de relire bronze, comme
-   le montre `--explain` du rapport.
-4. **Écriture.** `write_partitions` remplace la partition du jour de `rejects/<source>`, puis
+1. **Sel.** Sur le cluster, elle refuse un sel vide, de moins de 16 caractères ou égal au sel
+   de développement du dépôt. Elle compare ensuite l'empreinte du sel,
+   `sha256("gtdp-salt-fingerprint" ‖ sel)`, à celle que la première exécution a écrite dans
+   `<ops>/pseudonymization/salt_fingerprint.json`, et refuse un autre sel. Le fichier ne
+   contient que l'empreinte, jamais le sel.
+2. **Ordre des jours.** Elle refuse la date, sauf `--force`, si un jour antérieur présent en
+   bronze n'est pas complet en silver, ou si un jour postérieur est complet
+   ([ADR-0005](../adr/0005-silver-incremental.md)). Un jour est complet quand ses quatre
+   sources sont publiées (voir « Jours publiés »).
+3. **Dépendances.** `orders` contrôle ses `customer_id` et `product_id` contre `customers` et
+   `products_scd2` telles que publiées pour la même date. `--source orders` est refusé tant que
+   `customers` et `products` ne sont pas publiées pour cette date. Sans `--source`, les sources
+   passent dans cet ordre : `customers`, `products`, `orders`, `weblogs`.
+4. **Invalidation.** Avant toute écriture, l'exécution retire les marqueurs des jours
+   postérieurs (ils deviennent incomplets), le `_SUCCESS` du jour et les marqueurs des sources
+   traitées et de celles qui en dépendent : rejouer `customers` rend `orders` à refaire pour le
+   jour.
+5. **Classement en une passe.** Doublons exacts, codes de rejet et drapeaux en une projection
+   à partir du registre de règles, doublons de clé, doublons inter-jours (clés des partitions
+   des jours complets antérieurs, pour `orders` et `weblogs`). Le résultat est persisté
+   (`MEMORY_AND_DISK`) : les comptes, les contrôles, les rejets et la table le relisent en
+   mémoire, comme le montre `--explain` du rapport.
+6. **Contrôles avant écriture.** Sur les lignes à publier : `bronze = propres + rejets +
+   doublons`, autant de lignes à publier que de propres pour une table partitionnée, clé unique
+   sur les jours complets et le jour, invariants SCD2 de `products_scd2`. Un échec arrête la
+   source sans rien écrire (`nothing published`).
+7. **Écriture.** `write_partitions` remplace la partition du jour de `rejects/<source>`, puis
    celle de `orders` ou `weblogs`. `replace_table` échange `customers` ou `products_scd2` en
-   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)). L'email et l'IP sont hachés avec
-   le sel, passé comme une donnée.
-5. **Vérification.** Elle relit ce qu'elle a écrit et échoue si `bronze ≠ propres + rejets +
-   doublons`, si les rejets ou la partition relus diffèrent des comptes, si la clé de la table
-   n'est plus unique, ou si `products_scd2` viole un invariant SCD2.
+   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)).
+8. **Vérification après écriture.** Rejets et lignes relus égaux aux comptes, clé unique,
+   invariants SCD2. En cas d'échec, l'exécution retire ce qu'elle a publié pour la source et le
+   jour (`publication removed`) : les partitions du jour, ou la table reconstruite remise dans
+   son état du dernier jour antérieur publié (vide s'il n'y en a pas).
+9. **Marqueurs.** La source vérifiée reçoit son marqueur ; le jour reçoit `_SUCCESS` quand les
+   quatre sources ont le leur.
 
-Sans `--source`, les quatre sources sont traitées l'une après l'autre dans la même exécution.
-L'exécution écrit une ligne d'audit, même en cas d'échec :
+Chaque exécution écrit une ligne d'audit, même en cas d'échec :
 
 | Champ | Contenu |
 | --- | --- |
 | `rows_in` | lignes bronze du jour, toutes sources traitées |
 | `rows_out`, `rows_rejected`, `rows_duplicated` | lignes propres, rejetées, en doublon ; leur somme vaut `rows_in` |
-| `metrics_json.sources.<source>` | `rows_in`, `clean`, `rejected`, `duplicated`, `measures` (par disposition, par code de rejet `rejected.<CODE>`, par drapeau `flagged.<CODE>`), `rejects_written`, `rows_written`, `violations`, `unknown_columns` |
+| `metrics_json.sources.<source>` | `rows_in`, `clean`, `rejected`, `duplicated`, `measures` (par disposition, par code de rejet `rejected.<CODE>`, par drapeau `flagged.<CODE>`), `rows_built` (lignes à publier), `violations` (avant écriture), `rejects_written`, `rows_written`, `written_violations` (après écriture), `rolled_back`, `unknown_columns` |
 | `metrics_json.unknown_columns` | colonnes inconnues par source ([ADR-0007](../adr/0007-evolution-schema.md)) |
+
+## Jours publiés
+
+```
+/datalake/silver/_days/ingestion_date=2026-01-02/customers.json   {"source", "run_id", "published_at"}
+/datalake/silver/_days/ingestion_date=2026-01-02/products.json
+/datalake/silver/_days/ingestion_date=2026-01-02/orders.json
+/datalake/silver/_days/ingestion_date=2026-01-02/weblogs.json
+/datalake/silver/_days/ingestion_date=2026-01-02/_SUCCESS          {"run_id", "sources": {source: run_id}}
+```
+
+Un lecteur qui doit voir des jours entiers (gold) ne lit des tables partitionnées que les
+partitions des jours complets : `gtdp.silver.days.complete_days(spark, silver)`. Un jour sans
+`_SUCCESS` est en cours de traitement, échoué ou rendu incomplet par le rejeu d'un jour
+antérieur.
 
 ## Traiter un jour
 
 1. Exportez le sel, exigé par tout job `--env cluster` (valeur fournie hors dépôt, jamais
-   commitée) :
+   commitée, au moins 16 caractères, toujours la même) :
 
 	```bash
 	export GTDP_PSEUDO_SALT=<valeur>
@@ -57,8 +85,8 @@ L'exécution écrit une ligne d'audit, même en cas d'échec :
 	scripts/cluster/submit.sh silver --date 2026-01-03
 	```
 
-	Pour une seule source, ajoutez `--source orders`. Si une autre application Spark tourne,
-	limitez le job à un exécuteur :
+	Pour une seule source, ajoutez `--source <source>`, dans l'ordre `customers`, `products`,
+	`orders`, `weblogs`. Si une autre application Spark tourne, limitez le job à un exécuteur :
 
 	```bash
 	GTDP_SPARK_SUBMIT_OPTS="--conf spark.executor.instances=1" \
@@ -68,34 +96,97 @@ L'exécution écrit une ligne d'audit, même en cas d'échec :
 3. Lisez le code de sortie : `0` succès, `1` échec du job (motif dans `error_message` de
    l'audit), `2` configuration invalide ou sel absent.
 
-Mesures sur la machine de référence, profil `dev`, un exécuteur, quatre sources : J1
-(1 106 403 lignes bronze) prend 32,5 s (`duration_s`, aucune autre application en cours), 46 s
-de commande complète ; J2 et J3 (3 075 lignes chacun) prennent de 18 à 25 s, une autre
-application tournant à côté. Après J3, silver occupe 100,3 Mo (301,0 Mo répliqués), dont
-84,5 Mo pour `orders`.
+Mesures sur la machine de référence, profil `dev`, un exécuteur, l'application de streaming
+`gtdp-streaming-sensors` tournant à côté (`duration_s` de l'audit) : J1 (1 106 403 lignes
+bronze) 71,2 s, J2 53,5 s, rejeu de J2 61,6 s, J3 67,6 s. J2 lance 115 jobs Spark, dont 8,2 s
+pour les deux contrôles d'unicité de clé sur les 965 000 commandes de J1, avant et après
+l'écriture ; la version précédente en lançait 96 et durait 19,1 s. Après J3, silver occupe 38,8 Mo
+(116,5 Mo répliqués), dont 23,3 Mo pour `orders` : la colonne `_record_hash` (64 caractères
+hexadécimaux par commande, incompressibles) n'y est plus.
 
 ## Rejouer un jour
 
-Relancez la même commande. La partition du jour de `orders`, `weblogs` et de chaque
-`rejects/<source>` est remplacée, les autres ne changent pas ; `customers` et `products_scd2`
-sont reconstruites à l'identique. Les doublons inter-jours ne regardent que les partitions
-antérieures : rejouer J2 donne le même contenu que la première fois. Le rapport le vérifie avec
-`content_sum`.
+Le dernier jour complet se rejoue avec la même commande. La partition du jour de `orders`,
+`weblogs` et de chaque `rejects/<source>` est remplacée, les autres ne changent pas ;
+`customers` et `products_scd2` sont reconstruites à l'identique. Les doublons inter-jours ne
+regardent que les jours complets antérieurs : rejouer J2 donne le même contenu que la première
+fois. Le rapport le vérifie avec `content_sum`.
 
-Rejouer un jour antérieur au dernier jour traité est refusé :
+Rejouer un jour antérieur au dernier jour complet est refusé :
 
 ```
-LaterPartitionError: hdfs://namenode:8020/datalake/silver/rejects/orders already holds
-ingestion_date=2026-01-03, later than 2026-01-02; replay the days in order or force it
+LaterPartitionError: silver already holds the complete day 2026-01-03, later than 2026-01-02;
+replay the days in order or force it, then replay the later days
 ```
 
-Pour corriger un jour passé, forcez-le puis rejouez les jours suivants dans l'ordre. Entre les
-deux, `customers` et `products_scd2` reflètent l'état du jour forcé.
+Pour corriger un jour passé, forcez-le : les jours suivants deviennent incomplets, le job
+refuse tout autre ordre que leur rejeu un par un. Entre les deux, `customers` et
+`products_scd2` reflètent l'état du jour forcé et le rapport sort en 1.
 
 ```bash
 scripts/cluster/submit.sh silver --date 2026-01-02 --force
 scripts/cluster/submit.sh silver --date 2026-01-03
 ```
+
+Il n'y a pas d'option `--cascade` : chaque jour rejoué garde sa ligne d'audit, que le rapport
+compare au manifeste du jour.
+
+## Réparer un jour incomplet
+
+Un jour reste incomplet après l'échec d'une source pendant son traitement (contrôle, panne
+d'écriture), un arrêt (`SIGTERM`, code 143), un `kill -9`, ou le rejeu forcé d'un jour antérieur :
+son `_SUCCESS` manque, le jour suivant est refusé avec
+`DayOrderError: <D> is not complete in silver`, le rapport le liste et sort en 1. Les refus
+d'avant écriture (sel, ordre, dépendances, bronze absent) ne changent rien.
+
+1. Repérez les sources publiées et manquantes : tableau des jours du rapport, ou
+   `hdfs dfs -ls /datalake/silver/_days/ingestion_date=<D>`.
+2. Corrigez la cause (motif dans `error_message`, journaux de l'application). Après un
+   `kill -9`, le verrou `_<table>.lock` de la table en cours d'écriture reste : le rejeu échoue
+   avec `TableLockedError` tant qu'il a moins de 6 h. Vérifiez que l'application qu'il nomme est
+   terminée (`yarn application -status <application_id>`), puis supprimez-le :
+
+	```bash
+	scripts/cluster/client.sh hdfs dfs -rm /datalake/silver/_orders.lock
+	```
+
+3. Rejouez le jour entier, ou seulement les sources manquantes dans l'ordre des dépendances :
+
+	```bash
+	scripts/cluster/submit.sh silver --date <D>
+	```
+
+4. Relancez le rapport : le jour doit être complet, toutes les mesures `ok`.
+
+Un échec de contrôle après écriture a déjà retiré ce que la source avait publié pour le jour.
+Après un `kill -9`, les sources marquées sont publiées et vérifiées, la source interrompue garde
+sa partition précédente ou aucune ; le rejeu du jour la remplace. Un répertoire
+`_<table>.staging-*` laissé par un `kill -9` est supprimé par l'écriture suivante de la table
+une fois plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut).
+
+## Changer le sel
+
+Changer le sel change tous les `email_hash`, `ip_hash` et `log_id` : silver se reconstruit en
+entier, puis gold. Le job refuse un autre sel tant que l'empreinte de l'ancien est enregistrée :
+
+```
+SaltError: GTDP_PSEUDO_SALT is not the salt silver was built with, whose fingerprint run <id>
+recorded in .../pseudonymization/salt_fingerprint.json. Export that salt; to change it, rebuild
+silver whole (docs/runbook/silver.md, « Changer le sel »)
+```
+
+1. Arrêtez les traitements silver et gold.
+2. Supprimez les tables silver, les marqueurs et l'empreinte. `silver/rejects` et son ACL
+   restent : chaque jour rejoué remplace ses partitions.
+
+	```bash
+	scripts/cluster/client.sh hdfs dfs -rm -r -skipTrash \
+		/datalake/silver/orders /datalake/silver/customers /datalake/silver/products_scd2 \
+		/datalake/silver/weblogs /datalake/silver/_days \
+		/datalake/ops/pseudonymization/salt_fingerprint.json
+	```
+
+3. Exportez le nouveau sel, rejouez chaque jour dans l'ordre (« Traiter un jour »), puis gold.
 
 ## Vérifier silver
 
@@ -103,19 +194,21 @@ scripts/cluster/submit.sh silver --date 2026-01-03
 scripts/cluster/submit.sh src/gtdp/silver/report.py [--customer C003921] [--explain orders --date 2026-01-02]
 ```
 
-Le code de sortie vaut 1 si une mesure diffère. Le rapport affiche :
+Le code de sortie vaut 1 si une mesure diffère, si une mesure n'a pas d'exécution (`no run`) ou
+si un jour déposé est incomplet. Le rapport affiche :
 
 | Tableau | Valeur attendue |
 | --- | --- |
-| Réconciliation (`source`, `ingestion_date`, `measure`, `manifest`, `audit`, `table`, `status`) | `ok` partout. `manifest` : compte prévu par le manifeste selon la table de disposition (`DISPOSITION_TABLE` de `src/gtdp/silver/reconcile.py`, 2 lignes par `CONFLICTING_VERSION`). `audit` : dernière exécution silver réussie du jour. `table` : rejets relus par code, lignes de la partition pour `orders` et `weblogs`. `info` pour une mesure que le manifeste ne prévoit pas (`flagged.FUTURE_SIGNUP`), `no run` pour un jour déposé que silver n'a pas encore traité. |
+| Réconciliation (`source`, `ingestion_date`, `measure`, `manifest`, `audit`, `table`, `status`) | `ok` partout. `manifest` : compte prévu par le manifeste selon la table de disposition (`DISPOSITION_TABLE` de `src/gtdp/silver/reconcile.py`, 2 lignes par `CONFLICTING_VERSION`). `audit` : dernière exécution silver réussie du jour. `table` : rejets relus par code, lignes de la partition pour `orders` et `weblogs`. `info` pour une mesure que le manifeste ne prévoit pas (`flagged.FUTURE_SIGNUP`), `no run` pour une source d'un jour déposé que silver n'a pas traitée. |
+| Jours (`ingestion_date`, `complete`, `published`, `missing`) | `complete` vrai pour chaque jour déposé ; `published` donne l'exécution de chaque source. |
 | Contenu (`table`, `ingestion_date`, `rows`, `content_sum`) | `content_sum` inchangé après un rejeu ; `_run_id` des rejets exclu. |
 | Exécutions silver de l'audit | `rows_in = rows_out + rows_rejected + rows_duplicated` pour chaque `SUCCESS`. |
 | Historique de `P00042` et prix à la date de commande | au moins deux versions ; les commandes avant le changement prennent le prix de la version 1. |
-| `--customer` | les lignes bronze du client (nom, email, téléphone en clair) puis sa ligne silver (`email_hash`, sans nom ni téléphone). |
+| `--customer` | les lignes bronze du client sans donnée personnelle (longueur du nom, de l'email et du téléphone, `email_hash` de l'email bronze calculé avec le sel), puis sa ligne silver : le même `email_hash`. |
 | `--explain` | le plan du classement (lecture des Parquet bronze), puis ceux des rejets et des lignes propres, qui lisent `InMemoryTableScan`. |
 
-Résultat après J1, J2 (rejoué), J3 sur le profil `dev` : 108 mesures, 105 `ok`, 3 `info`,
-aucun écart.
+Le rapport n'affiche aucun nom, email, téléphone ni adresse IP : en mode cluster, sa sortie
+standard est servie par le JobHistory sans authentification.
 
 Pour vérifier qu'aucun plan servi par le History Server ne contient le sel :
 
@@ -133,15 +226,16 @@ print(text.count(os.environ["GTDP_PSEUDO_SALT"]), "occurrences du sel")'
 
 | Message dans `error_message` | Cause | Action |
 | --- | --- | --- |
-| `LaterPartitionError: ... already holds ingestion_date=<D+n>, later than <D>` | Un jour postérieur est déjà publié. | Rejouez dans l'ordre, ou `--force` puis les jours suivants. Rien n'a été écrit. |
-| `FileNotFoundError: .../bronze/<source>/ingestion_date=<D> not found: run bronze for <D> first` | Bronze n'a pas traité ce jour pour cette source. | Lancez `bronze --date <D>`, puis silver. Les sources traitées avant celle-ci sont publiées. |
-| `SilverCheckError: <source> <D>: N bronze records, but clean ... = M` | Des lignes ont été perdues ou comptées deux fois. | Bug : gardez les journaux, ouvrez un ticket. Les tables du jour sont publiées mais fausses. |
-| `SilverCheckError: ... N rejected, M in silver/rejects` ou `N clean, M in the silver partition` | La relecture ne trouve pas ce qui a été écrit (écriture concurrente, panne pendant l'échange). | Rejouez le jour. |
-| `SilverCheckError: ... N rows break duplicate_key` | Clé en double dans la table, par exemple après un jour traité avec `--force` sans rejouer les suivants. | Rejouez les jours suivants dans l'ordre. |
-| `SilverCheckError: ... rows break overlap_or_gap` (ou un autre invariant SCD2) | Historique produit incohérent. | Bug : ouvrez un ticket avec le rapport. |
-| `ValueError: silver needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
-| `ValueError: unknown source [...]` | `--source` inconnue. | Utilisez `orders`, `customers`, `products` ou `weblogs`. |
+| `SaltError: GTDP_PSEUDO_SALT is blank`, `... is the development salt ...`, `... holds N characters, at least 16 needed` | Sel inutilisable sur le cluster. | Exportez le vrai sel. Rien n'a été écrit. |
+| `SaltError: GTDP_PSEUDO_SALT is not the salt silver was built with ...` | Autre sel que celui de l'empreinte. | Exportez le sel d'origine, ou « Changer le sel ». Rien n'a été écrit. |
+| `DayOrderError: <D-n> is not complete in silver, which <D> deduplicates against ...` | Un jour antérieur est incomplet. | « Réparer un jour incomplet » pour ce jour, puis `<D>`. Rien n'a été écrit. |
+| `DayOrderError: orders of <D> are checked against customers as published for <D>, but customers is published for <X> ...` | `--source orders` avant `customers` ou `products` du jour. | Lancez la source nommée pour `<D>`, ou le jour entier. Rien n'a été écrit. |
+| `LaterPartitionError: silver already holds the complete day <D+n>, later than <D> ...` | Un jour postérieur est complet. | Rejouez dans l'ordre, ou `--force` puis les jours suivants. Rien n'a été écrit. |
+| `FileNotFoundError: .../bronze/<source>/ingestion_date=<D> not found: run bronze for <D> first` | Bronze n'a pas traité ce jour pour cette source. | Lancez `bronze --date <D>`, puis silver. Rien n'a été écrit. |
+| `SilverCheckError: <source> <D>, nothing published: ...` | Un contrôle a échoué avant l'écriture (comptes, clé, SCD2). | Bug : gardez les journaux, ouvrez un ticket. Les sources précédentes du jour sont publiées, le jour est incomplet. |
+| `SilverCheckError: <source> <D>, publication removed: ...` | La relecture diffère de ce qui a été écrit (écriture concurrente, panne pendant l'échange). | Ce que la source avait publié pour le jour est retiré. Rejouez le jour. |
+| `TableLockedError: ... is being written by another run` | Une autre exécution écrit la table. | Attendez sa fin ; si aucune ne tourne, supprimez le verrou nommé. |
+| `ValueError: silver needs --date` ou `unknown source ...` | Argument manquant ou inconnu. | Relancez avec `--date AAAA-MM-JJ`, `--source` parmi `customers`, `products`, `orders`, `weblogs`. |
 | Code de sortie 2, journal `GTDP_PSEUDO_SALT is required` | Le sel n'est pas défini. | Exportez `GTDP_PSEUDO_SALT` ou ajoutez-le à `.env`. |
 
-Les comptes d'une exécution échouée restent dans `metrics_json` de sa ligne d'audit. Changer
-le sel change tous les `email_hash` et `ip_hash` : retraitez alors tous les jours dans l'ordre.
+Les comptes d'une exécution échouée restent dans `metrics_json` de sa ligne d'audit.
