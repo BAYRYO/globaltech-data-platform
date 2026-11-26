@@ -193,10 +193,13 @@ class GoldSettings:
 
     top_n: int
     """Ranks kept per country in ``kpi_top_products_country``."""
+    moving_average_days: int
+    """Days of the window of ``kpi_revenue_moving_avg``, the day included."""
 
     def __post_init__(self) -> None:
-        if self.top_n < 1:
-            raise ConfigError(f"[gold] top_n must be >= 1, got {self.top_n}")
+        for key in ("top_n", "moving_average_days"):
+            if getattr(self, key) < 1:
+                raise ConfigError(f"[gold] {key} must be >= 1, got {getattr(self, key)}")
 
 
 @dataclass(frozen=True)

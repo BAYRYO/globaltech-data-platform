@@ -1,7 +1,7 @@
 """KAN-34, KAN-35, KAN-36: the gold indicators, each on a small star built by hand."""
 
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 
@@ -150,11 +150,11 @@ def test_the_moving_average_counts_a_day_without_sales_as_zero(star):
         sale("T5", "2025-01-05", country="DE", applicable="35.00"),
     )
 
-    rows = kpis.revenue_moving_avg(sales).collect()
+    rows = kpis.revenue_moving_avg(sales, 7).collect()
 
     by_country = {
         country: [
-            (r.revenue_eur, r.revenue_ma7_eur, r.window_days)
+            (r.revenue_eur, r.revenue_moving_avg_eur, r.window_days)
             for r in sorted((r for r in rows if r.country == country), key=lambda r: r.order_date)
         ]
         for country in ("FR", "DE")
@@ -172,6 +172,42 @@ def test_the_moving_average_counts_a_day_without_sales_as_zero(star):
     ]
     assert [ma for _, ma, _ in by_country["DE"]] == [0, 0, 0, 0, 7, Decimal("5.83"), 5, 5, 5]
     assert len(rows) == 18
+
+
+REFERENCE_SALES = {
+    "FR": {1: "120.50", 2: "80.25", 5: "300.00", 6: "15.10", 7: "42.42", 11: "99.99", 15: "7.00"},
+    "IT": {3: "10.00", 4: "260.40", 9: "33.33", 10: "1.01", 14: "500.00"},
+}
+
+
+def reference_moving_average(days: int) -> dict:
+    """The moving average computed with plain Python over a calendar of days 1 to 15."""
+    expected = {}
+    for country, revenue in REFERENCE_SALES.items():
+        daily = [Decimal(revenue.get(day, "0")) for day in range(1, 16)]
+        for index, day in enumerate(range(1, 16)):
+            window = daily[max(0, index - days + 1) : index + 1]
+            mean = (sum(window) / len(window)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+            expected[(country, day)] = (daily[index], mean, len(window))
+    return expected
+
+
+@pytest.mark.parametrize("days", [1, 3, 7])
+def test_the_moving_average_matches_a_plain_python_computation(star, days):
+    sales = star(
+        *[
+            sale(f"{country}{day}", f"2025-01-{day:02d}", country=country, applicable=revenue)
+            for country, revenue_per_day in REFERENCE_SALES.items()
+            for day, revenue in revenue_per_day.items()
+        ]
+    )
+
+    rows = kpis.revenue_moving_avg(sales, days).collect()
+
+    assert {
+        (r.country, r.order_date.day): (r.revenue_eur, r.revenue_moving_avg_eur, r.window_days)
+        for r in rows
+    } == reference_moving_average(days)
 
 
 def test_price_deviation_is_the_median_ratio_per_month_and_version_category(star, catalog):
@@ -193,82 +229,114 @@ def test_price_deviation_is_the_median_ratio_per_month_and_version_category(star
     }
 
 
-def test_cancel_and_return_rates_are_shares_of_lines_per_channel_and_category(star, catalog):
+def test_cancel_and_return_rates_are_shares_of_lines_per_day_country_channel_category(
+    star, catalog
+):
     sales = star(
         sale("T1", "2025-03-01"),
         sale("T2", "2025-03-01"),
         sale("T3", "2025-03-01", status="CANCELLED"),
         sale("T4", "2025-03-01", status="RETURNED"),
         sale("T5", "2025-03-01", channel="store"),
+        sale("T6", "2025-03-02", status="CANCELLED"),
+        sale("T7", "2025-03-01", country="DE", status="RETURNED"),
     )
 
     rows = kpis.cancel_return_rate(sales, catalog(*versions("P1", ("1900-01-01", "1.00"))))
 
     assert {
-        (r.channel, r.category): (r.lines, r.cancelled, r.returned, r.cancel_rate, r.return_rate)
+        (str(r.order_date), r.country, r.channel, r.category): (
+            r.lines,
+            r.cancelled,
+            r.returned,
+            r.cancel_rate,
+            r.return_rate,
+        )
         for r in rows.collect()
     } == {
-        ("web", "Lighting"): (4, 1, 1, 0.25, 0.25),
-        ("store", "Lighting"): (1, 0, 0, 0.0, 0.0),
+        ("2025-03-01", "FR", "web", "Lighting"): (4, 1, 1, 0.25, 0.25),
+        ("2025-03-01", "FR", "store", "Lighting"): (1, 0, 0, 0.0, 0.0),
+        ("2025-03-02", "FR", "web", "Lighting"): (1, 1, 0, 1.0, 0.0),
+        ("2025-03-01", "DE", "web", "Lighting"): (1, 0, 1, 0.0, 1.0),
     }
 
 
-def test_the_average_basket_is_per_completed_order_country_and_segment(star, customers):
+def test_the_average_basket_is_per_completed_order_day_country_and_segment(star, customers):
     sales = star(
         sale("T1", "2025-03-01", applicable="10.00", invoiced="9.00"),
         sale("T2", "2025-03-01", applicable="30.00", invoiced="27.00"),
         sale("T3", "2025-03-01", applicable="900.00", status="CANCELLED"),
         sale("T4", "2025-03-01", customer_id="C2", applicable="25.00", quantity=2),
+        sale("T5", "2025-03-02", applicable="40.00"),
     )
     people = customers(customer("C1", segment="B2C"), customer("C2", segment="B2B"))
 
     rows = kpis.avg_basket(sales, people).collect()
 
     assert {
-        (r.country, r.segment): (r.orders, r.avg_basket_eur, r.avg_invoiced_eur, r.avg_quantity)
+        (str(r.order_date), r.country, r.segment): (
+            r.orders,
+            r.revenue_eur,
+            r.avg_basket_eur,
+            r.avg_invoiced_eur,
+        )
         for r in rows
     } == {
-        ("FR", "B2C"): (2, Decimal("20.00"), Decimal("18.00"), 1),
-        ("FR", "B2B"): (1, Decimal("50.00"), Decimal("50.00"), 2),
+        ("2025-03-01", "FR", "B2C"): (2, Decimal("40.00"), Decimal("20.00"), Decimal("18.00")),
+        ("2025-03-01", "FR", "B2B"): (1, Decimal("50.00"), Decimal("50.00"), Decimal("50.00")),
+        ("2025-03-02", "FR", "B2C"): (1, Decimal("40.00"), Decimal("40.00"), Decimal("40.00")),
     }
 
 
-def test_http_errors_are_counted_per_hour(web):
+def test_client_and_server_errors_are_counted_per_hour(web):
     events = web(
         request("L1", "2026-01-01T10:05:00", "view"),
         request("L2", "2026-01-01T10:20:00", "view", status=404),
-        request("L3", "2026-01-01T10:40:00", "purchase", status=500),
-        request("L4", "2026-01-01T10:59:59", "search"),
-        request("L5", "2026-01-01T11:00:00", "view"),
+        request("L3", "2026-01-01T10:30:00", "view", status=403),
+        request("L4", "2026-01-01T10:40:00", "purchase", status=500),
+        request("L5", "2026-01-01T10:59:59", "search"),
+        request("L6", "2026-01-01T11:00:00", "view"),
+        request("L7", "2026-01-01T11:10:00", "cart", status=503),
     )
 
     rows = kpis.http_errors_hourly(events).collect()
 
     assert {
-        r.event_hour: (r.requests, r.http_404, r.http_500, r.rate_404, r.rate_500) for r in rows
+        r.event_hour: (r.requests, r.http_4xx, r.http_5xx, r.rate_4xx, r.rate_5xx) for r in rows
     } == {
-        datetime(2026, 1, 1, 10): (4, 1, 1, 0.25, 0.25),
-        datetime(2026, 1, 1, 11): (1, 0, 0, 0.0, 0.0),
+        datetime(2026, 1, 1, 10): (5, 2, 1, 0.4, 0.2),
+        datetime(2026, 1, 1, 11): (2, 0, 1, 0.0, 0.5),
     }
 
 
-def test_the_funnel_counts_served_views_carts_and_purchases_per_device(web):
+def test_a_visit_reaches_a_funnel_step_only_through_the_steps_before(web):
+    day1, day2 = "2026-01-01T10:00:00", "2026-01-02T10:00:00"
     mobile = [
-        *[request(f"V{i}", "2026-01-01T10:00:00", "view") for i in range(4)],
-        request("V404", "2026-01-01T10:00:00", "view", status=404),
-        *[request(f"C{i}", "2026-01-01T10:00:00", "cart") for i in range(2)],
-        request("P1", "2026-01-01T10:00:00", "purchase"),
-        request("P500", "2026-01-01T10:00:00", "purchase", status=500),
-        request("S1", "2026-01-01T10:00:00", "search"),
+        *[request(f"A{e}", day1, e, customer_id="C1") for e in ("view", "cart", "purchase")],
+        *[request(f"B{e}", day1, e, customer_id="C2") for e in ("view", "cart")],
+        *[request(f"C{e}", day1, e, customer_id="C3") for e in ("cart", "purchase")],
+        request("D1", day2, "view", customer_id="C1"),
+        request("E1", day1, "view", customer_id="C4", status=404),
+        request("E2", day1, "search", customer_id="C4"),
+        request("F1", day1, "view", customer_id="C5"),
+        request("F2", day1, "purchase", customer_id="C5", status=500),
+        request("G1", day1, "view", customer_id=None),
     ]
-    desktop = [request("D1", "2026-01-01T10:00:00", "view", device="desktop")]
+    desktop = [request("H1", day1, "view", customer_id="C1", device="desktop")]
 
-    rows = kpis.conversion_funnel(web(*mobile, *desktop)).collect()
+    rows = {r.device: r for r in kpis.conversion_funnel(web(*mobile, *desktop)).collect()}
 
-    assert {
-        r.device: (r.views, r.carts, r.purchases, r.view_to_cart, r.cart_to_purchase) for r in rows
-    } == {"mobile": (4, 2, 1, 0.5, 0.5), "desktop": (1, 0, 0, 0.0, None)}
-    assert next(r.view_to_purchase for r in rows if r.device == "mobile") == 0.25
+    steps = {device: (r.visits, r.product_views, r.carts, r.orders) for device, r in rows.items()}
+    assert steps == {"mobile": (6, 4, 2, 1), "desktop": (1, 1, 0, 0)}
+    assert all(list(counts) == sorted(counts, reverse=True) for counts in steps.values())
+    mobile_rates = rows["mobile"]
+    assert (
+        mobile_rates.view_rate,
+        mobile_rates.cart_rate,
+        mobile_rates.order_rate,
+        mobile_rates.conversion_rate,
+    ) == (pytest.approx(4 / 6), 0.5, 0.5, pytest.approx(1 / 6))
+    assert (rows["desktop"].cart_rate, rows["desktop"].order_rate) == (0.0, None)
 
 
 def test_data_quality_counts_rejects_per_code_and_orders_before_signup(spark, customers):
