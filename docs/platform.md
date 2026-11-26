@@ -54,9 +54,9 @@ Le chronométrage ci-dessous suppose l'image déjà construite.
 
 	La dernière ligne doit être `==> smoke OK`.
 
-Sur la machine de référence, avec des volumes vides et l'image construite, `up.sh` prend 16 s,
-`init-hdfs.sh` 29 s et `smoke/run.sh` 57 s. Un deuxième `init-hdfs.sh` prend 24 s et ne change
-rien.
+Sur la machine de référence, avec des volumes vides et l'image construite, `up.sh` prend 15 s,
+`init-hdfs.sh` 27 s et `smoke/run.sh` 60 s. Un deuxième `init-hdfs.sh` prend aussi 27 s et ne
+change rien.
 
 Avec `make`, les mêmes étapes sont `make cluster-up`, `make cluster-init` et `make cluster-smoke`.
 
@@ -330,6 +330,7 @@ Les problèmes ci-dessous ont été rencontrés pendant la mise au point.
 | `yarn logs` répond `Can not find any log file` pour une application dont le premier conteneur n'a jamais démarré. | Aucun journal à agréger. Lire le diagnostic avec `yarn application -status <id>`. |
 | `hdfs ec` affiche `3 racks are required for the erasure coding policies: XOR-2-1-1024k`. | Avertissement attendu sur un cluster à un rack. Voir [Erasure coding](#erasure-coding). |
 | `scripts/cluster/client.sh` répond `network 'gtdp' not found`. | Le cluster n'est pas démarré. Lancer `scripts/cluster/up.sh`. |
+| Un job échoue avec `Permission denied: user=etl, access=WRITE, inode="/":hadoop:supergroup`. | `/user/etl` n'existe pas encore, donc Spark ne peut pas créer son dossier de staging. Lancer `scripts/cluster/init-hdfs.sh`. |
 
 Commandes utiles :
 
