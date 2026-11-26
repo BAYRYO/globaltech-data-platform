@@ -24,16 +24,20 @@ Le backlog est suivi dans Jira : [projet KAN](https://projet-bigdata-3il.atlassi
 
 ## Démarrage rapide
 
-Prérequis : Docker et Git. Sous Windows, lancer les scripts depuis Git Bash.
+Prérequis : Docker (14 Go de mémoire pour le cluster) et Git. Sous Windows, lancer les scripts
+depuis Git Bash.
 
 ```bash
 git clone https://github.com/BAYRYO/globaltech-data-platform.git
 cd globaltech-data-platform
-scripts/test.sh            # lint + tests unitaires (Spark local) dans un conteneur
+scripts/test.sh                # lint + tests unitaires (Spark local) dans un conteneur
+scripts/cluster/up.sh          # cluster HDFS + YARN (le premier lancement construit l'image)
+scripts/cluster/init-hdfs.sh   # arborescence, droits, quotas, archive Spark
+scripts/cluster/smoke/run.sh   # Spark, MapReduce et Hadoop Streaming sur YARN
 ```
 
-Le démarrage du cluster et l'exécution du pipeline sont décrits dans le guide de la plateforme
-(lot 1).
+Le [guide de la plateforme](docs/platform.md) détaille les services, le budget mémoire,
+l'exploitation, la soumission des jobs et le dépannage.
 
 ## Structure
 
