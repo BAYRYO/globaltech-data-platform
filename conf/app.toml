@@ -38,6 +38,10 @@ stop_after_idle_triggers = 0
 # An event whose event_time is more than this many seconds after its emitted_at is rejected
 # (FUTURE_EVENT): it would move the watermark ahead and drop the rest of the stream as late.
 future_tolerance_s = 60
+# Age in seconds from which a lock or a staging directory of a streaming table counts as left by
+# a run that died: a restarted job waits up to this long for the lock of its previous run. Keep
+# it above the longest housekeeping step (spark.gtdp.io.staleAfterSeconds of both jobs).
+stale_after_s = 300
 
 [streaming.thresholds]
 # Alert limits per metric (docs/data-contract.md#capteurs): an event alerts when its value is

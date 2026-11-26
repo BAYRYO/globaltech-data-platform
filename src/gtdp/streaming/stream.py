@@ -26,7 +26,13 @@ from pyspark.sql.streaming import StreamingQuery
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from gtdp.config import LakePaths, StreamingSettings
-from gtdp.io import list_partition_values, read_table, write_partitions
+from gtdp.io import (
+    STALE_AFTER_CONF,
+    TableLockedError,
+    list_partition_values,
+    read_table,
+    write_partitions,
+)
 from gtdp.streaming.sensors import (
     AGGREGATES_SCHEMA,
     ALERTS_SCHEMA,
@@ -57,6 +63,8 @@ METRICS = (
 )
 _SHUFFLE_PARTITIONS = "spark.sql.shuffle.partitions"
 _STOP_GRACE_S = 60.0
+_LOCK_POLL_S = 2.0
+_LOCK_MARGIN_S = 60.0
 _WATERMARK_KEY = "spark.watermarkDelayMs"
 _ALERTED_SCHEMA = StructType(
     [StructField("alert_id", StringType()), StructField(BATCH_ID, IntegerType())]
@@ -182,20 +190,29 @@ def start_queries(
     }
     # A query copies the session configuration when it starts, and a new checkpoint keeps the
     # number of state partitions for good.
-    previous = spark.conf.get(_SHUFFLE_PARTITIONS)
-    spark.conf.set(_SHUFFLE_PARTITIONS, str(settings.state_partitions))
+    session = {
+        _SHUFFLE_PARTITIONS: str(settings.state_partitions),
+        STALE_AFTER_CONF: str(settings.stale_after_s),
+    }
+    previous = {key: spark.conf.get(key, None) for key in session}
+    for key, value in session.items():
+        spark.conf.set(key, value)
     try:
         return {
             name: output.writeStream.queryName(f"sensor_{name}")
             .outputMode("append")
             .trigger(**trigger)
             .option("checkpointLocation", paths.checkpoint(name))
-            .foreachBatch(_batch_writer(name, paths.tables[name], totals))
+            .foreachBatch(_batch_writer(name, paths.tables[name], totals, settings.stale_after_s))
             .start()
             for name, output in outputs.items()
         }
     finally:
-        spark.conf.set(_SHUFFLE_PARTITIONS, previous)
+        for key, value in previous.items():
+            if value is None:
+                spark.conf.unset(key)
+            else:
+                spark.conf.set(key, value)
 
 
 def _new_alerts(batch: DataFrame, batch_id: int, table: str) -> DataFrame:
@@ -224,7 +241,9 @@ _SELECT: dict[str, Callable[[DataFrame, int, str], DataFrame]] = {ALERTS: _new_a
 """Rows of a micro-batch to write, for the queries that do not write the whole batch."""
 
 
-def _batch_writer(query: str, table: str, totals: Totals) -> Callable[[DataFrame, int], None]:
+def _batch_writer(
+    query: str, table: str, totals: Totals, stale_after_s: int
+) -> Callable[[DataFrame, int], None]:
     output, select = OUTPUTS[query], _SELECT.get(query)
 
     def write(batch: DataFrame, batch_id: int) -> None:
@@ -238,7 +257,7 @@ def _batch_writer(query: str, table: str, totals: Totals) -> Callable[[DataFrame
             rows = sum(dates.values())
             if rows:
                 partitions = {output.date_column: sorted(dates), BATCH_ID: [str(batch_id)]}
-                write_partitions(frame.coalesce(1), table, partitions)
+                _write_waiting(frame.coalesce(1), table, partitions, stale_after_s)
         finally:
             if frame is not None:
                 frame.unpersist()
@@ -251,6 +270,33 @@ def _batch_writer(query: str, table: str, totals: Totals) -> Callable[[DataFrame
             )
 
     return write
+
+
+def _write_waiting(
+    frame: DataFrame, table: str, partitions: Mapping[str, list[Any]], stale_after_s: int
+) -> None:
+    """``write_partitions``, retried while another run holds the table's lock.
+
+    The holder is the housekeeping, or a run that died holding it: the lock then turns stale
+    after ``stale_after_s`` and ``write_partitions`` takes it over. ``TableLockedError`` once
+    that time and a margin have passed.
+    """
+    start, warned = time.monotonic(), False
+    while True:
+        try:
+            write_partitions(frame, table, partitions)
+        except TableLockedError:
+            if time.monotonic() - start > stale_after_s + _LOCK_MARGIN_S:
+                raise
+            if not warned:
+                logger.warning("table locked, waiting for its lock", extra={"table": table})
+                warned = True
+            time.sleep(_LOCK_POLL_S)
+            continue
+        if warned:
+            waited_s = round(time.monotonic() - start, 1)
+            logger.info("table lock obtained", extra={"table": table, "waited_s": waited_s})
+        return
 
 
 def _as_table(batch: DataFrame, schema: StructType, batch_id: int) -> DataFrame:
