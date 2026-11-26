@@ -82,16 +82,18 @@ Ligne d'audit :
 3. Lisez le code de sortie : `0` succès, `1` échec du job (motif dans `error_message` de
    l'audit), `2` configuration invalide ou sel absent.
 
-Le nombre de produits du classement par pays vient de `[gold] top_n` (5 par défaut) dans
-`conf/app.toml`. Pour une exécution : `--set gold.top_n=10` ou `GTDP_GOLD__TOP_N=10`.
+Deux réglages de `[gold]` dans `conf/app.toml` : `top_n` (5), le nombre de rangs du classement
+des produits par pays, et `moving_average_days` (7), la fenêtre de la moyenne mobile. Pour une
+exécution : `--set gold.top_n=10` ou `GTDP_GOLD__MOVING_AVERAGE_DAYS=30`.
 
 Deux exécutions gold ne doivent pas écrire les mêmes tables en même temps : la seconde échoue
 sur le verrou de table (`TableLockedError`) sans rien modifier ; relancez-la après la première.
 
-Mesures sur la machine de référence, profil `dev`, un exécuteur, le streaming tournant à côté
-(durées indicatives) : J1 (365 dates, 965 128 commandes) 54,6 s (`duration_s`), J2 et J3
-(4 dates, environ 10 400 commandes) 32 à 37 s. Après J3, `/datalake/gold` occupe 51,4 Mo hors
-capteurs, dont 43,4 Mo pour `fact_sales` (une partition et un fichier par date).
+Durées relevées sur la machine de référence, profil `dev`, un exécuteur, le streaming et d'autres
+applications tournant à côté (indicatives, pas des mesures de performance) : J1 (365 dates,
+965 128 commandes) de 55 à 77 s (`duration_s`), J2 et J3 (4 dates, environ 10 400 commandes) de
+32 à 69 s. Après J3, `/datalake/gold` occupe 51,6 Mo hors capteurs (155 Mo répliqués), dont
+43,4 Mo pour `fact_sales` (une partition et un fichier par date).
 
 ## Rejouer un jour
 
@@ -116,10 +118,13 @@ Le code de sortie vaut 1 si une date ou un invariant est en écart. Le rapport a
 | --- | --- |
 | Commandes par `order_date` (une colonne par dépôt, `drops`, `silver`, `fact_sales`, `status`) | `ok` partout : `fact_sales` = commandes silver de la date. `not built` pour une date qu'aucune exécution gold n'a encore couverte. Affiché pour les 7 dernières dates, les dates reçues dans plusieurs dépôts et toute date en écart, puis un résumé. |
 | Invariants (`check`, `rows`, `status`) | `ok` (0) pour chaque clé et chaque référence obligatoire, `info` pour les clients des logs. |
+| Gold contre silver (`check`, `silver`, `gold`, `status`) | `ok` partout. Silver est recalculé en une passe (commandes des jours terminés × versions × clients) : nombre de commandes, `revenue_eur` au prix applicable, `invoiced_amount_eur` (formule appliquée directement aux commandes silver), commandes sans version valide, avec plusieurs versions ou sans client (0), couverture de `dim_date` sans trou, chiffre d'affaires `COMPLETED` égal au total de `kpi_revenue_daily`, entonnoir jamais croissant. |
+| Top produits de FR (`position`, `plain_*`, `kpi_*`, `same`) | `true` partout : le top N recalculé par un `groupBy` et un `orderBy` simples sur `fact_sales` donne les mêmes produits et montants que l'indicateur. |
 | Contenu (`table`, `rows`, `content_sum`) | inchangé après un rejeu. |
 | Historique de `P00042` et ses commandes autour du changement de prix | avant le changement, `applicable_unit_price` vaut le prix de la version 1 ; après, celui de la version 2. |
 | Échantillons d'indicateurs | top produits par pays, moyenne mobile des 8 premiers et 8 derniers jours de FR, écart de prix des catégories de P00042, puis chaque autre indicateur. |
 | Exécutions gold de l'audit | `rows_in = rows_out`, `build_violations` à 0. |
+| Dernière ligne | `0 order dates mismatched, 0 checks failed`. |
 | `--explain D` | le plan du calcul de `fact_sales` pour les dates de `D`, avec la sélection de jointure par défaut puis avec `spark.sql.autoBroadcastJoinThreshold=-1`. |
 
 Lecture du plan : par défaut, `products_scd2` (1 321 versions, 39 Ko) et `dim_customer` sont
@@ -142,5 +147,5 @@ lignes synthétiques, tombe dans une seule tâche. C'est le cas que le lot perfo
 | `GoldCheckError: ... {'orphan.fact_sales.customer_id': N}` | Une partition ancienne référence un client ou une version disparus de silver. | Rejouez gold pour les jours des dates concernées. |
 | `TableLockedError` | Une autre exécution écrit la même table gold. | Attendez sa fin puis relancez. |
 | `ValueError: gold needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
-| `ValueError: the configuration has no [gold] section` | `conf/app.toml` sans section `[gold]`. | Restaurez la section (`top_n`). |
+| `ValueError: the configuration has no [gold] section` | `conf/app.toml` sans section `[gold]`. | Restaurez la section (`top_n`, `moving_average_days`). |
 | Code de sortie 2, journal `GTDP_PSEUDO_SALT is required` | Le sel n'est pas défini. | Exportez `GTDP_PSEUDO_SALT` ou ajoutez-le à `.env`. |
