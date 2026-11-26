@@ -17,6 +17,7 @@ metastore_db/
 derby.log
 checkpoints/
 output/
+data/lake/
 *.crc
 
 # Generated data (reproducible with `python -m gtdp.datagen generate`)
