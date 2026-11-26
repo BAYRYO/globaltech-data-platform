@@ -2,11 +2,31 @@ import gzip
 import hashlib
 import json
 import re
+import shutil
 from bisect import bisect_right
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from gtdp.datagen.__main__ import main
+from gtdp.datagen.verify import verify
+
 J1, J2, J3 = "2026-01-01", "2026-01-02", "2026-01-03"
+EXPECTED_CODES = {
+    "orders": {
+        "DUPLICATE_EXACT", "DUPLICATE_CROSS_DAY", "NULL_CUSTOMER", "UNKNOWN_CUSTOMER",
+        "UNKNOWN_PRODUCT", "BAD_QUANTITY", "BAD_PRICE", "BAD_TIMESTAMP", "FUTURE_TIMESTAMP",
+        "BAD_ENUM", "MALFORMED_ROW",
+    },
+    "customers": {
+        "DUPLICATE_EXACT", "DUPLICATE_KEY", "MISSING_EMAIL", "BAD_EMAIL", "MISSING_REGION",
+        "BAD_DATE",
+    },
+    "products": {"DUPLICATE_EXACT", "BAD_PRICE", "NULL_CATEGORY", "CONFLICTING_VERSION"},
+    "weblogs": {"MALFORMED_LINE", "HTTP_404", "HTTP_500"},
+}  # fmt: skip
+SENSOR_CODES = {
+    "LATE_EVENT", "VERY_LATE_EVENT", "DUPLICATE_EVENT", "MALFORMED_JSON", "NULL_VALUE", "SPIKE",
+}  # fmt: skip
 
 
 def tree_digest(root: Path) -> dict[str, str]:
@@ -41,6 +61,45 @@ def test_runs_with_the_same_seed_write_identical_bytes(ci_root, generate_ci, tmp
 def test_another_seed_writes_different_data(ci_root, generate_ci, tmp_path):
     other = generate_ci(tmp_path, seed=7)
     assert tree_digest(other) != tree_digest(ci_root)
+
+
+def test_verifier_recount_matches_every_manifest(ci_root):
+    report = verify(ci_root)
+    assert report.problems == []
+    assert len(report.checked) == 12 + 48
+    assert main(["verify", "--path", str(ci_root)]) == 0
+
+
+def test_verifier_rejects_a_damaged_row_and_a_lost_row(ci_root, tmp_path):
+    damaged = tmp_path / "ci"
+    shutil.copytree(ci_root, damaged)
+    path = orders_file(damaged, J1)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    fields = lines[1].split(",")
+    fields[2] = ""
+    lines[1] = ",".join(fields)
+    del lines[-1]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    problems = "\n".join(verify(damaged).problems)
+
+    assert "rows, manifest says 20000" in problems
+    assert "'NULL_CUSTOMER': 101" in problems
+    assert "sha256 differs" in problems
+    assert main(["verify", "--path", str(damaged)]) == 1
+
+
+def test_every_anomaly_type_appears_in_each_landing_file_and_in_the_sensor_day(ci_root):
+    report = verify(ci_root)
+    sensor_codes = set()
+    for label, counted in report.checked:
+        if label.startswith("sensors/"):
+            sensor_codes |= set(counted.anomalies)
+            continue
+        source = label.split("/")[1]
+        expected = EXPECTED_CODES[source] - ({"DUPLICATE_CROSS_DAY"} if label[:10] == J1 else set())
+        assert set(counted.anomalies) == expected, label
+    assert sensor_codes == SENSOR_CODES
 
 
 def test_j1_keeps_the_first_kit_transactions_verbatim_and_in_order(ci_root, kit_dir):
