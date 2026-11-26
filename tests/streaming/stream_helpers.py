@@ -10,13 +10,7 @@ from pathlib import Path
 from pyspark.errors import StreamingQueryException
 
 from gtdp.config import LakePaths, load_config
-from gtdp.streaming.stream import (
-    SensorPaths,
-    Written,
-    collect_progress,
-    query_metrics,
-    start_queries,
-)
+from gtdp.streaming.stream import SensorPaths, Totals, collect_progress, start_queries
 
 JOB = "streaming-sensors"
 SUFFIX = {"temperature": "TEMP", "vibration": "VIB", "pressure": "PRES"}
@@ -81,8 +75,8 @@ def drop_files(paths: SensorPaths, files: list[list[str]], first: int = 0) -> No
 
 def run_stream(spark, paths: SensorPaths, settings) -> dict[str, dict[str, int]]:
     """Run the three queries over every file present, then return their metrics."""
-    written, progress = Written(), {}
-    queries = start_queries(spark, paths, settings, written, {"availableNow": True})
+    totals = Totals()
+    queries = start_queries(spark, paths, settings, totals, {"availableNow": True})
     errors = []
     for query in queries.values():
         try:
@@ -91,5 +85,5 @@ def run_stream(spark, paths: SensorPaths, settings) -> dict[str, dict[str, int]]
             errors.append(error)
     if errors:
         raise errors[0]
-    collect_progress(queries, progress)
-    return query_metrics(progress, written)
+    collect_progress(queries, totals)
+    return totals.snapshot()
