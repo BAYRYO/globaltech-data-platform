@@ -140,6 +140,9 @@ ENTITY = Entity(
             lambda: ~raw("value").rlike(COMBINED_LOG) | F.col("event_ts").isNull(),
         ),
     ),
+    # The same line twice is one request: an exact duplicate within a day, a cross-day
+    # duplicate when a complete earlier day published it.
+    key=("log_id",),
 )
 
 
