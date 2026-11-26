@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from gtdp.silver.reconcile import compare, expected, manifest_expected, table_measures
-from gtdp.silver.report import price_history, reconciliation
+from gtdp.silver.report import contents, price_history, reconciliation
 
 from .lakes import DAYS, bronze_lake
 
@@ -99,5 +99,15 @@ def test_the_report_compares_manifest_audit_and_tables_without_mismatch(publishe
     assert {(line[0], line[2]) for line in lines if line[-1] == "info"} == {
         ("customers", "flagged.FUTURE_SIGNUP")
     }
+    tables = {
+        (row.table, row.ingestion_date): row.rows
+        for row in contents(published.spark, published.cfg).collect()
+    }
+
     assert versions.count() >= 2
     assert priced.where("applicable_unit_price IS NULL").count() == 0
+    assert (
+        tables[("orders", DAYS[1])]
+        == published.table("orders").where(f"ingestion_date = '{DAYS[1]}'").count()
+    )
+    assert tables[("customers", None)] == published.table("customers").count()

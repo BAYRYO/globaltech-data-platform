@@ -8,11 +8,14 @@
    and the count that the published tables show (rejects per reason, clean rows of a partitioned
    table). ``rows_in`` compares the manifest's rows with the bronze records the run counted.
    A measure the manifest does not predict, such as ``flagged.FUTURE_SIGNUP``, is ``info``.
-2. The audit rows of the silver runs.
-3. The SCD2 history of P00042, and the price applicable to its orders on either side of its first
+2. Rows and content checksum of each partition of the silver tables (of the whole table when it
+   has no partition), the rejects' ``_run_id`` aside: a replay that rewrites the same rows keeps
+   the same ``content_sum``.
+3. The audit rows of the silver runs.
+4. The SCD2 history of P00042, and the price applicable to its orders on either side of its first
    price change, next to the price invoiced and the current price.
-4. With ``--customer``, the customer's bronze records and its silver row (the salt is not shown).
-5. With ``--explain`` and ``--date``, the plan of the classification, then the plans of the
+5. With ``--customer``, the customer's bronze records and its silver row (the salt is not shown).
+6. With ``--explain`` and ``--date``, the plan of the classification, then the plans of the
    rejects and of the clean rows once it is persisted: both read it from memory.
 """
 
@@ -22,6 +25,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from datetime import date
+from functools import reduce
 
 from pyspark import StorageLevel
 from pyspark.sql import DataFrame, SparkSession
@@ -30,8 +34,8 @@ from pyspark.sql import functions as F
 from gtdp.audit import audit_path
 from gtdp.config import AppConfig, Env, load_config
 from gtdp.io import INGESTION_DATE, list_partition_values, read_table
-from gtdp.schemas import SOURCES, bronze_schema
-from gtdp.silver.pipelines import PIPELINES, classified, table_path
+from gtdp.schemas import RUN_ID, SILVER_REJECTS, SOURCES, bronze_schema
+from gtdp.silver.pipelines import PIPELINES, classified, rejects_path, table_path
 from gtdp.silver.products import with_applicable_price
 from gtdp.silver.pseudonymize import salt_frame
 from gtdp.silver.quality import DISPOSITION, Disposition, rejects
@@ -89,6 +93,33 @@ def _line(
     else:
         status = "MISMATCH"
     return source, day, name, manifest, audit, table, status
+
+
+def contents(spark: SparkSession, cfg: AppConfig) -> DataFrame:
+    """``table, ingestion_date, rows, content_sum`` for each silver table and partition."""
+    frames = []
+    for source, pipeline in PIPELINES.items():
+        table = read_table(spark, table_path(cfg.paths.silver, source), pipeline.schema)
+        frames.append(_checksum(table, pipeline.table, pipeline.partitioned))
+        rejected = read_table(spark, rejects_path(cfg.paths.silver, source), SILVER_REJECTS)
+        frames.append(_checksum(rejected.drop(RUN_ID), f"rejects/{source}", partitioned=True))
+    return reduce(DataFrame.unionByName, frames).orderBy("table", INGESTION_DATE)
+
+
+def _checksum(frame: DataFrame, name: str, partitioned: bool) -> DataFrame:
+    """The first 60 bits of each row's SHA-256, summed: the same for the same multiset of rows."""
+    day = F.col(INGESTION_DATE) if partitioned else F.lit(None)
+    row_hash = F.sha2(F.to_json(F.struct(*frame.columns)), 256)
+    return (
+        frame.groupBy(day.cast("string").alias(INGESTION_DATE))
+        .agg(
+            F.count(F.lit(1)).alias("rows"),
+            F.sum(F.conv(F.substring(row_hash, 1, 15), 16, 10).cast("decimal(38,0)"))
+            .cast("string")
+            .alias("content_sum"),
+        )
+        .select(F.lit(name).alias("table"), INGESTION_DATE, "rows", "content_sum")
+    )
 
 
 def runs(spark: SparkSession, cfg: AppConfig) -> DataFrame:
@@ -189,6 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ).show(1000, truncate=False)
         mismatches = [line for line in lines if line[-1] == "MISMATCH"]
         print(f"{len(lines)} measures compared, {len(mismatches)} mismatches")
+        contents(spark, cfg).show(100, truncate=False)
         runs(spark, cfg).show(100, truncate=False)
         for frame in price_history(spark, cfg):
             frame.show(20, truncate=False)
