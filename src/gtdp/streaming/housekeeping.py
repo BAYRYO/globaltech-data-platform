@@ -9,8 +9,9 @@
   (Spark never replays them), and for the aggregates and alerts only dates the watermark of the
   last committed batch has passed (no micro-batch writes or reads them any more).
 
-A compaction stages the merged rows, then writes a journal of the partitions it replaces, then
-swaps: it deletes those partitions and moves the merged one in. The run that finds a journal
+A compaction stages the merged rows, then writes a journal of the partitions it replaces (written
+aside, then renamed: it appears complete), then swaps: it deletes those partitions and moves the
+merged one in. The run that finds a journal
 finishes that swap first, so a run killed at any point is completed by the next one.
 """
 
@@ -282,9 +283,13 @@ def _read(spark: SparkSession, path: str) -> str:
 
 
 def _write(spark: SparkSession, path: str, text: str) -> None:
+    """Write ``path`` whole or not at all: a created file is visible before it is written."""
     fs, hadoop_path = filesystem(spark, path)
-    stream = fs.create(hadoop_path, True)
+    temporary = _path(spark, f"{path}.tmp")
+    stream = fs.create(temporary, True)
     try:
         stream.write(bytearray(text.encode("utf-8")))
     finally:
         stream.close()
+    if not fs.rename(temporary, hadoop_path):
+        raise OSError(f"could not move {temporary} to {hadoop_path}")
