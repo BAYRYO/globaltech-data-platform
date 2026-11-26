@@ -13,9 +13,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -47,16 +46,13 @@ SCHEMAS = {AGGREGATES: AGGREGATES_SCHEMA, ALERTS: ALERTS_SCHEMA, REJECTS: REJECT
 _SHUFFLE_PARTITIONS = "spark.sql.shuffle.partitions"
 _STOP_GRACE_S = 60.0
 _WATERMARK_KEY = "spark.watermarkDelayMs"
-_METRICS = (
+METRICS = (
     "batches",
     "input_rows",
     "rows_written",
     "rows_dropped_by_watermark",
     "rows_deduplicated",
 )
-
-Progress = dict[tuple[str, int], dict[str, Any]]
-"""Progress report of each executed micro-batch, keyed by (query, batch id)."""
 
 
 @dataclass(frozen=True)
@@ -85,29 +81,51 @@ class SensorPaths:
         return f"{self.checkpoints}/{query}"
 
 
-@dataclass
-class Written:
-    """Batches and rows each sink wrote in this run. The ``foreachBatch`` threads update it."""
+class Totals:
+    """Running counts of each query in this run: their memory does not grow with the run.
 
-    batches: Counter[str] = field(default_factory=Counter)
-    rows: Counter[str] = field(default_factory=Counter)
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    The ``foreachBatch`` threads add what each sink wrote; the driver adds each micro-batch's
+    progress report once, however many times it reads the recent reports.
+    """
 
-    def add(self, query: str, rows: int) -> None:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts = {name: dict.fromkeys(METRICS, 0) for name in SCHEMAS}
+        self._last_batch = dict.fromkeys(SCHEMAS, -1)
+
+    def add_written(self, query: str, rows: int) -> None:
         with self._lock:
-            self.batches[query] += 1
-            self.rows[query] += rows
+            self._counts[query]["batches"] += 1
+            self._counts[query]["rows_written"] += rows
 
-    def total_batches(self) -> int:
+    def add_progress(self, query: str, progress: Mapping[str, Any]) -> None:
+        """Count the progress report of one executed micro-batch, unless already counted."""
         with self._lock:
-            return sum(self.batches.values())
+            if progress["batchId"] <= self._last_batch[query]:
+                return
+            self._last_batch[query] = progress["batchId"]
+            counts = self._counts[query]
+            counts["input_rows"] += progress["numInputRows"]
+            for operator in progress["stateOperators"]:
+                counts["rows_dropped_by_watermark"] += operator["numRowsDroppedByWatermark"]
+                custom = operator.get("customMetrics", {})
+                counts["rows_deduplicated"] += custom.get("numDroppedDuplicateRows", 0)
+
+    def batches_written(self) -> int:
+        with self._lock:
+            return sum(counts["batches"] for counts in self._counts.values())
+
+    def snapshot(self) -> dict[str, dict[str, int]]:
+        """Per query: batches, rows read, rows written, rows dropped as late and as duplicates."""
+        with self._lock:
+            return {name: dict(counts) for name, counts in self._counts.items()}
 
 
 def start_queries(
     spark: SparkSession,
     paths: SensorPaths,
     settings: StreamingSettings,
-    written: Written,
+    totals: Totals,
     trigger: Mapping[str, Any],
 ) -> dict[str, StreamingQuery]:
     """Start the aggregates, alerts and rejects queries; ``trigger`` goes to ``writeStream``.
@@ -138,7 +156,7 @@ def start_queries(
             .outputMode("append")
             .trigger(**trigger)
             .option("checkpointLocation", paths.checkpoint(name))
-            .foreachBatch(_batch_writer(name, paths.tables[name], written, _SELECT.get(name)))
+            .foreachBatch(_batch_writer(name, paths.tables[name], totals, _SELECT.get(name)))
             .start()
             for name, output in outputs.items()
         }
@@ -162,7 +180,7 @@ _SELECT: dict[str, Callable[[DataFrame, int, str], DataFrame]] = {ALERTS: _new_a
 def _batch_writer(
     query: str,
     table: str,
-    written: Written,
+    totals: Totals,
     select: Callable[[DataFrame, int, str], DataFrame] | None,
 ) -> Callable[[DataFrame, int], None]:
     def write(batch: DataFrame, batch_id: int) -> None:
@@ -175,7 +193,7 @@ def _batch_writer(
                 write_partitions(output, table, {BATCH_ID: [str(batch_id)]})
         finally:
             output.unpersist()
-        written.add(query, rows)
+        totals.add_written(query, rows)
         if rows:
             logger.info(
                 "batch written",
@@ -206,31 +224,31 @@ def _as_table(batch: DataFrame, query: str, batch_id: int) -> DataFrame:
 
 def wait_for_stop(
     queries: Mapping[str, StreamingQuery],
-    written: Written,
+    totals: Totals,
     settings: StreamingSettings,
     stop_requested: Callable[[], bool],
-    progress: Progress,
 ) -> str:
     """Block until a stop condition holds and return it: ``"stop marker"`` or ``"idle"``.
 
-    Every trigger interval (1 s at least) it checks the stop marker, then counts an idle trigger
-    when no sink ran and no query has data or a batch in progress. ``stop_after_idle_triggers``
-    idle triggers in a row stop the stream. A failed query raises its exception here.
+    Every trigger interval (1 s at least) it adds the new progress reports to ``totals``, checks
+    the stop marker, then counts an idle trigger when no sink ran and no query has data or a
+    batch in progress. ``stop_after_idle_triggers`` idle triggers in a row stop the stream. A
+    failed query raises its exception here.
     """
     poll_s = max(settings.trigger_interval_s, 1)
-    idle, batches = 0, written.total_batches()
+    idle, batches = 0, totals.batches_written()
     while True:
         time.sleep(poll_s)
         for name, query in queries.items():
             if not query.isActive:
                 raise query.exception() or RuntimeError(f"query {name} stopped unrequested")
-        collect_progress(queries, progress)
+        collect_progress(queries, totals)
         if stop_requested():
             return "stop marker"
         busy = any(
             q.status["isDataAvailable"] or q.status["isTriggerActive"] for q in queries.values()
         )
-        now = written.total_batches()
+        now = totals.batches_written()
         idle = 0 if busy or now != batches else idle + 1
         batches = now
         if settings.stop_after_idle_triggers and idle >= settings.stop_after_idle_triggers:
@@ -246,8 +264,8 @@ def stop_queries(queries: Mapping[str, StreamingQuery], grace_s: float = _STOP_G
         query.stop()
 
 
-def collect_progress(queries: Mapping[str, StreamingQuery], progress: Progress) -> None:
-    """Add the progress of each executed micro-batch to ``progress``.
+def collect_progress(queries: Mapping[str, StreamingQuery], totals: Totals) -> None:
+    """Add the progress of each executed micro-batch still in ``recentProgress`` to ``totals``.
 
     An idle trigger also reports a progress, with the id of the next batch and no ``addBatch``
     duration: it is left out.
@@ -255,23 +273,7 @@ def collect_progress(queries: Mapping[str, StreamingQuery], progress: Progress) 
     for name, query in queries.items():
         for entry in query.recentProgress:
             if "addBatch" in entry["durationMs"]:
-                progress[(name, entry["batchId"])] = entry
-
-
-def query_metrics(progress: Progress, written: Written) -> dict[str, dict[str, int]]:
-    """Per query: batches, rows read, rows written, rows dropped as late and as duplicates."""
-    metrics = {name: dict.fromkeys(_METRICS, 0) for name in (AGGREGATES, ALERTS, REJECTS)}
-    for (name, _), entry in progress.items():
-        counts = metrics[name]
-        counts["input_rows"] += entry["numInputRows"]
-        for operator in entry["stateOperators"]:
-            counts["rows_dropped_by_watermark"] += operator["numRowsDroppedByWatermark"]
-            custom = operator.get("customMetrics", {})
-            counts["rows_deduplicated"] += custom.get("numDroppedDuplicateRows", 0)
-    for name, counts in metrics.items():
-        counts["batches"] = written.batches[name]
-        counts["rows_written"] = written.rows[name]
-    return metrics
+                totals.add_progress(name, entry)
 
 
 def checkpoint_state(spark: SparkSession, checkpoint: str) -> dict[str, int | None]:

@@ -10,14 +10,12 @@ from gtdp.streaming.stream import (
     AGGREGATES,
     ALERTS,
     REJECTS,
-    Progress,
     SensorPaths,
-    Written,
+    Totals,
     checkpoint_state,
     collect_progress,
     delete_path,
     make_dirs,
-    query_metrics,
     start_queries,
     stop_queries,
     wait_for_stop,
@@ -45,21 +43,20 @@ def streaming_sensors(ctx: JobContext) -> None:
         state = checkpoint_state(spark, paths.checkpoint(name))
         logger.info("query starts", extra={"query": name, **state})
 
-    written = Written()
-    progress: Progress = {}
+    totals = Totals()
     trigger = {"processingTime": f"{settings.trigger_interval_s} seconds"}
-    queries = start_queries(spark, paths, settings, written, trigger)
+    queries = start_queries(spark, paths, settings, totals, trigger)
     try:
         reason = wait_for_stop(
-            queries, written, settings, lambda: path_exists(spark, paths.stop_marker), progress
+            queries, totals, settings, lambda: path_exists(spark, paths.stop_marker)
         )
     finally:
         stop_queries(queries)
-    collect_progress(queries, progress)
+    collect_progress(queries, totals)
     if reason == "stop marker":
         delete_path(spark, paths.stop_marker)
 
-    metrics = query_metrics(progress, written)
+    metrics = totals.snapshot()
     counters = ctx.run.counters
     counters.rows_in = metrics[AGGREGATES]["input_rows"]
     counters.rows_out = metrics[AGGREGATES]["rows_written"] + metrics[ALERTS]["rows_written"]
