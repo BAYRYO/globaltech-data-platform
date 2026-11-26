@@ -1,29 +1,61 @@
 """The comparison tool's readings of the REST answers, its checks and its code count."""
 
+from dataclasses import astuple
 from decimal import Decimal
 
 import pytest
 
 from gtdp.perf.mr_compare import (
+    Cluster,
     Measure,
     Result,
+    Task,
+    TaskCost,
     checks,
     code_lines,
     differences,
     jobs_window_s,
+    main_stage,
     manifest_quality,
+    mann_whitney,
+    mr_core_seconds,
     mr_counters,
+    mr_task,
     overlapping,
     parse_revenue,
     result_counters,
+    spark_core_seconds,
+    spark_tasks,
     stage_totals,
+    task_cost,
+    volume_report,
 )
 
 RESULT = Result("FR\t10.00\t2\n", {"Lines.COMPLETED": 2, "Quality.BAD_PRICE": 1})
 
 
-def measure(engine: str, result: Result = RESULT, inputs=("/orders/d=1",), lines_read=3):
-    return Measure(engine, 1, "app", 1.0, 1.0, 1.0, 1, 1, lines_read, 1, 1, 1, list(inputs), result)
+def measure(
+    variant: str, result: Result = RESULT, inputs=("/orders/d=1",), lines_read=3, elapsed_s=1.0
+):
+    return Measure(
+        volume="dev",
+        variant=variant,
+        run=1,
+        app_id="app",
+        elapsed_s=elapsed_s,
+        jobs_s=1.0,
+        cpu_s=1.0,
+        memory_mb_s=1,
+        vcore_s=1,
+        core_s=1.0,
+        lines_read=lines_read,
+        bytes_read=1,
+        shuffle_bytes=1,
+        task_count=1,
+        tasks=[Task(1_000_000, 2.0, 3.0), Task(3_000_000, 4.0, 7.0)],
+        inputs=list(inputs),
+        result=result,
+    )
 
 
 def test_both_output_formats_parse_to_decimal_revenue_and_line_counts():
@@ -185,6 +217,153 @@ def test_code_lines_leave_out_blank_lines_comments_and_docstrings(tmp_path):
 
     assert code_lines(source) == (7, 2)
     assert code_lines(script) == (5, 2)
+
+
+FULL_RUNS = {"mapreduce": [18.205, 20.419, 19.556], "spark": [18.602, 16.524, 16.459]}
+DEV_RUNS = {"mapreduce": [13.625, 14.338, 12.697], "spark": [14.855, 16.352, 12.729]}
+"""Elapsed seconds of the six full and six dev runs of 2026-11-26."""
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [(FULL_RUNS, (8, 0.10, 0.20)), (DEV_RUNS, (2, 0.90, 0.40))],
+    ids=["full", "dev"],
+)
+def test_mann_whitney_gives_the_exact_p_values_of_the_three_run_samples(runs, expected):
+    u, one_sided, two_sided = mann_whitney(runs["mapreduce"], runs["spark"])
+
+    assert (u, round(one_sided, 3), round(two_sided, 3)) == expected
+
+
+def test_three_runs_against_three_cannot_go_below_one_chance_in_twenty():
+    assert mann_whitney([4, 5, 6], [1, 2, 3]) == (9, 0.05, 0.1)
+
+
+def test_mann_whitney_counts_a_tie_for_half_a_pair():
+    u, one_sided, two_sided = mann_whitney([1, 2], [2, 3])
+
+    assert (u, one_sided, two_sided) == pytest.approx((0.5, 1.0, 2 / 3))
+
+
+def test_the_task_cost_separates_the_fixed_part_from_the_cost_per_million_records():
+    tasks = [Task(0, 1.0, 2.0), Task(2_000_000, 5.0, 8.0), Task(4_000_000, 9.0, 14.0)]
+
+    assert astuple(task_cost(tasks)) == pytest.approx(astuple(TaskCost(1.0, 2.0, 2.0, 3.0)))
+
+
+def test_tasks_of_a_single_size_give_no_task_cost():
+    assert task_cost([Task(10, 1.0, 1.0), Task(10, 2.0, 2.0)]) is None
+
+
+def test_a_map_task_reads_its_records_cpu_and_elapsed_time():
+    task = {"id": "task_1_m_000000", "elapsedTime": 8500}
+    counters = {
+        "jobTaskCounters": {
+            "taskCounterGroup": [
+                {
+                    "counterGroupName": "org.apache.hadoop.mapreduce.TaskCounter",
+                    "counter": [
+                        {"name": "MAP_INPUT_RECORDS", "value": 1_880_000},
+                        {"name": "CPU_MILLISECONDS", "value": 2_250},
+                    ],
+                },
+                {"counterGroupName": "Quality", "counter": [{"name": "BAD_PRICE", "value": 3}]},
+            ]
+        }
+    }
+
+    assert mr_task(task, counters) == Task(1_880_000, 2.25, 8.5)
+
+
+def test_spark_tasks_keep_the_successful_attempts():
+    def attempt(status: str, records: int) -> dict:
+        metrics = {
+            "inputMetrics": {"recordsRead": records},
+            "executorCpuTime": 1_500_000_000,
+            "executorRunTime": 1_600,
+        }
+        return {"status": status, "taskMetrics": metrics}
+
+    assert spark_tasks([attempt("SUCCESS", 10), attempt("KILLED", 4)]) == [Task(10, 1.5, 1.6)]
+
+
+def test_the_main_stage_is_the_completed_stage_that_read_the_most_records():
+    stages = [
+        {"stageId": 0, "status": "COMPLETE", "inputRecords": 5_166},
+        {"stageId": 3, "status": "COMPLETE", "inputRecords": 10_054_797},
+        {"stageId": 4, "status": "FAILED", "inputRecords": 99_000_000},
+    ]
+
+    assert main_stage(stages)["stageId"] == 3
+
+
+def test_mapreduce_holds_one_core_per_task_attempt_plus_the_application_master():
+    counters = {"VCORES_MILLIS_MAPS": 48_000, "VCORES_MILLIS_REDUCES": 2_200}
+
+    assert mr_core_seconds(counters, 18.2) == pytest.approx(68.4)
+
+
+def test_spark_holds_each_executor_s_cores_until_removal_or_the_end():
+    executors = [
+        {"id": "driver", "totalCores": 0, "addTime": "2026-11-26T18:43:35.390GMT"},
+        {"id": "1", "totalCores": 2, "addTime": "2026-11-26T18:43:38.000GMT"},
+        {
+            "id": "2",
+            "totalCores": 2,
+            "addTime": "2026-11-26T18:43:38.000GMT",
+            "removeTime": "2026-11-26T18:43:43.000GMT",
+        },
+    ]
+    end = 1795718628000
+    """2026-11-26T18:43:48.000 UTC."""
+
+    assert spark_core_seconds(executors, 16.0, end) == pytest.approx(16.0 + 2 * 10 + 2 * 5)
+
+
+class _ReplayedRM(Cluster):
+    def __init__(self, readings: list[tuple[str, int, int]]) -> None:
+        super().__init__(out=None, settle_s=0)
+        self.readings = iter(readings)
+
+    def app(self, app_id: str) -> dict:
+        state, memory, vcores = next(self.readings)
+        return {"id": app_id, "state": state, "memorySeconds": memory, "vcoreSeconds": vcores}
+
+
+def test_resources_are_read_once_two_readings_of_the_finished_application_agree():
+    cluster = _ReplayedRM(
+        [
+            ("RUNNING", 100, 1),
+            ("FINISHED", 50_844, 83),
+            ("FINISHED", 53_277, 86),
+            ("FINISHED", 53_277, 86),
+            ("FINISHED", 99_999, 99),
+        ]
+    )
+
+    assert cluster.settled_app("app")["memorySeconds"] == 53_277
+
+
+def test_checks_compare_every_variant_with_the_first_mapreduce_run():
+    tuned = Result("FR\t10.01\t2\n", RESULT.counters)
+
+    assert checks([measure("mapreduce"), measure("mapreduce-tuned", tuned)], None) == [
+        r"mapreduce-tuned #1: output 'FR\t10.01\t2\n' != 'FR\t10.00\t2\n'",
+        "mapreduce-tuned #1: revenue FR: (Decimal('10.00'), 2) != (Decimal('10.01'), 2)",
+    ]
+
+
+def test_the_volume_report_tests_each_pair_of_variants_and_fits_the_task_costs():
+    measures = [
+        measure(variant, elapsed_s=seconds)
+        for variant, seconds in [("mapreduce", 20.0), ("spark", 16.0)] * 3
+    ]
+
+    report = "\n".join(volume_report("full", measures, "context", [], manifests=True))
+
+    assert "| mapreduce | spark | 3, 3 | 9 / 9 | 0.050 | 0.100 |" in report
+    assert "| 1.00 | 1.00 | 1.00 | 2.00 |" in report
+    assert "Les compteurs Quality sont égaux aux anomalies des manifestes." in report
 
 
 def _counter(name: str, value: int) -> dict:
