@@ -166,6 +166,10 @@ GTDP_CLIENT_STDIN=1 scripts/cluster/client.sh hdfs dfs -put -f - /user/etl/READM
 
 L'utilisateur `hadoop` est le super-utilisateur HDFS. L'authentification est simple. HDFS fait
 confiance à `HADOOP_USER_NAME`. Les droits protègent contre les erreurs, pas contre un attaquant.
+Les commandes d'administration (`hdfs dfsadmin`, `hdfs fsck`, `hdfs ec`, lecture de tout l'arbre)
+se lancent avec `HADOOP_USER_NAME=hadoop`. Sous `etl`, l'utilisateur par défaut, `hdfs fsck /`
+répond `Permission denied: user=etl, access=READ_EXECUTE, inode="/mr-history/done"` puis
+`Fsck on path '/' FAILED`.
 
 ### Déposer un jour de données
 
@@ -367,7 +371,7 @@ Le NameNode déclare un DataNode mort après
 dans `docker/conf/hadoop/hdfs-site.xml`.
 
 ```bash
-scripts/cluster/client.sh hdfs fsck / -files -blocks -locations
+HADOOP_USER_NAME=hadoop scripts/cluster/client.sh hdfs fsck / -files -blocks -locations
 docker compose stop datanode2          # simule la panne
 scripts/cluster/status.sh              # datanode2 passe DEAD après 90 s environ
 docker compose start datanode2
