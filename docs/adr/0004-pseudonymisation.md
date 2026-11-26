@@ -15,6 +15,10 @@ tout en gardant la capacité de compter des clients distincts et de joindre les 
 - Le sel vient de `GTDP_PSEUDO_SALT`, hors dépôt. Sans le sel, retrouver un email demande une
   attaque par dictionnaire sur un espace inconnu.
 - Fonctions natives Spark uniquement (`sha2`, `concat`, `lower`, `trim`), aucune UDF.
+- Le sel entre dans le calcul comme une **donnée** (DataFrame d'une ligne diffusé et joint), jamais
+  comme un littéral : la revue du Lot 0 a montré qu'un `lit(sel)` apparaît en clair dans
+  `explain` et deux fois dans l'event log servi par le History Server, même avec
+  `spark.sql.redaction.string.regex`. Un test vérifie l'absence du sel dans le plan et l'event log.
 
 ## Conséquences
 

@@ -20,7 +20,10 @@ sont vérifiées par leur somme SHA-512.
 
 - Une seule version de Hadoop sur tout le cluster, client compris : pas de conflit de jars.
 - Les exécuteurs YARN ont le même Python que le driver, condition de PySpark sur YARN.
-- Le premier build télécharge environ 800 Mo ; il est mis en cache ensuite.
+- Le premier build télécharge environ 1,04 Go d'archives Apache (`hadoop-3.3.6.tar.gz` 730 Mo,
+  `spark-3.5.3-bin-without-hadoop.tgz` 314 Mo, tailles relevées le 2026-11-26), plus l'image de
+  base et le JRE ; il est mis en cache ensuite. Le démarrage « en moins de 10 minutes » du guide
+  s'entend image construite.
 
 ## Alternatives écartées
 
