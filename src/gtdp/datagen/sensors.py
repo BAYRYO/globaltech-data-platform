@@ -176,6 +176,8 @@ class SensorFile:
         return rows
 
     def render(self, code: str | None, payload: dict[str, Any] | str) -> str:
+        """A MALFORMED_JSON line is cut in half, loses its closing brace or its value: invalid for
+        every JSON reader, lenient ones included (Spark accepts single quotes by default)."""
         if isinstance(payload, str):
             return payload
         payload["event_id"] = f"S{SENSOR_DAY:%Y%m%d}-{next(self._sequence):06d}"
@@ -189,7 +191,8 @@ class SensorFile:
             return line[: len(line) // 2]
         if variant == 1:
             return line[:-1]
-        return line.replace('"', "'")
+        head, tail = line.split('"value":', 1)
+        return f'{head}"value":,{tail.split(",", 1)[1]}'
 
 
 def write_sensors(root: Path, seed: int, profile: Profile) -> list[WrittenFile]:
