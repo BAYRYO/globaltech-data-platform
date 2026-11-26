@@ -82,8 +82,8 @@ class Entity:
     key: tuple[str, ...] = ()
     """Typed columns that identify a record within a day; ``()`` when its hash does."""
     references: Mapping[str, str] = field(default_factory=dict)
-    """Raw column -> source whose bronze identifiers, up to the day, are the known values. Rules
-    read the answer in ``known(column)``."""
+    """Raw column -> source whose published silver table, as built for the day, holds the known
+    values. Rules read the answer in ``known(column)``."""
 
 
 def raw(column: str) -> Column:
