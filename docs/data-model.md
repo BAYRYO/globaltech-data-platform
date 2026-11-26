@@ -1,8 +1,9 @@
 # Modèle de données
 
 Le dictionnaire de données détaillé (chaque colonne, type, règle, exemple) est dans
-[`data-dictionary.md`](data-dictionary.md). Ce document fixe les entités, leurs clés, les règles de
-qualité et le traitement de chaque anomalie du [contrat de données](data-contract.md).
+[`docs/data-dictionary/`](data-dictionary/README.md), une page par couche. Ce document fixe les
+entités, leurs clés, les règles de qualité et le traitement de chaque anomalie du
+[contrat de données](data-contract.md).
 
 ## Bronze
 
@@ -17,7 +18,7 @@ de J3 ne casse pas la lecture. Colonnes ajoutées :
 | `_ingested_at` | timestamp | horodatage de l'ingestion |
 | `_source_file` | string | chemin HDFS du fichier d'origine |
 | `_run_id` | string | identifiant de l'exécution (audit) |
-| `_record_hash` | string | `sha2` des valeurs brutes de la ligne, sert à la déduplication exacte |
+| `_record_hash` | string | SHA-256 de la ligne brute du fichier, sert à la déduplication exacte |
 | `_corrupt_record` | string | ligne brute si son nombre de champs diffère de l'en-tête |
 
 ## Silver
@@ -27,33 +28,45 @@ de J3 ne casse pas la lecture. Colonnes ajoutées :
 | `orders` | `silver/orders` | `transaction_id` | `ingestion_date` | aucune (fait immuable) |
 | `customers` | `silver/customers` | `customer_id` | — | SCD type 1, données personnelles pseudonymisées |
 | `products_scd2` | `silver/products_scd2` | `product_id`, `valid_from` | — | SCD type 2 |
-| `weblogs` | `silver/weblogs` | `log_id` (hash de la ligne) | `ingestion_date` | aucune |
+| `weblogs` | `silver/weblogs` | `log_id` (hash salé de la ligne, `sha2(sel ‖ ligne)`) | `ingestion_date` | aucune |
 | `rejects` | `silver/rejects/<source>` | — | `ingestion_date` | une ligne par enregistrement rejeté, liste des motifs, ligne brute |
+
+Les marqueurs `silver/_days/ingestion_date=D/` disent quelles sources sont publiées pour `D` et si
+le jour est complet ([ADR-0005](adr/0005-silver-incremental.md)).
 
 ### Ordre des opérations et réconciliation
 
-Pour chaque source et chaque jour `D` :
+Pour chaque source et chaque jour `D` (`gtdp.silver.quality.classify`) :
 
 1. **doublons exacts** : une seule ligne par `_record_hash` dans le dépôt, les autres sont comptées
    comme doublons ;
-2. **contrôles qualité en une seule projection** : un registre de règles (code, condition) produit
-   la colonne `reject_reasons` (tableau des codes vérifiés) ; une ligne avec au moins un motif part
-   en rejet. Une ligne dont `_corrupt_record` est non nul reçoit le seul motif `MALFORMED_ROW` : ses
-   colonnes sont décalées ou nulles, les autres règles ne sont évaluées que sur les lignes bien
-   formées (sinon un même enregistrement compterait sous plusieurs codes et la réconciliation par
-   code avec le manifeste serait fausse) ;
+2. **contrôles qualité en une seule projection** : un registre de règles (code, action,
+   condition) produit la colonne `reject_reasons` (codes de rejet vérifiés) et la colonne
+   `quality_flags` (drapeaux) ; une ligne avec au moins un motif de rejet part en rejet. Les
+   règles ne sont évaluées que si `_corrupt_record` est nul. Une ligne dont `_corrupt_record` est
+   non nul reçoit le seul motif `MALFORMED_ROW` : ses colonnes sont décalées ou nulles, et un même
+   enregistrement compté sous plusieurs codes fausserait la réconciliation par code avec le
+   manifeste ;
 3. **doublons de clé** dans le dépôt (même clé, contenu différent) : une ligne conservée par clé,
-   choisie de façon déterministe, les autres comptées comme doublons ;
-4. **doublons inter-jours** (commandes) : clé déjà présente dans une partition silver antérieure
-   à `D` (voir [ADR-0005](adr/0005-silver-incremental.md)).
+   celle du plus petit `_record_hash` parmi les lignes sans rejet, les autres comptées comme
+   doublons. Une ligne dont une colonne de la clé est nulle n'est jamais un doublon de clé ;
+4. **doublons inter-jours** (commandes et logs web) : clé déjà publiée par un jour **complet**
+   antérieur à `D` (voir [ADR-0005](adr/0005-silver-incremental.md)).
 
 Identité vérifiée à chaque exécution et écrite dans l'audit : `lignes bronze(D) = propres + rejets
-+ doublons`. L'exécution échoue si elle est fausse. Une seconde vérification contrôle l'unicité
-globale de la clé silver.
++ doublons`. Les contrôles (identité, unicité de la clé, sur les jours complets et le jour pour
+une table partitionnée, invariants SCD2) passent avant l'écriture, puis sur les données relues
+après l'écriture. Un
+échec avant l'écriture arrête la source sans rien publier. Un échec après l'écriture retire la
+publication de la source pour `D`.
 
-Les identifiants de référence (`customer_id`, `product_id` d'une commande) sont contrôlés contre
-**tous les identifiants vus en bronze** jusqu'à `D` inclus, lignes rejetées comprises : une
-anomalie sur une fiche client ou produit ne rend pas orphelines ses commandes.
+Les identifiants de référence d'une commande sont contrôlés contre les dimensions silver
+**publiées pour `D`** : `customer_id` contre `silver/customers`, `product_id` contre les versions
+de `silver/products_scd2`. Le job traite donc `customers` et `products` avant `orders`, refuse
+`--source orders` tant que les deux ne sont pas publiées pour `D`, et rend `orders` à refaire pour
+`D` quand l'une d'elles est rejouée. Un client ou un produit vu seulement dans des lignes rejetées
+est inconnu. Sur les données du contrat, aucun ne l'est : les comptes `UNKNOWN_CUSTOMER` et
+`UNKNOWN_PRODUCT` restent ceux du manifeste.
 
 ### Règles de qualité et disposition
 
@@ -65,34 +78,40 @@ la ligne reste en silver, éventuellement avec un drapeau dans `quality_flags`.
 | Code du contrat | Règle silver | Disposition |
 | --- | --- | --- |
 | `DUPLICATE_EXACT` | même `_record_hash` dans le dépôt | doublon |
-| `DUPLICATE_CROSS_DAY` | `transaction_id` déjà en silver avant `D` | doublon |
-| `NULL_CUSTOMER` | `customer_id` vide | rejet `NULL_CUSTOMER` |
-| `UNKNOWN_CUSTOMER` | `customer_id` absent des identifiants clients vus en bronze | rejet `UNKNOWN_CUSTOMER` |
-| `UNKNOWN_PRODUCT` | `product_id` absent des identifiants produits vus en bronze | rejet `UNKNOWN_PRODUCT` |
+| `DUPLICATE_CROSS_DAY` | `transaction_id` déjà publié par un jour complet antérieur à `D` | doublon |
+| — | `transaction_id` vide (règle défensive, rien d'injecté) | rejet `MISSING_KEY` |
+| `NULL_CUSTOMER` | `customer_id` vide ou fait d'espaces | rejet `NULL_CUSTOMER` |
+| `UNKNOWN_CUSTOMER` | `customer_id` non vide sans ligne dans `silver/customers` publiée pour `D` | rejet `UNKNOWN_CUSTOMER` |
+| `UNKNOWN_PRODUCT` | `product_id` sans version dans `silver/products_scd2` publiée pour `D` | rejet `UNKNOWN_PRODUCT` |
 | `BAD_QUANTITY` | non entier ou ≤ 0 | rejet `BAD_QUANTITY` |
 | `BAD_PRICE` | non décimal ou ≤ 0 | rejet `BAD_PRICE` |
-| `BAD_TIMESTAMP` | non conforme à `yyyy-MM-dd'T'HH:mm:ss` | rejet `BAD_TIMESTAMP` |
+| `BAD_TIMESTAMP` | non conforme à `yyyy-MM-dd'T'HH:mm:ss`, ou date impossible | rejet `BAD_TIMESTAMP` |
 | `FUTURE_TIMESTAMP` | `event_time` > `ingestion_date` + 1 jour | rejet `FUTURE_TIMESTAMP` |
 | `BAD_ENUM` | `channel` ou `status` hors liste | rejet `BAD_ENUM` |
-| `MALFORMED_ROW` | `_corrupt_record` non nul | rejet `MALFORMED_ROW` |
-| (J3) `discount_pct` | absent du fichier ou vide → `0.000` ; hors `[0 ; 0,30]` → rejet `BAD_DISCOUNT` | conservé |
+| `MALFORMED_ROW` | `_corrupt_record` non nul, code exclusif | rejet `MALFORMED_ROW` |
+| (J3) `discount_pct` | absent du fichier ou vide : `0.000` | conservé |
+| — | `discount_pct` hors format `^\d(\.\d{1,3})?$` ou hors `[0 ; 0,30]` | rejet `BAD_DISCOUNT` |
 
 **Clients**
 
 | Code du contrat | Règle silver | Disposition |
 | --- | --- | --- |
 | `DUPLICATE_EXACT` | même `_record_hash` | doublon |
-| `DUPLICATE_KEY` | même `customer_id` et même `updated_at` après normalisation de l'email | doublon |
-| `MISSING_EMAIL` | email vide | conservé, `email_hash` nul, drapeau `MISSING_EMAIL` |
+| `DUPLICATE_KEY` | même `customer_id` et même `updated_at` lisible : la fiche est répétée avec son email en casse ou espaces différents | doublon |
+| `MISSING_EMAIL` | email vide ou fait d'espaces | conservé, `email_hash` nul, drapeau `MISSING_EMAIL` |
 | `BAD_EMAIL` | `lower(trim(email))` hors `^[^@\s]+@[^@\s]+\.[a-z]{2,}$` | conservé, `email_hash` nul, drapeau `BAD_EMAIL` |
 | `MISSING_REGION` | région vide | conservé, `country` = `UNKNOWN`, drapeau `MISSING_REGION` |
 | `BAD_DATE` | `signup_date` non ISO | conservé, date relue au format `dd/MM/yyyy` sinon nulle, drapeau `BAD_DATE` |
 | (kit) inscription future | `signup_date` > `ingestion_date` | conservé, drapeau `FUTURE_SIGNUP` |
-| — | `customer_id` vide ou `_corrupt_record` non nul | rejet (règle défensive, rien d'injecté) |
+| — | `updated_at` vide ou hors format ISO | conservé, `updated_at` nul, drapeau `BAD_UPDATED_AT` ; jamais doublon de clé |
+| — | `customer_id` vide (règle défensive, rien d'injecté) | rejet `MISSING_KEY` |
+| — | `_corrupt_record` non nul (règle défensive, rien d'injecté) | rejet `MALFORMED_ROW` |
 
 Une fiche client n'est rejetée que si elle est inexploitable : une adresse email manquante ne fait
 pas disparaître un client et son chiffre d'affaires. `customers` garde, par `customer_id`, la ligne
-de plus grand `updated_at` vue jusqu'à `D` (SCD type 1).
+propre de plus grand `updated_at` vue jusqu'à `D` (SCD type 1). Une ligne sans `updated_at`
+lisible ne l'emporte que si le client n'en a pas d'autre. À égalité, le jour le plus récent, puis
+le plus petit `_record_hash`, départagent.
 
 **Produits**
 
@@ -101,8 +120,10 @@ de plus grand `updated_at` vue jusqu'à `D` (SCD type 1).
 | `DUPLICATE_EXACT` | même `_record_hash` | doublon |
 | `BAD_PRICE` | prix non décimal ou ≤ 0 | rejet `BAD_PRICE` |
 | `NULL_CATEGORY` | catégorie vide | rejet `NULL_CATEGORY` |
-| `CONFLICTING_VERSION` | plusieurs lignes distinctes pour (`product_id`, `updated_at`) | rejet du groupe entier, motif `CONFLICTING_VERSION` (2 lignes par anomalie du manifeste) |
-| `MALFORMED_ROW` | `_corrupt_record` non nul | rejet `MALFORMED_ROW` |
+| `CONFLICTING_VERSION` | plusieurs lignes distinctes du jour pour (`product_id`, `updated_at`) | rejet du groupe entier, motif `CONFLICTING_VERSION` (2 lignes par anomalie du manifeste) |
+| `MALFORMED_ROW` | `_corrupt_record` non nul, code exclusif | rejet `MALFORMED_ROW` |
+| — | `product_id` vide (règle défensive, rien d'injecté) | rejet `MISSING_KEY` |
+| — | `updated_at` hors format (règle défensive, rien d'injecté) | rejet `BAD_TIMESTAMP` |
 
 Le contrat injecte ces anomalies uniquement sur des versions non initiales : la version
 précédente du produit reste donc en vigueur.
@@ -111,47 +132,69 @@ précédente du produit reste donc en vigueur.
 
 | Code du contrat | Règle silver | Disposition |
 | --- | --- | --- |
-| `MALFORMED_LINE` | ne correspond pas à l'expression du Combined Log Format | rejet `MALFORMED_LINE` |
+| `MALFORMED_LINE` | ne correspond pas à l'expression du Combined Log Format, ou horodatage illisible ou impossible | rejet `MALFORMED_LINE` |
 | `HTTP_404`, `HTTP_500` | lignes valides | conservé |
-| — | même `_record_hash` | doublon (rien d'injecté) |
+| — | même `_record_hash` dans le dépôt | doublon exact (rien d'injecté) |
+| — | `log_id` déjà publié par un jour complet antérieur à `D` | doublon inter-jours (rien d'injecté) |
+
+L'expression accepte un client IPv6 (préfixe `/48`), un champ entre guillemets contenant un
+guillemet ou une barre oblique inverse échappés, et la requête `"-"` d'une connexion fermée avant
+toute requête (`method`, `path` et `protocol` nuls).
 
 ### `products_scd2`
 
 | Colonne | Rôle |
 | --- | --- |
-| `product_sk` | clé technique de version (`product_id` + `valid_from`) |
+| `product_sk` | clé technique de version, `<product_id>-<valid_from au format yyyyMMddHHmmss>` |
 | `product_id` | clé métier |
 | `product_name`, `category`, `unit_price_eur` | attributs historisés |
 | `valid_from` | début de validité (inclus) = `updated_at` de la version, sauf la version 1 |
 | `valid_to` | fin de validité (exclue), `9999-12-31` pour la version courante |
 | `is_current` | version courante |
 | `version` | rang de la version (1, 2, …) |
+| `_record_hash` | ligne bronze qui a ouvert la version (aucune donnée personnelle) |
+| `ingestion_date` | jour d'arrivée de cette ligne (colonne simple, pas une partition) |
 
 Règles :
 
-- la table est recalculée à partir de toutes les lignes produits valides de bronze jusqu'à `D`
-  (petite volumétrie), puis échangée atomiquement ;
+- la table est recalculée à partir de toutes les lignes produits propres de bronze jusqu'à `D`
+  (petite volumétrie), puis échangée par `replace_table` ;
+- une même (`product_id`, `updated_at`) reçue deux jours différents garde la ligne du jour le
+  plus récent ;
 - une nouvelle version n'est créée que si un attribut historisé change ;
 - la **version 1 vaut depuis `1900-01-01`** : la première version connue s'applique à toute
   commande antérieure, ce qui garantit exactement un prix par commande (un nouveau produit
   `P01001+` peut être commandé le jour même de son `updated_at`) ;
-- unicité vérifiée de (`product_id`, `valid_from`) ; aucun recouvrement d'intervalles.
+- contrôles avant et après l'écriture, chacun à zéro ligne : (`product_id`, `valid_from`)
+  unique, intervalle non vide, ni recouvrement ni trou entre deux versions, `is_current` vrai
+  pour la seule version ouverte, version 1 depuis 1900.
 
 Le prix applicable à une commande est celui de la version telle que
 `valid_from <= event_time < valid_to`.
 
-### Pseudonymisation des clients
+### Pseudonymisation
+
+Règle : aucune colonne silver lisible par les analystes n'est une fonction non salée d'une valeur
+personnelle ou d'une ligne qui en contient.
 
 | Donnée | Traitement silver | Justification |
 | --- | --- | --- |
-| `email` | `email_hash = sha2(concat(sel, lower(trim(email))), 256)` | permet le comptage de clients distincts et les jointures sans exposer l'adresse |
+| `email` | `email_hash = sha2(concat(sel, lower(trim(email))), 256)`, nul pour `MISSING_EMAIL` et `BAD_EMAIL` | permet le comptage de clients distincts et les jointures sans exposer l'adresse |
 | `full_name`, `phone` | supprimés | aucun usage analytique |
 | `customer_id` | conservé | identifiant interne, non directement identifiant hors du SI |
-| adresse IP (logs) | `ip_hash` salé, `/24` conservé pour la géographie grossière | l'IP est une donnée personnelle (RGPD) |
+| adresse IP (logs) | `ip_hash = sha2(concat(sel, lower(ip)), 256)` ; `ip_prefix` `/24` (IPv4) ou `/48` (IPv6) | l'IP est une donnée personnelle (RGPD) ; le préfixe suffit à la géographie grossière |
+| ligne de log | `log_id = sha2(concat(sel, ligne), 256)` | sans sel, le hachage de la ligne, recalculé depuis les autres colonnes et les 256 adresses du `/24`, redonnerait l'adresse |
+| `_record_hash` de bronze | non publié dans `customers` ni `orders`, gardé dans `products_scd2` | non salé, il confirmerait une ligne devinée ; une ligne produit ne contient aucune donnée personnelle |
+| lignes rejetées | gardées brutes dans `silver/rejects/<source>` | ACL `group:analysts:---`, fermée aux analystes |
 
 Le sel vient d'un secret hors dépôt (`GTDP_PSEUDO_SALT`). Il entre dans le calcul comme une
 **donnée** (DataFrame d'une ligne diffusé), jamais comme un littéral : il n'apparaît ni dans les
-plans `explain` ni dans les event logs servis par le History Server. Un test le vérifie. Voir
+plans `explain` ni dans les event logs servis par le History Server. Un test le vérifie.
+
+Sur le cluster, le job refuse un sel vide, de moins de 16 caractères ou égal au sel de
+développement du dépôt. La première exécution enregistre l'empreinte du sel dans
+`<ops>/pseudonymization/salt_fingerprint.json`, et un autre sel est ensuite refusé avant toute
+écriture. Changer de sel impose de reconstruire silver en entier. Voir
 [ADR-0004](adr/0004-pseudonymisation.md).
 
 ## Gold : modèle en étoile
