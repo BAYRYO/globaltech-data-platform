@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 from bisect import bisect_right
+from datetime import datetime, timedelta
 from pathlib import Path
 
 J1, J2, J3 = "2026-01-01", "2026-01-02", "2026-01-03"
@@ -144,3 +145,36 @@ def test_customers_start_from_the_kit_base_and_new_ids_follow_it(ci_root):
     assert ids(J1) == kit_base
     new_ids = (ids(J2) | ids(J3)) - kit_base
     assert min(new_ids) == "C005001"
+
+
+def test_sensor_day_spikes_one_machine_per_site_for_two_minutes(ci_root):
+    files = sorted((ci_root / "sensors" / J1).glob("sensors_*.jsonl"))
+    assert len(files) == 48
+    above: dict[tuple[str, str], list[int]] = {}
+    very_late_files = []
+    for index, path in enumerate(files):
+        start = datetime(2026, 1, 1) + timedelta(seconds=5 * index)
+        for line in path.read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            value, metric = event["value"], event["metric"]
+            if value is not None and (
+                (metric == "temperature" and value > 85)
+                or (metric == "vibration" and value > 7.1)
+                or (metric == "pressure" and not 4 <= value <= 8)
+            ):
+                above.setdefault((event["site"], event["sensor_id"]), []).append(index)
+            event_time = datetime.strptime(event["event_time"], "%Y-%m-%dT%H:%M:%S.%fZ")
+            if (start - event_time).total_seconds() >= 300:
+                very_late_files.append(index)
+    assert sorted(site for site, _ in above) == [
+        "DE-HAMBURG", "ES-BILBAO", "FR-LYON", "IT-TORINO", "UK-LEEDS",
+    ]  # fmt: skip
+    for indexes in above.values():
+        assert indexes[0] >= 24
+        assert len(indexes) >= 24
+        assert indexes == list(range(indexes[0], indexes[0] + len(indexes)))
+    assert very_late_files
+    assert min(very_late_files) >= 36
