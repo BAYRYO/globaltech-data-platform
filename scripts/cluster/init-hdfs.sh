@@ -7,7 +7,7 @@
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-export HADOOP_USER_NAME=hadoop # HDFS superuser
+export HADOOP_USER_NAME=hadoop
 in_image || run_in_client "$@"
 
 # path                            owner          mode  quota  erasure-coding  acl
@@ -41,7 +41,8 @@ TREE="
 /apps                             hadoop:hadoop  755   -      -               -
 /apps/spark                       hadoop:hadoop  755   -      -               -
 "
-SPARK_ARCHIVE=/apps/spark/spark-jars-3.5.3.zip # spark.yarn.archive in spark-defaults.conf
+SPARK_ARCHIVE="$(awk '$1 == "spark.yarn.archive" { print $2 }' "$SPARK_CONF_DIR/spark-defaults.conf")"
+[[ -n $SPARK_ARCHIVE ]] || die "no spark.yarn.archive in $SPARK_CONF_DIR/spark-defaults.conf"
 
 paths=() acls=() ec=()
 declare -A by_owner by_mode by_quota
@@ -55,7 +56,6 @@ while read -r path owner mode quota policy acl; do
   [[ $acl == - ]] || acls+=("$path $acl")
 done <<<"$TREE"
 
-# Run "<command...> <paths>" once per group, e.g. one chown per owner.
 for_groups() {
   local -n groups=$1
   shift
