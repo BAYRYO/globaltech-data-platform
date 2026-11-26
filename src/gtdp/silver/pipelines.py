@@ -101,9 +101,7 @@ def bronze_records(
     Every canonical column is there; one that a file lacks, such as ``discount_pct`` before J3,
     is null (ADR-0007).
     """
-    table = read_table(
-        spark, f"{bronze}/{source}", bronze_schema(SOURCES[source]), merge_schema=True
-    )
+    table = read_table(spark, f"{bronze}/{source}", bronze_schema(SOURCES[source]))
     day_column = F.col(INGESTION_DATE)
     return table.where(day_column <= F.lit(day) if history else day_column == F.lit(day))
 
