@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -71,13 +72,12 @@ def test_the_job_stops_after_idle_triggers_and_audits_its_counts(spark, tmp_path
     assert row["rows_out"] == 2
 
 
-def test_a_stop_marker_ends_the_job_between_batches(spark, tmp_path):
+def start_running_job(tmp_path: Path) -> tuple[subprocess.Popen, Path, Path]:
+    """Start the job without an idle stop; return once its first micro-batch is committed."""
     root = tmp_path / "lake"
     paths, _ = lake(root)
     drop_files(paths, FILES)
     commits = local_path(paths.checkpoint("aggregates")) / "commits"
-    marker = local_path(paths.stop_marker)
-
     log = tmp_path / "job.log"
     with log.open("w") as stderr:
         job = subprocess.Popen(
@@ -88,6 +88,13 @@ def test_a_stop_marker_ends_the_job_between_batches(spark, tmp_path):
         assert job.poll() is None, log.read_text()[-3000:]
         assert time.monotonic() < deadline, "the job committed no batch"
         time.sleep(0.5)
+    return job, root, log
+
+
+def test_a_stop_marker_ends_the_job_between_batches(spark, tmp_path):
+    job, root, log = start_running_job(tmp_path)
+    marker = local_path(lake(root)[0].stop_marker)
+
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
     job.wait(timeout=120)
@@ -95,3 +102,13 @@ def test_a_stop_marker_ends_the_job_between_batches(spark, tmp_path):
     assert job.returncode == 0, log.read_text()[-3000:]
     assert audit_row(spark, root)["metrics"]["stop_reason"] == "stop marker"
     assert not marker.exists()
+
+
+def test_sigterm_to_the_driver_stops_the_job_with_a_stopped_audit_row(spark, tmp_path):
+    job, root, log = start_running_job(tmp_path)
+
+    job.send_signal(signal.SIGTERM)
+    job.wait(timeout=120)
+
+    assert job.returncode == 143, log.read_text()[-3000:]
+    assert audit_row(spark, root)["status"] == "STOPPED"
