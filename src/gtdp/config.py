@@ -118,17 +118,68 @@ class Pseudonymization:
     salt: Secret
 
 
+THRESHOLD_DIRECTIONS = ("above", "below")
+
+
+@dataclass(frozen=True)
+class StreamingSettings:
+    """``[streaming]``: the sensor stream job (ADR-0008).
+
+    ``thresholds`` maps each metric to its alert limits: ``{"above": 85.0}`` alerts on a value
+    greater than 85, ``{"below": 4.0, "above": 8.0}`` on a value outside ``[4, 8]``.
+    """
+
+    trigger_interval_s: int
+    max_files_per_trigger: int
+    state_partitions: int
+    stop_after_idle_triggers: int
+    thresholds: Mapping[str, Mapping[str, float]]
+
+    def __post_init__(self) -> None:
+        for key, minimum in (
+            ("trigger_interval_s", 0),
+            ("max_files_per_trigger", 1),
+            ("state_partitions", 1),
+            ("stop_after_idle_triggers", 0),
+        ):
+            if getattr(self, key) < minimum:
+                raise ConfigError(
+                    f"[streaming] {key} must be >= {minimum}, got {getattr(self, key)}"
+                )
+        if not self.thresholds:
+            raise ConfigError("[streaming] thresholds: no metric")
+        for metric, limits in self.thresholds.items():
+            label = f"[streaming] thresholds.{metric}"
+            if not isinstance(limits, Mapping) or not limits:
+                raise ConfigError(f"{label}: expected a table of {THRESHOLD_DIRECTIONS}")
+            if unknown := sorted(limits.keys() - set(THRESHOLD_DIRECTIONS)):
+                raise ConfigError(f"{label}: unknown directions {unknown}")
+            for direction, value in limits.items():
+                if isinstance(value, bool) or not isinstance(value, int | float):
+                    raise ConfigError(f"{label}.{direction}: expected a number, got {value!r}")
+            if limits.keys() == {"above", "below"} and limits["below"] >= limits["above"]:
+                raise ConfigError(f"{label}: below must be lower than above")
+
+
 @dataclass(frozen=True)
 class AppConfig:
+    """``streaming`` is ``None`` when the configuration has no ``[streaming]`` section."""
+
     env: Env
     app: AppSettings
     spark: SparkSettings
     paths: LakePaths
     pseudonymization: Pseudonymization
     git_sha: str | None
+    streaming: StreamingSettings | None = None
 
 
-_SECTIONS: dict[str, type] = {"app": AppSettings, "spark": SparkSettings, "paths": _PathsSection}
+_SECTIONS: dict[str, type] = {
+    "app": AppSettings,
+    "spark": SparkSettings,
+    "paths": _PathsSection,
+    "streaming": StreamingSettings,
+}
 
 
 def load_config(
@@ -175,6 +226,7 @@ def load_config(
         ),
         pseudonymization=Pseudonymization(_salt(parsed_env)),
         git_sha=os.environ.get(GIT_SHA_VAR) or None,
+        streaming=_section("streaming", StreamingSettings, raw) if "streaming" in raw else None,
     )
 
 
@@ -261,10 +313,10 @@ def _section(name: str, cls: type[_T], raw: dict[str, dict[str, object]]) -> _T:
 
 
 def _base_type(hint: object) -> type:
-    """Unwrap ``X | None`` to ``X``."""
+    """Unwrap ``X | None`` to ``X``, and ``Mapping[K, V]`` to ``Mapping``."""
     if isinstance(hint, types.UnionType):
         return next(arg for arg in typing.get_args(hint) if arg is not type(None))
-    return typing.cast(type, hint)
+    return typing.cast(type, typing.get_origin(hint) or hint)
 
 
 def _to_uri(area: str, value: str, root: Path, env: Env, default_fs: str | None) -> str:
