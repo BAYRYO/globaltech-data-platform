@@ -31,18 +31,31 @@ scripts/mapreduce/run_mr.sh /datalake/landing 2026-01-03 /datalake/ops/mr_vs_spa
 # Spark : mêmes partitions, résultat sous /datalake/ops/mr_vs_spark/spark
 scripts/cluster/submit.sh revenue-by-country-spark --date 2026-01-03
 
-# Les deux, 3 fois chacun, avec vérification et rapport dans build/mr-vs-spark/
+# Les deux, 5 fois chacun en alternance, avec vérification et rapport dans build/mr-vs-spark/
 scripts/mapreduce/compare.sh --date 2026-01-03
 ```
 
-`run_mr.sh` affiche le résultat puis `job_id=job_…`. Le job Spark journalise
-`revenue by country written` avec `yarn_app_id`, le répertoire de sortie et la liste des fichiers
-de commandes lus.
+`run_mr.sh` affiche le résultat puis `job_id=job_…`. Des réglages `-D clé=valeur` placés après
+les trois arguments s'ajoutent au job. Le job Spark journalise `revenue by country written` avec
+`yarn_app_id`, le répertoire de sortie et la liste des fichiers de commandes lus.
 
 `compare.sh` attend avant chaque exécution que YARN n'ait plus aucune application active, et
 recommence (3 fois au plus) une exécution qu'une autre application a chevauchée. `--no-wait`
 supprime l'attente pour un simple contrôle d'égalité ; le rapport signale alors les exécutions non
 exclusives. Le code de sortie vaut 1 si un contrôle échoue, et `report.md` liste les écarts.
+
+| Option de `compare.sh` | Effet |
+| --- | --- |
+| `--volumes NOM=URI …` | landings à mesurer, chacun nommé ; par défaut `landing=` le landing de `conf/env/cluster.toml` |
+| `--runs N` | exécutions par variante et par volume, en alternance (5 par défaut) |
+| `--mr-conf CLÉ=VALEUR` | ajoute la variante `mapreduce-tuned`, le job MapReduce avec `-D CLÉ=VALEUR` (répétable) |
+| `--reread NOM=APP,APP…` | relit les mesures d'applications terminées, regroupées par volume, sans rien relancer |
+| `--out DIR` | répertoire du rapport (`build/mr-vs-spark` par défaut) |
+
+Le rapport donne, par volume, chaque exécution, la médiane et l'étendue des durées, le test exact
+de Mann-Whitney de chaque paire de variantes, les Mo·s et cœurs·s, et le coût fixe et par ligne
+d'une tâche ([méthode](../mapreduce-vs-spark.md#méthode)). Les ressources sont relues jusqu'à ce
+que deux lectures du ResourceManager à 5 s d'intervalle soient égales.
 
 ### Profil `full` (10 M de lignes)
 
@@ -60,8 +73,12 @@ scripts/cluster/client.sh bash -c '
     hdfs dfs -put -f /tmp/gen/full/landing/$d/_MANIFEST.json $base/_manifests/ingestion_date=$d/
   done'
 scripts/mapreduce/compare.sh --date 2026-01-03 \
-  --landing hdfs://namenode:8020/benchmarks/mr-vs-spark/full/landing --out build/mr-vs-spark/full
+  --volumes full=hdfs://namenode:8020/benchmarks/mr-vs-spark/full/landing \
+  --out build/mr-vs-spark/full
 ```
+
+La campagne de mesure complète (profils `ci`, `dev` et `full`, trois variantes, 5 exécutions) est
+décrite dans [MapReduce contre Spark](../mapreduce-vs-spark.md#campagne-de-mesure).
 
 Le générateur écrit dans le `/tmp` du conteneur client, pas dans la copie du dépôt : 1 Go de moins
 à faire transiter par le montage du poste. Mesuré : 23 s de génération, 26 s de vérification,
@@ -90,9 +107,9 @@ scripts/cluster/client.sh mapred job -status <job_id>      # compteurs Quality e
 
 Contrôles attendus, tous faits par `compare.sh` :
 
-- sortie MapReduce et sortie Spark identiques ;
-- `Quality.*` égaux, motif par motif, aux anomalies `orders` des manifestes des dates lues
-  (`BAD_DISCOUNT` vaut 0, le générateur n'en injecte pas) ;
+- sortie MapReduce et sortie Spark identiques octet pour octet ;
+- `Quality.*` égaux, motif par motif, aux anomalies `orders` non nulles des manifestes des dates
+  lues (`BAD_DISCOUNT` n'apparaît pas, le générateur n'en injecte pas) ;
 - `Lines.HEADER + Lines.COMPLETED + Lines.OTHER_STATUS + Σ Quality.*` = `Map input records` ;
 - mêmes répertoires lus : `mapreduce.input.fileinputformat.inputdir` et `tmpfiles` du job
   (API REST JobHistory, `/conf`) contre `order_files` et `customer_dirs` du journal Spark.

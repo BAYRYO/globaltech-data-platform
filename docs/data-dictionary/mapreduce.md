@@ -12,7 +12,7 @@ Hadoop Streaming : `<répertoire de sortie>/part-00000`. Spark :
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `country` | string | préfixe de la région du client avant `-` (ligne client de plus grand `updated_at`, puis de plus grande région) ; `UNKNOWN` si la région est vide | `FR` |
+| `country` | string | préfixe de la région du client avant `-` (ligne client de plus grand `updated_at`, puis de plus grande région) ; `UNKNOWN` si ce préfixe est vide ou contient un caractère de contrôle ASCII (U+0000 à U+001F, U+007F) | `FR` |
 | `revenue_eur` | decimal, 2 décimales | somme exacte de `quantity × unit_price_eur × (1 − discount_pct)` sur les lignes valides `COMPLETED` du pays, arrondie au centime (demi supérieur) une fois, sur le total | `1767230531.51` |
 | `completed_lines` | long | nombre de lignes valides `COMPLETED` du pays | `389235` |
 
