@@ -48,10 +48,11 @@ ENV JAVA_HOME=/opt/java/openjdk \
     GTDP_IN_IMAGE=1
 ENV PATH=${JAVA_HOME}/bin:${HADOOP_HOME}/bin:${SPARK_HOME}/bin:${PATH}
 
-# Spark's launch scripts call ps. Debian security updates replace pinned versions, so no pin.
+# Spark's launch scripts call ps. libisal2 gives erasure coding the native ISA-L codec (hadoop
+# checknative: ISA-L true). Debian security updates replace pinned versions, so no pin.
 # hadolint ignore=DL3008
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends procps \
+    && apt-get install -y --no-install-recommends procps libisal2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=jre /opt/java/openjdk /opt/java/openjdk
