@@ -51,6 +51,8 @@ ENTITY = Entity(
         Rule("MISSING_REGION", FLAG, lambda: blank(raw("region"))),
         Rule("BAD_DATE", FLAG, lambda: iso_date(raw("signup_date")).isNull()),
         Rule("FUTURE_SIGNUP", FLAG, lambda: F.col("signup_date") > F.col(INGESTION_DATE)),
+        # Kept: the record still says the customer exists. It ranks last in the SCD1 choice.
+        Rule("BAD_UPDATED_AT", FLAG, lambda: F.col("updated_at").isNull()),
     ),
     # A key duplicate restates a record with its email in another case or padded with spaces.
     key=("customer_id", "updated_at"),
@@ -59,9 +61,10 @@ ENTITY = Entity(
 
 def table(clean: DataFrame) -> DataFrame:
     """The latest clean record of each ``customer_id``: its email hashed, its name and phone
-    dropped."""
+    dropped. A record without a readable ``updated_at`` wins only when its customer has no other;
+    then the latest day, then the lowest ``_record_hash``, decides."""
     latest = Window.partitionBy("customer_id").orderBy(
-        F.col("updated_at").desc(), F.col(INGESTION_DATE).desc(), F.col(RECORD_HASH)
+        F.col("updated_at").desc_nulls_last(), F.col(INGESTION_DATE).desc(), F.col(RECORD_HASH)
     )
     current = clean.withColumn("_rank", F.row_number().over(latest)).where(F.col("_rank") == 1)
     return conform(current, SILVER_CUSTOMERS)
