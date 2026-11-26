@@ -36,6 +36,7 @@ QUANTITY_FORMAT = re.compile(r"[1-9][0-9]{0,8}")
 PRICE_FORMAT = re.compile(r"([0-9]{1,8})(?:\.([0-9]{1,2}))?")
 TIMESTAMP_FORMAT = re.compile(r"[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}")
 DISCOUNT_FORMAT = re.compile(r"0\.([0-9]{3})")
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 HEADER = ("Lines", "HEADER")
 COMPLETED = ("Lines", "COMPLETED")
 OTHER_STATUS = ("Lines", "OTHER_STATUS")
@@ -45,8 +46,9 @@ def load_countries(lines: Iterable[str]) -> dict[str, str]:
     """customer_id -> country, from customer lines of any number of files.
 
     A customer's row is the one with the greatest (updated_at, region); its country is the region
-    prefix before `-`, or UNKNOWN when that prefix is empty. Lines without 8 fields, the header
-    and empty ids are ignored.
+    prefix before `-`, or UNKNOWN when that prefix is empty or holds an ASCII control character:
+    a TAB would cut the key that Hadoop sorts, and a character below TAB would sort a key before
+    the key it extends. Lines without 8 fields, the header and empty ids are ignored.
     """
     latest: dict[str, tuple[str, str]] = {}
     for line in lines:
@@ -55,7 +57,12 @@ def load_countries(lines: Iterable[str]) -> dict[str, str]:
             continue
         version = (fields[UPDATED_AT], fields[REGION])
         latest[fields[CUSTOMER_ID]] = max(version, latest.get(fields[CUSTOMER_ID], version))
-    return {cid: region.split("-", 1)[0] or "UNKNOWN" for cid, (_, region) in latest.items()}
+    return {cid: country(region) for cid, (_, region) in latest.items()}
+
+
+def country(region: str) -> str:
+    prefix = region.split("-", 1)[0]
+    return "UNKNOWN" if prefix == "" or CONTROL_CHARACTER.search(prefix) else prefix
 
 
 def price_cents(text: str) -> int:
