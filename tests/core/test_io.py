@@ -1,8 +1,9 @@
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
 
 import pytest
+from pyspark.errors import AnalysisException
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, IntegerType, StringType, StructField, StructType
 
@@ -41,6 +42,20 @@ def test_write_partitions_twice_gives_the_same_table_and_keeps_other_days(spark,
 
     assert rows(spark, path) == once
     assert once == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
+    assert os.listdir(tmp_path) == ["orders"]
+
+
+def test_a_cached_read_of_the_table_sees_the_replaced_partition(spark, tmp_path):
+    path = str(tmp_path / "orders")
+    first = spark.createDataFrame([(1, "2026-01-01"), (2, "2026-01-02")], SCHEMA)
+    write_partitions(first, path, {INGESTION_DATE: [JAN_1, JAN_2]})
+    spark.read.parquet(path).cache().count()
+
+    write_partitions(
+        spark.createDataFrame([(3, "2026-01-02")], SCHEMA), path, {INGESTION_DATE: [JAN_2]}
+    )
+
+    assert rows(spark, path) == [(1, JAN_1), (3, JAN_2)]
 
 
 def test_named_partition_without_rows_is_emptied(spark, tmp_path):
@@ -254,3 +269,79 @@ def test_rejects_stay_readable_after_a_day_without_reject(spark, tmp_path):
 
     assert ids(spark, str(tmp_path / "rejects")) == []
     assert ids(spark, str(tmp_path / "silver")) == ["t1"]
+
+
+@pytest.fixture
+def published(spark, tmp_path):
+    """Silver with days 1 and 2 published, day 2 holding a duplicated row."""
+    path = str(tmp_path / "silver")
+    df = spark.createDataFrame([(1, "2026-01-01"), (2, "2026-01-02"), (2, "2026-01-02")], SCHEMA)
+    write_partitions(df, path, {INGESTION_DATE: [JAN_1, JAN_2]})
+    return path
+
+
+PUBLISHED = [(1, JAN_1), (2, JAN_2), (2, JAN_2)]
+
+
+def test_a_failed_replay_keeps_the_published_partition(spark, published, tmp_path):
+    failing = spark.range(4).selectExpr(
+        "CAST(IF(id = 3, raise_error('executor lost'), id) AS INT) AS id",
+        "'2026-01-02' AS ingestion_date",
+    )
+
+    with pytest.raises(Exception, match="executor lost"):
+        write_partitions(failing, published, {INGESTION_DATE: [JAN_2]})
+
+    assert rows(spark, published) == PUBLISHED
+    assert os.listdir(tmp_path) == ["silver"]
+
+
+def test_a_dataframe_without_the_partition_column_keeps_the_published_partition(spark, published):
+    no_partition_column = spark.createDataFrame([(5,)], "id int")
+
+    with pytest.raises(AnalysisException):
+        write_partitions(no_partition_column, published, {INGESTION_DATE: [JAN_2]})
+
+    assert rows(spark, published) == PUBLISHED
+
+
+def test_a_partition_can_be_rewritten_from_its_own_rows(spark, published):
+    day_2 = spark.read.parquet(published).where(F.col(INGESTION_DATE) == F.lit(JAN_2))
+
+    write_partitions(day_2.dropDuplicates(), published, {INGESTION_DATE: [JAN_2]})
+
+    assert rows(spark, published) == [(1, JAN_1), (2, JAN_2)]
+
+
+def test_a_row_outside_the_named_partitions_is_refused_and_nothing_is_published(
+    spark, published, tmp_path
+):
+    stray = spark.createDataFrame([(9, "2026-01-01"), (3, "2026-01-03")], SCHEMA)
+
+    with pytest.raises(ValueError, match="ingestion_date=2026-01-01"):
+        write_partitions(stray, published, {INGESTION_DATE: [JAN_3]})
+
+    assert rows(spark, published) == PUBLISHED
+    assert list_partition_values(spark, published, INGESTION_DATE) == ["2026-01-01", "2026-01-02"]
+    assert os.listdir(tmp_path) == ["silver"]
+
+
+@pytest.mark.parametrize(
+    "values", ["2026-01-02", [datetime(2026, 1, 2)]], ids=["bare-string", "datetime"]
+)
+def test_partition_values_that_name_other_directories_are_refused(spark, published, values):
+    with pytest.raises(TypeError):
+        write_partitions(spark.createDataFrame([], SCHEMA), published, {INGESTION_DATE: values})
+
+    assert rows(spark, published) == PUBLISHED
+    assert list_partition_values(spark, published, INGESTION_DATE) == ["2026-01-01", "2026-01-02"]
+
+
+def test_a_later_day_without_new_row_still_blocks_an_earlier_replay(spark, tmp_path):
+    bronze = [("a", 1, "2026-01-01"), ("b", 1, "2026-01-02"), ("b", 1, "2026-01-03")]
+    make_bronze(spark, str(tmp_path / "bronze"), bronze)
+    for day in (JAN_1, JAN_2, JAN_3):  # day 3 only re-sends b, so silver day 3 gets no row
+        silver_day(spark, tmp_path, day)
+
+    with pytest.raises(LaterPartitionError, match="ingestion_date=2026-01-03"):
+        silver_day(spark, tmp_path, JAN_2)
