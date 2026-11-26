@@ -1,6 +1,8 @@
 """KAN-26: each rule of each registry on its edge cases, and the order of the dispositions."""
 
-from datetime import date
+import hashlib
+import re
+from datetime import date, datetime
 
 import pytest
 from pyspark.sql import functions as F
@@ -14,9 +16,15 @@ from gtdp.silver.pipelines import PIPELINES
 from gtdp.silver.pseudonymize import salt_frame
 from gtdp.silver.quality import DISPOSITION, classify, with_references
 
-from .lakes import SALT
+from .lakes import DAYS, SALT
 
 DAY = date(2026, 1, 2)
+
+
+def salted(value: str) -> str:
+    return hashlib.sha256(f"{SALT}{value}".encode()).hexdigest()
+
+
 KNOWN = {"customer_id": ["C000001"], "product_id": ["P00001"]}
 ORDER = {
     "transaction_id": "T000000001",
@@ -293,6 +301,50 @@ def test_a_conflicting_version_rejects_every_record_of_the_version(spark):
         ["CONFLICTING_VERSION"]
     ] * 2
     assert later[DISPOSITION] == "clean"
+
+
+@pytest.mark.slow
+def test_generated_weblogs_parse_like_an_independent_parser(published):
+    pattern = re.compile(
+        r"^(\S+) - (\S+) \[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}) \+0000\] "
+        r'"(GET|POST) (\S+) HTTP/1\.1" (\d{3}) (\d+) "-" "Mozilla/5\.0 \((\w+)\)"$'
+    )
+    kinds = {("GET", "/products/"): "view", ("GET", "/search"): "search"}
+    kinds |= {("POST", "/cart/add"): "cart", ("POST", "/checkout"): "purchase"}
+    expected = set()
+    for day in DAYS:
+        for line in set(published.landed_lines(day, "weblogs")):
+            if not (found := pattern.match(line)):
+                continue
+            ip, user, stamp, method, path, status, size, device = found.groups()
+            kind = next(
+                (k for (m, p), k in kinds.items() if m == method and path.startswith(p)), "other"
+            )
+            product = re.search(r"(?:^/products/|[?&]product=)(P\d+)", path)
+            expected.add(
+                (
+                    salted(line),
+                    datetime.strptime(stamp, "%d/%b/%Y:%H:%M:%S"),
+                    salted(ip),
+                    ip.rsplit(".", 1)[0] + ".0/24",
+                    None if user == "-" else user,
+                    method,
+                    path,
+                    int(status),
+                    int(size),
+                    device,
+                    kind,
+                    product.group(1) if product else None,
+                    day,
+                )
+            )
+    columns = ["log_id", "event_ts", "ip_hash", "ip_prefix", "customer_id", "method", "path"]
+    columns += ["http_status", "bytes_sent", "device", "event_type", "product_id"]
+    rows = published.table("weblogs").select(*columns, F.col("ingestion_date").cast("string"))
+
+    assert expected
+    assert {tuple(row) for row in rows.collect()} == expected
+    assert rows.count() == len(expected)
 
 
 def test_a_combined_log_line_is_parsed(spark):
