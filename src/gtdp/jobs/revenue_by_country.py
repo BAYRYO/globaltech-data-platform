@@ -46,7 +46,9 @@ def revenue_by_country_spark(ctx: JobContext) -> None:
         f"{output}/counters",
     )
     ctx.run.counters.rows_in = sum(n for (_, name), n in totals.items() if name != "HEADER")
-    ctx.run.counters.rows_rejected = sum(n for (group, _), n in totals.items() if group == "Quality")
+    ctx.run.counters.rows_rejected = sum(
+        n for (group, _), n in totals.items() if group == "Quality"
+    )
     ctx.run.counters.rows_out = len(revenue)
     ctx.run.metrics["counters"] = {f"{group}.{name}": n for (group, name), n in totals.items()}
     logger.info(

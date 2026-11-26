@@ -41,7 +41,7 @@ HEADER, INVALID, COMPLETED, OTHER_STATUS = "HEADER", "INVALID", "COMPLETED", "OT
 
 
 def _try_cast(column: str, sql_type: str) -> Column:
-    """``column`` cast to ``sql_type``, NULL when it does not parse, whatever spark.sql.ansi.enabled."""
+    """``column`` cast to ``sql_type``; NULL when it does not parse, even with ANSI mode on."""
     return F.expr(f"try_cast({column} AS {sql_type})")
 
 
@@ -136,7 +136,7 @@ def classify_orders(lines: DataFrame, countries: DataFrame) -> DataFrame:
 
 
 def summarize(classified: DataFrame) -> DataFrame:
-    """One row per (outcome, reason, country): ``lines`` and ``amount`` rounded half up to the cent."""
+    """One row per (outcome, reason, country): ``lines`` and ``amount``, rounded half up."""
     return classified.groupBy("outcome", "reason", "country").agg(
         F.count(F.lit(1)).alias("lines"), F.round(F.sum("amount"), 2).alias("amount")
     )
@@ -150,7 +150,7 @@ def revenue_lines(summary: Iterable[Row]) -> list[str]:
 
 
 def counters(summary: Iterable[Row]) -> dict[tuple[str, str], int]:
-    """The mapper's Hadoop counters: (Quality, reason) and (Lines, HEADER|COMPLETED|OTHER_STATUS)."""
+    """The mapper's counters: (Quality, reason) and (Lines, HEADER|COMPLETED|OTHER_STATUS)."""
     totals: Counter[tuple[str, str]] = Counter()
     for row in summary:
         key = ("Quality", row.reason) if row.outcome == INVALID else ("Lines", row.outcome)
