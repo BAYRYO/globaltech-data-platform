@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 from bisect import bisect_right
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -121,6 +122,16 @@ def test_j3_appends_discount_pct_as_last_column(ci_root):
     discounts = [line.split(",")[8] for line in j3[1:] if line.count(",") == 8]
     assert all(d == "" or 0 <= float(d) <= 0.30 for d in discounts)
     assert len({d for d in discounts if d}) > 5
+
+
+def test_malformed_order_rows_never_have_8_or_9_fields(ci_root):
+    for day in (J1, J2, J3):
+        lines = orders_file(ci_root, day).read_text(encoding="utf-8").splitlines()
+        width = lines[0].count(",") + 1
+        widths = Counter(line.count(",") + 1 for line in lines[1:])
+        malformed = {n: rows for n, rows in widths.items() if n != width}
+        assert malformed, day
+        assert not malformed.keys() & {8, 9}, (day, malformed)
 
 
 def test_cross_day_duplicates_resend_rows_of_earlier_drops(ci_root):

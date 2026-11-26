@@ -141,12 +141,14 @@ def _bad_enum(src: Orders) -> str:
 
 
 def _malformed(src: Orders) -> str:
+    """Two fields short, two fields over, or `;` as separator: never the 8 or 9 fields that a
+    reader of every drop takes for a valid row."""
     row = src.fresh()
     variant = src.rng.randrange(3)
     if variant == 0:
-        return ",".join(row[:-1])
+        return ",".join(row[:-2])
     if variant == 1:
-        return ",".join([*row, "1"])
+        return ",".join([*row, *row[-2:]])
     return ";".join(row)
 
 
