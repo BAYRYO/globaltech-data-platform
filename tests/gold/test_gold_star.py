@@ -162,13 +162,20 @@ def test_a_star_that_breaks_an_invariant_fails_before_the_indicators(silver_lake
     )
 
 
-def test_the_job_needs_the_silver_orders_of_the_day(silver_lake):
+def test_gold_reads_only_the_days_silver_completed(silver_lake):
     silver_lake.customers(customer("C1"))
     silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
-    silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00"))
+    silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00"), order("T2", "2025-12-30T10:00:00"))
+    silver_lake.orders(J2, order("T3", "2025-12-30T23:00:00", day=J2), complete=False)
 
-    with pytest.raises(FileNotFoundError, match="run silver for 2026-01-02 first"):
+    with pytest.raises(FileNotFoundError, match="silver has not completed 2026-01-02"):
         silver_lake.run_gold(J2)
+    silver_lake.run_gold(J1)
+    assert rows_per_date(silver_lake) == {"2025-12-30": 2}
+
+    silver_lake.complete(J2)
+    silver_lake.run_gold(J2)
+    assert rows_per_date(silver_lake) == {"2025-12-30": 3}
 
 
 def test_the_calendar_covers_every_day_of_the_orders_and_logs(silver_lake):

@@ -155,8 +155,6 @@ REFERENCES = (
     Reference(FACT_SALES, "customer_id", DIM_CUSTOMER),
     Reference(FACT_SALES, "product_sk", DIM_PRODUCT),
     Reference(FACT_WEB_EVENTS, "date_key", DIM_DATE),
-    # Silver does not check the customer of a log line against the customer file: the data model
-    # makes this link optional (0 or 1 customer), so unmatched values are reported only.
     Reference(FACT_WEB_EVENTS, "customer_id", DIM_CUSTOMER, required=False),
 )
 

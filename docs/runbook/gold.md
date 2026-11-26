@@ -10,14 +10,17 @@ dépôt, cluster démarré et silver du jour publié ([runbook silver](silver.md
 
 `gold --date D` enchaîne, dans une seule application et une seule ligne d'audit :
 
-1. **Garde.** La partition `silver/orders/ingestion_date=D` doit exister, sinon l'exécution
-   échoue avant toute écriture.
+1. **Garde.** Gold ne lit que les jours que silver a terminés, marqués par
+   `silver/_days/ingestion_date=<jour>/_SUCCESS` (toutes les sources publiées et vérifiées,
+   `gtdp.silver.days`). `D` doit en faire partie, sinon l'exécution échoue avant toute écriture.
+   Les partitions `ingestion_date` d'un jour silver incomplet (en cours ou échoué) sont ignorées
+   de `orders`, `weblogs` et des rejets.
 2. **Dimensions.** `dim_customer` (silver `customers`), `dim_product` (silver `products_scd2`) et
    `dim_date` (tous les jours entre la première et la dernière date des commandes et des logs
    silver) sont reconstruites et échangées (`replace_table`), puis relues.
 3. **Fait des ventes.** Les dates de commande (`order_date`, jour UTC de `event_time`) présentes
    dans `silver/orders` de `D` sont recalculées à partir de **toutes** les commandes silver de ces
-   dates, quel que soit leur `ingestion_date`, puis seules ces partitions sont remplacées
+   dates, quel que soit leur jour silver terminé, puis seules ces partitions sont remplacées
    (`write_partitions`, [ADR-0002](../adr/0002-parquet-idempotence.md)). Une commande en retard
    de J2 datée du 2025-12-30 reconstruit le 2025-12-30 avec les commandes de J1 et de J2 ; les
    autres dates ne bougent pas. Chaque commande prend le prix catalogue de la version
@@ -42,6 +45,7 @@ Ligne d'audit :
 | Champ | Contenu |
 | --- | --- |
 | `rows_in` | commandes silver des dates recalculées |
+| `metrics_json.silver_days` | jours silver terminés que l'exécution a lus |
 | `rows_out` | lignes de `fact_sales` relues sur ces dates, égales à `rows_in` |
 | `metrics_json.partitions_refreshed`, `order_dates` | nombre et liste des dates `order_date` remplacées |
 | `metrics_json.build_violations` | `no_version`, `several_versions`, `unknown_customer` : lignes du calcul qui cassent le grain, toutes à 0 |
@@ -129,7 +133,7 @@ lignes synthétiques, tombe dans une seule tâche. C'est le cas que le lot perfo
 
 | Message dans `error_message` | Cause | Action |
 | --- | --- | --- |
-| `FileNotFoundError: .../silver/orders/ingestion_date=<D> not found: run silver for <D> first` | Silver n'a pas publié ce jour. | Lancez `silver --date <D>`, puis gold. Rien n'a été écrit. |
+| `FileNotFoundError: silver has not completed <D>: run silver for <D> first` | Silver n'a pas terminé ce jour (pas de `_SUCCESS` sous `silver/_days/ingestion_date=<D>`). | Lancez ou rejouez `silver --date <D>`, puis gold. Rien n'a été écrit. |
 | `GoldCheckError: orders of <D> break the grain of fact_sales: {'no_version': N}` | Une commande tombe avant la première version de son produit ou dans un trou de l'historique. | Vérifiez `products_scd2` avec le rapport silver (invariants SCD2). Rien n'a été écrit dans `fact_sales` ; les dimensions sont déjà échangées. |
 | `GoldCheckError: ... {'several_versions': N}` | Deux versions d'un produit se chevauchent. | Idem : historique SCD2 incohérent en silver. |
 | `GoldCheckError: ... {'unknown_customer': N}` | Une commande silver n'a pas de client dans silver `customers`. | Rejouez silver du jour, puis gold. |

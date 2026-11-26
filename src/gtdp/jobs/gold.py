@@ -7,7 +7,7 @@ from datetime import date
 from functools import reduce
 
 from pyspark import StorageLevel
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from gtdp.audit import Layer
@@ -23,9 +23,10 @@ from gtdp.gold.tables import (
     Table,
     table_path,
 )
-from gtdp.io import INGESTION_DATE, path_exists, read_table, replace_table, write_partitions
+from gtdp.io import INGESTION_DATE, read_table, replace_table, write_partitions
 from gtdp.jobs.registry import JobContext, job
 from gtdp.schemas import SILVER_REJECTS
+from gtdp.silver.days import complete_days
 from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
 
@@ -43,8 +44,9 @@ class GoldCheckError(RuntimeError):
 def gold(ctx: JobContext) -> None:
     """Publish the gold tables for ``--date``.
 
-    Every ``order_date`` present in ``silver/orders`` of ``--date`` is rebuilt from all the silver
-    orders of that date, whatever their ``ingestion_date``, so a late order never drops the orders
+    Gold reads the days that silver completed (``gtdp.silver.days``) and needs ``--date`` among
+    them. Every ``order_date`` present in ``silver/orders`` of ``--date`` is rebuilt from the
+    silver orders of that date in every complete day, so a late order never drops the orders
     already published for its date (ADR-0002); other dates keep their rows. Dimensions,
     ``fact_web_events`` and indicators are rebuilt from the whole of silver. Fails before writing
     ``fact_sales`` when an order matches no catalog version, several, or no customer; fails after
@@ -57,18 +59,23 @@ def gold(ctx: JobContext) -> None:
     if settings is None:
         raise ValueError("the configuration has no [gold] section")
     spark, silver = ctx.spark, ctx.cfg.paths.silver
-    partition = f"{silver_path(silver, 'orders')}/{INGESTION_DATE}={day}"
-    if not path_exists(spark, partition):
-        raise FileNotFoundError(f"{partition} not found: run silver for {day} first")
+    complete = complete_days(spark, silver)
+    if day not in complete:
+        raise FileNotFoundError(f"silver has not completed {day}: run silver for {day} first")
+    ctx.run.metrics["silver_days"] = [str(d) for d in complete]
 
     def publish(table: Table, frame: DataFrame) -> DataFrame:
         path = table_path(ctx.cfg.paths.gold, table.name)
         replace_table(frame, path)
         return read_table(spark, path, table.schema)
 
-    orders, weblogs = _silver(spark, silver, "orders"), _silver(spark, silver, "weblogs")
-    customers = publish(DIM_CUSTOMER, dimensions.customers(_silver(spark, silver, "customers")))
-    products = publish(DIM_PRODUCT, dimensions.products(_silver(spark, silver, "products")))
+    def read(source: str) -> DataFrame:
+        table = read_table(spark, silver_path(silver, source), PIPELINES[source].schema)
+        return _of_days(table, complete) if PIPELINES[source].partitioned else table
+
+    orders, weblogs = read("orders"), read("weblogs")
+    customers = publish(DIM_CUSTOMER, dimensions.customers(read("customers")))
+    products = publish(DIM_PRODUCT, dimensions.products(read("products")))
     days = orders.select(facts.order_date().alias("date")).unionByName(
         weblogs.select(F.to_date("event_ts").alias("date"))
     )
@@ -91,7 +98,10 @@ def gold(ctx: JobContext) -> None:
 
     rejects = reduce(
         DataFrame.unionByName,
-        [read_table(spark, rejects_path(silver, source), SILVER_REJECTS) for source in PIPELINES],
+        [
+            _of_days(read_table(spark, rejects_path(silver, source), SILVER_REJECTS), complete)
+            for source in PIPELINES
+        ],
     )
     inputs = Star(sales, web_events, customers, products, orders, rejects)
     kpi_rows: dict[str, int] = {}
@@ -102,8 +112,9 @@ def gold(ctx: JobContext) -> None:
         kpi_rows[name] = read_table(spark, path).count()
 
 
-def _silver(spark: SparkSession, silver: str, source: str) -> DataFrame:
-    return read_table(spark, silver_path(silver, source), PIPELINES[source].schema)
+def _of_days(table: DataFrame, days: list[date]) -> DataFrame:
+    """The ``ingestion_date`` partitions of ``table`` among ``days``."""
+    return table.where(F.col(INGESTION_DATE).isin(days))
 
 
 def _refresh_sales(

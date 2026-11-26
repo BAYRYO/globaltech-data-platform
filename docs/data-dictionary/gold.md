@@ -12,7 +12,7 @@ Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, le
 
 | Table | Grain | Clé (vérifiée à chaque exécution) | Partition | Écriture |
 | --- | --- | --- | --- | --- |
-| `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | les dates de commande du jour traité, recalculées depuis toutes les commandes silver de ces dates (`write_partitions`) |
+| `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | les dates de commande du jour traité, recalculées depuis les commandes de ces dates de tous les jours silver terminés (`write_partitions`) |
 | `fact_web_events` | une requête valide des logs web | `log_id` | aucune | reconstruite depuis tout silver (`replace_table`) |
 | `dim_date` | un jour | `date_key` | aucune | reconstruite |
 | `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite |
@@ -39,8 +39,8 @@ Chaque exécution vérifie, dans cet ordre :
 3. avant les indicateurs : clé unique de chaque table de l'étoile et aucun orphelin sur les
    références obligatoires, sur toutes les partitions.
 
-Aucun membre `UNKNOWN` n'est nécessaire : silver ne publie une commande que si son client et son
-produit existent, et le contrôle 1 le confirme. Le pays `UNKNOWN` de `dim_customer` est celui
+Aucun membre `UNKNOWN` n'est nécessaire : silver ne publie une commande que si son client a une
+ligne silver et son produit une version SCD2 valide à sa date, et le contrôle 1 le confirme. Le pays `UNKNOWN` de `dim_customer` est celui
 d'un client sans région (drapeau `MISSING_REGION`), pas un membre technique.
 
 ## `fact_sales`
