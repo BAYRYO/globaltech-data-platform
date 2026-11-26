@@ -237,7 +237,15 @@ def _to_uri(value: str, root: Path) -> str:
     """
     if "://" in value:
         return value.rstrip("/")
-    return (root / value).resolve().as_uri()
+    return _file_uri(root / value)
+
+
+def _file_uri(path: Path) -> str:
+    """``file://`` URI of ``path``, without the percent-encoding of ``Path.as_uri()``.
+
+    Hadoop reads the characters of a URI string literally: ``%20`` names a directory ``%20``.
+    """
+    return "file:///" + path.resolve().as_posix().lstrip("/")
 
 
 def _salt(env: Env) -> Secret:

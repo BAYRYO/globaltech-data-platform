@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 
@@ -150,9 +151,18 @@ def test_local_without_salt_uses_dev_salt_with_warning(conf_dir, caplog):
 def test_local_paths_become_file_uris_under_the_conf_parent(conf_dir):
     paths = load_config("local", conf_dir).paths
 
-    assert paths.ops == (conf_dir.parent / "lake" / "ops").as_uri()
+    assert paths.ops == f"file://{conf_dir.parent / 'lake' / 'ops'}"
     assert paths.checkpoints == "file:///abs/checkpoints"
     assert paths.bronze == "hdfs://nn:8020/lake/bronze"
+
+
+def test_local_paths_keep_spaces_and_accents_as_written(tmp_path):
+    checkout = tmp_path / "Hélène Dupont" / "projet bigdata"
+    shutil.copytree(REPO / "conf", checkout / "conf")
+
+    paths = load_config("local", checkout / "conf").paths
+
+    assert paths.ops == f"file://{checkout / 'data' / 'lake' / 'ops'}"
 
 
 def test_git_sha_comes_from_environment(conf_dir, monkeypatch):
@@ -181,4 +191,4 @@ def test_shipped_local_config_keeps_the_lake_inside_the_repository():
     cfg = load_config("local")
 
     assert cfg.spark.master == "local[*]"
-    assert cfg.paths.ops == (REPO / "data" / "lake" / "ops").as_uri()
+    assert cfg.paths.ops == f"file://{REPO / 'data' / 'lake' / 'ops'}"
