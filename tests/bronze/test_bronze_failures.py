@@ -114,6 +114,18 @@ def test_a_file_that_the_readers_would_alter_fails_before_any_write(lake, line, 
     assert nothing_written(lake, J2)
 
 
+def test_a_file_that_ends_inside_a_utf8_character_fails_before_any_write(lake):
+    manifest = lake.land(J2)
+    data = lake.landing_file(J2, CUSTOMERS).read_bytes() + "C900001,Hé".encode()[:-1]
+    rows = entry_of(manifest, CUSTOMERS)["rows"] + 1
+    lake.rewrite(J2, manifest, CUSTOMERS, data, rows)
+
+    with pytest.raises(LandingError, match=rf"{CUSTOMERS}: not UTF-8 \(line {rows + 1}\)"):
+        lake.run(J2)
+
+    assert nothing_written(lake, J2)
+
+
 def test_a_csv_header_without_the_columns_of_its_source_fails_before_any_write(lake):
     manifest = lake.land(J2)
     text = lake.landing_file(J2, CUSTOMERS).read_text()
@@ -162,6 +174,28 @@ def test_a_day_without_its_manifest_is_not_ingested(lake):
         lake.run(J2)
 
     assert failed_row(lake).status == "FAILED"
+
+
+def test_a_manifest_of_another_day_is_refused(lake):
+    manifest = lake.land(J2)
+    manifest["ingestion_date"] = J1
+    lake.write_manifest(J2, manifest)
+
+    with pytest.raises(LandingError, match=f"is for {J1}, not {J2}"):
+        lake.run(J2)
+
+    assert nothing_written(lake, J2)
+
+
+def test_a_manifest_listing_a_source_bronze_does_not_know_is_refused(lake):
+    manifest = lake.land(J2)
+    manifest["files"].append({"source": "sensors", "path": "sensors/s.jsonl", "rows": 0})
+    lake.write_manifest(J2, manifest)
+
+    with pytest.raises(LandingError, match=r"lists unknown sources \['sensors'\]"):
+        lake.run(J2)
+
+    assert nothing_written(lake, J2)
 
 
 def land_without(lake, day, source):
