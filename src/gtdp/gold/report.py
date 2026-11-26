@@ -4,8 +4,8 @@
 
 1. Orders per ``order_date``: the silver orders of each drop (``ingestion_date``) and the rows of
    ``fact_sales``. ``ok`` when the counts are equal, ``not built`` when no gold run covered the
-   date yet, ``MISMATCH`` otherwise. Shown for the dates whose orders came in several drops (late
-   orders) and for every date that is not ``ok``.
+   date yet, ``MISMATCH`` otherwise. Shown for the last 7 order dates, the dates whose orders
+   came in several drops (late orders) and every date that is not ``ok``.
 2. The invariants of the star (unique keys, no orphan fact) and the optional references.
 3. Rows and content checksum of each gold table: a replay that rewrites the same rows keeps the
    same ``content_sum``.
@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from datetime import date
 from functools import reduce
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 from gtdp.audit import audit_path
@@ -242,7 +242,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     spark = build_spark(cfg, f"{cfg.app.name}-gold-report")
     try:
         dates = order_dates(spark, cfg)
-        dates.where((F.col("drops") > 1) | (F.col("status") != "ok")).show(400, truncate=False)
+        recent = F.col(ORDER_DATE) > F.date_sub("_last", 7)
+        shown = (F.col("drops") > 1) | (F.col("status") != "ok") | recent
+        dates.withColumn("_last", F.max(ORDER_DATE).over(Window.partitionBy())).where(shown).drop(
+            "_last"
+        ).show(400, truncate=False)
         summary = dates.groupBy("status").agg(
             F.count(F.lit(1)).alias("order_dates"),
             F.sum("silver").alias("silver"),

@@ -1,11 +1,15 @@
-"""Hand-made silver tables, written where the gold job reads them, and the gold job run on them."""
+"""Hand-made silver tables, written where the gold job reads them, and the gold job run on them.
+
+Rows are dicts placed into the silver schemas of ``gtdp.schemas`` by column name: a column a row
+does not name is null, so a column added to or dropped from silver leaves these helpers valid.
+"""
 
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.types import StructType
+from pyspark.sql.types import StructField, StructType
 
 from gtdp.audit import Run, audited_run
 from gtdp.config import AppConfig
@@ -18,7 +22,14 @@ from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
 
 J1, J2, J3 = date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)
-EPOCH, OPEN = datetime(1900, 1, 1), datetime(9999, 12, 31)
+OPEN = datetime(9999, 12, 31)
+
+
+def frame(spark: SparkSession, schema: StructType, rows: list[dict]) -> DataFrame:
+    """``rows`` in the columns of ``schema``, by name, every column nullable."""
+    nullable = StructType([StructField(f.name, f.dataType) for f in schema.fields])
+    values = [tuple(row.get(field.name) for field in schema.fields) for row in rows]
+    return spark.createDataFrame(values, nullable)
 
 
 def order(
@@ -33,43 +44,37 @@ def order(
     discount: str = "0",
     status: str = "COMPLETED",
     channel: str = "web",
-) -> tuple:
+) -> dict:
     """A ``silver/orders`` row."""
-    return (
-        transaction_id,
-        datetime.fromisoformat(event_time),
-        customer,
-        product,
-        quantity,
-        Decimal(price),
-        channel,
-        status,
-        Decimal(discount),
-        f"h-{transaction_id}",
-        day,
-    )
+    return {
+        "transaction_id": transaction_id,
+        "event_time": datetime.fromisoformat(event_time),
+        "customer_id": customer,
+        "product_id": product,
+        "quantity": quantity,
+        "unit_price_eur": Decimal(price),
+        "channel": channel,
+        "status": status,
+        "discount_pct": Decimal(discount),
+        INGESTION_DATE: day,
+    }
 
 
 def customer(
-    customer_id: str,
-    *,
-    country: str = "FR",
-    segment: str = "B2C",
-    signup: str = "2024-01-01",
-) -> tuple:
+    customer_id: str, *, country: str = "FR", segment: str = "B2C", signup: str = "2024-01-01"
+) -> dict:
     """A ``silver/customers`` row."""
-    return (
-        customer_id,
-        f"hash-{customer_id}",
-        f"{country}-IDF",
-        country,
-        segment,
-        date.fromisoformat(signup),
-        datetime(2025, 12, 31),
-        [],
-        f"h-{customer_id}",
-        J1,
-    )
+    return {
+        "customer_id": customer_id,
+        "email_hash": f"hash-{customer_id}",
+        "region": f"{country}-IDF",
+        "country": country,
+        "segment": segment,
+        "signup_date": date.fromisoformat(signup),
+        "updated_at": datetime(2025, 12, 31),
+        "quality_flags": [],
+        INGESTION_DATE: J1,
+    }
 
 
 def versions(product_id: str, *changes: tuple[str, ...], category: str = "Lighting") -> list:
@@ -79,21 +84,20 @@ def versions(product_id: str, *changes: tuple[str, ...], category: str = "Lighti
     starts = [datetime.fromisoformat(change[0]) for change in changes]
     ends = [*starts[1:], OPEN]
     return [
-        (
-            f"{product_id}-{start:%Y%m%d%H%M%S}",
-            product_id,
-            f"{category} {product_id}",
-            change[2] if len(change) > 2 else category,
-            Decimal(change[1]),
-            start,
-            end,
-            end == OPEN,
-            number,
-            f"h-{product_id}-{number}",
-            J1,
-        )
+        {
+            "product_sk": f"{product_id}-{start:%Y%m%d%H%M%S}",
+            "product_id": product_id,
+            "product_name": f"{category} {product_id}",
+            "category": change[2] if len(change) > 2 else category,
+            "unit_price_eur": Decimal(change[1]),
+            "valid_from": start,
+            "valid_to": end,
+            "is_current": end == OPEN,
+            "version": number,
+            INGESTION_DATE: J1,
+        }
         for number, (start, end, change) in enumerate(
-            zip(starts, ends, changes, strict=False), start=1
+            zip(starts, ends, changes, strict=True), start=1
         )
     ]
 
@@ -108,31 +112,23 @@ def request(
     product: str | None = None,
     customer_id: str | None = "C1",
     day: date = J1,
-) -> tuple:
+) -> dict:
     """A ``silver/weblogs`` row."""
-    return (
-        log_id,
-        datetime.fromisoformat(event_ts),
-        "ip-hash",
-        "198.18.0.0/24",
-        customer_id,
-        "GET",
-        "/",
-        "HTTP/1.1",
-        status,
-        100,
-        None,
-        f"Mozilla/5.0 ({device})",
-        device,
-        event_type,
-        product,
-        day,
-    )
+    return {
+        "log_id": log_id,
+        "event_ts": datetime.fromisoformat(event_ts),
+        "customer_id": customer_id,
+        "http_status": status,
+        "device": device,
+        "event_type": event_type,
+        "product_id": product,
+        INGESTION_DATE: day,
+    }
 
 
-def reject(source: str, day: date, *reasons: str) -> tuple:
+def reject(source: str, day: date, *reasons: str) -> dict:
     """A ``silver/rejects/<source>`` row."""
-    return (source, list(reasons), "raw,line", f"h-{reasons}", "file.csv", "run", day)
+    return {"source": source, "reject_reasons": list(reasons), INGESTION_DATE: day}
 
 
 @dataclass
@@ -140,29 +136,30 @@ class SilverLake:
     spark: SparkSession
     cfg: AppConfig
 
-    def _frame(self, source: str, rows: list) -> DataFrame:
-        return self.spark.createDataFrame(rows, PIPELINES[source].schema)
+    def _write(self, source: str, rows: tuple[dict, ...], day: date | None = None) -> None:
+        path = silver_path(self.cfg.paths.silver, source)
+        rows_frame = frame(self.spark, PIPELINES[source].schema, list(rows))
+        if day is None:
+            replace_table(rows_frame, path)
+        else:
+            write_partitions(rows_frame, path, {INGESTION_DATE: [day]})
 
-    def orders(self, day: date, *rows: tuple) -> None:
-        path = silver_path(self.cfg.paths.silver, "orders")
-        write_partitions(self._frame("orders", list(rows)), path, {INGESTION_DATE: [day]})
+    def orders(self, day: date, *rows: dict) -> None:
+        self._write("orders", rows, day)
 
-    def weblogs(self, day: date, *rows: tuple) -> None:
-        path = silver_path(self.cfg.paths.silver, "weblogs")
-        write_partitions(self._frame("weblogs", list(rows)), path, {INGESTION_DATE: [day]})
+    def weblogs(self, day: date, *rows: dict) -> None:
+        self._write("weblogs", rows, day)
 
-    def customers(self, *rows: tuple) -> None:
-        path = silver_path(self.cfg.paths.silver, "customers")
-        replace_table(self._frame("customers", list(rows)), path)
+    def customers(self, *rows: dict) -> None:
+        self._write("customers", rows)
 
-    def products(self, *rows: tuple) -> None:
-        path = silver_path(self.cfg.paths.silver, "products")
-        replace_table(self._frame("products", list(rows)), path)
+    def products(self, *rows: dict) -> None:
+        self._write("products", rows)
 
-    def rejects(self, source: str, day: date, *rows: tuple) -> None:
-        frame = self.spark.createDataFrame(list(rows), SILVER_REJECTS)
+    def rejects(self, source: str, day: date, *rows: dict) -> None:
+        rows_frame = frame(self.spark, SILVER_REJECTS, list(rows))
         write_partitions(
-            frame, rejects_path(self.cfg.paths.silver, source), {INGESTION_DATE: [day]}
+            rows_frame, rejects_path(self.cfg.paths.silver, source), {INGESTION_DATE: [day]}
         )
 
     def run_gold(self, day: date) -> Run:
