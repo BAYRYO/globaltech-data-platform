@@ -1,23 +1,6 @@
-import json
 import logging
 
-import pytest
-
 from gtdp.log import bind, configure_logging
-
-
-@pytest.fixture
-def stderr_lines(capsys):
-    """Configure logging in the test body: capsys swaps sys.stderr between setup and call."""
-    root = logging.getLogger()
-    handlers, level = list(root.handlers), root.level
-
-    def read():
-        return [json.loads(line) for line in capsys.readouterr().err.splitlines()]
-
-    yield read
-    root.handlers[:] = handlers
-    root.setLevel(level)
 
 
 def test_records_are_json_lines_with_run_context_and_extra_fields(stderr_lines):
