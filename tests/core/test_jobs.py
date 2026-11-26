@@ -96,6 +96,19 @@ def test_invalid_configuration_exits_before_spark_starts(stderr_lines):
     assert "spark.shuffle_partitions" in entry["message"]
 
 
+def test_a_pseudonymizing_job_without_salt_on_the_cluster_exits_2_before_spark_starts(
+    stderr_lines, monkeypatch
+):
+    monkeypatch.delenv("GTDP_PSEUDO_SALT", raising=False)
+
+    assert main(["silver", "--env", "cluster", "--date", "2026-01-01"]) == 2
+
+    [entry] = stderr_lines()
+    assert entry["level"] == "ERROR"
+    assert entry["job"] == "silver"
+    assert "GTDP_PSEUDO_SALT is required for env 'cluster'" in entry["message"]
+
+
 @pytest.mark.parametrize("setting", ["app.timezone=Mars/Phobos", "spark.master=nope"])
 def test_an_unknown_timezone_or_master_exits_2_before_spark_starts(tmp_path, setting):
     result = run_module("smoke", "--env", "local", *lake_args(tmp_path), "--set", setting)

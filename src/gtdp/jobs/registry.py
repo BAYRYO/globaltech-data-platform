@@ -30,22 +30,27 @@ JobFunc = Callable[[JobContext], None]
 
 @dataclass(frozen=True)
 class JobSpec:
+    """``pseudonymizes``: the job hashes personal data, so it needs the pseudonymization salt."""
+
     name: str
     layer: Layer
     func: JobFunc
     description: str
+    pseudonymizes: bool = False
 
 
 _REGISTRY: dict[str, JobSpec] = {}
 
 
-def job(name: str, layer: Layer, description: str) -> Callable[[JobFunc], JobFunc]:
+def job(
+    name: str, layer: Layer, description: str, *, pseudonymizes: bool = False
+) -> Callable[[JobFunc], JobFunc]:
     """Register the decorated function as the job ``name`` of ``layer``."""
 
     def register(func: JobFunc) -> JobFunc:
         if name in _REGISTRY:
             raise ValueError(f"job {name!r} is registered twice")
-        _REGISTRY[name] = JobSpec(name, layer, func, description)
+        _REGISTRY[name] = JobSpec(name, layer, func, description, pseudonymizes)
         return func
 
     return register
