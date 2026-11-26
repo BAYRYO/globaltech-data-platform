@@ -46,17 +46,28 @@ class Status(StrEnum):
 
 @dataclass(slots=True)
 class Counters:
-    """Row counts the job reports; ``None`` means not measured."""
+    """Row counts the job reports; ``None`` means not measured.
+
+    Assigning anything but an ``int`` or ``None`` raises ``TypeError`` in the job that does it.
+    """
 
     rows_in: int | None = None
     rows_out: int | None = None
     rows_rejected: int | None = None
     rows_duplicated: int | None = None
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise TypeError(f"counter {name} takes an int or None, got {value!r}")
+        object.__setattr__(self, name, value)
+
 
 @dataclass(frozen=True)
 class Run:
-    """What a job knows about its own run. ``metrics`` holds extra key/values for the audit."""
+    """What a job knows about its own run. ``metrics`` holds extra key/values for the audit.
+
+    The audit stores ``metrics`` as JSON. Keys become ``str``, and so do values JSON cannot hold.
+    """
 
     run_id: str
     job: str
@@ -127,36 +138,47 @@ def _append(
 ) -> None:
     ended_at = datetime.now(UTC)
     duration_s = round((ended_at - run.started_at).total_seconds(), 3)
-    counters = run.counters
+    counters = asdict(run.counters)
     logger.info(
         "run ended",
-        extra={"status": status, "duration_s": duration_s, "error": error, **asdict(counters)},
+        extra={"status": status, "duration_s": duration_s, "error": error, **counters},
     )
+    row = {
+        "job_name": run.job,
+        "layer": run.layer.value,
+        "source": run.source,
+        "ingestion_date": run.ingestion_date,
+        "env": cfg.env.value,
+        "status": status.value,
+        "started_at": run.started_at,
+        "ended_at": ended_at,
+        "duration_s": duration_s,
+        **counters,
+        "git_sha": cfg.git_sha,
+        "error_message": error[:ERROR_MESSAGE_MAX] if error else None,
+        "metrics_json": _metrics_json(run.metrics),
+    }
+    # One directory per run: concurrent jobs never share Spark's _temporary commit directory,
+    # which a plain append to the same path would delete under another job.
+    target = f"{audit_path(cfg)}/run_date={run.started_at.date()}/run_id={run.run_id}"
     try:
-        row = (
-            run.job,
-            run.layer.value,
-            run.source,
-            run.ingestion_date,
-            cfg.env.value,
-            status.value,
-            run.started_at,
-            ended_at,
-            duration_s,
-            counters.rows_in,
-            counters.rows_out,
-            counters.rows_rejected,
-            counters.rows_duplicated,
-            spark.sparkContext.applicationId,
-            cfg.git_sha,
-            error[:ERROR_MESSAGE_MAX] if error else None,
-            json.dumps(run.metrics, default=str, sort_keys=True),
-        )
-        # One directory per run: concurrent jobs never share Spark's _temporary commit directory,
-        # which a plain append to the same path would delete under another job.
-        target = f"{audit_path(cfg)}/run_date={run.started_at.date()}/run_id={run.run_id}"
-        spark.createDataFrame([row], _ROW_SCHEMA).coalesce(1).write.mode("overwrite").parquet(
-            target
-        )
+        row["yarn_app_id"] = spark.sparkContext.applicationId
+        try:
+            frame = spark.createDataFrame([row], _ROW_SCHEMA)
+        except (TypeError, ValueError) as exc:  # a counter out of the LongType range
+            row |= dict.fromkeys(counters) | {"metrics_json": _audit_error("row", exc)}
+            frame = spark.createDataFrame([row], _ROW_SCHEMA)
+        frame.coalesce(1).write.mode("overwrite").parquet(target)
     except Exception:
         logger.exception("could not write the audit row")
+
+
+def _metrics_json(metrics: dict[str, object]) -> str:
+    try:
+        return json.dumps({str(k): v for k, v in metrics.items()}, default=str, sort_keys=True)
+    except (TypeError, ValueError) as exc:  # a nested non-str key, a reference cycle
+        return _audit_error("metrics", exc)
+
+
+def _audit_error(part: str, exc: Exception) -> str:
+    return json.dumps({"audit_error": f"{part} not stored: {type(exc).__name__}: {exc}"})
