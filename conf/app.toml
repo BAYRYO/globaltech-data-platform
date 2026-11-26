@@ -54,3 +54,8 @@ archive_retention_days = 2
 temperature = { above = 85.0 }
 vibration = { above = 7.1 }
 pressure = { below = 4.0, above = 8.0 }
+
+[gold]
+# Products kept per country in kpi_top_products_country, by dense rank of revenue: products tied
+# at a rank share it, so a country can list more than top_n products (docs/runbook/gold.md).
+top_n = 5

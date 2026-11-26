@@ -188,8 +188,20 @@ class StreamingSettings:
 
 
 @dataclass(frozen=True)
+class GoldSettings:
+    """``[gold]``: the gold job (docs/runbook/gold.md)."""
+
+    top_n: int
+    """Ranks kept per country in ``kpi_top_products_country``."""
+
+    def __post_init__(self) -> None:
+        if self.top_n < 1:
+            raise ConfigError(f"[gold] top_n must be >= 1, got {self.top_n}")
+
+
+@dataclass(frozen=True)
 class AppConfig:
-    """``streaming`` is ``None`` when the configuration has no ``[streaming]`` section."""
+    """``streaming`` and ``gold`` are ``None`` when the configuration has no such section."""
 
     env: Env
     app: AppSettings
@@ -198,6 +210,7 @@ class AppConfig:
     pseudonymization: Pseudonymization
     git_sha: str | None
     streaming: StreamingSettings | None = None
+    gold: GoldSettings | None = None
 
 
 _SECTIONS: dict[str, type] = {
@@ -205,6 +218,7 @@ _SECTIONS: dict[str, type] = {
     "spark": SparkSettings,
     "paths": _PathsSection,
     "streaming": StreamingSettings,
+    "gold": GoldSettings,
 }
 
 
@@ -255,6 +269,7 @@ def load_config(
         ),
         git_sha=os.environ.get(GIT_SHA_VAR) or None,
         streaming=_section("streaming", StreamingSettings, raw) if "streaming" in raw else None,
+        gold=_section("gold", GoldSettings, raw) if "gold" in raw else None,
     )
 
 
