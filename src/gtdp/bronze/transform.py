@@ -20,7 +20,7 @@ def raw_line(columns: Sequence[str]) -> Column:
     """The record's line as it stands in the file, without its line break.
 
     A corrupt record is its own line. Any other record is its fields joined by ``,``: the CSV
-    reader turns an empty field into null, and the contract quotes no field (data-contract.md).
+    reader keeps quotes as text (quoting is off) and turns an empty field into null.
     """
     joined = F.concat_ws(",", *[F.coalesce(F.col(column), F.lit("")) for column in columns])
     return F.coalesce(F.col(CORRUPT_RECORD), joined)
