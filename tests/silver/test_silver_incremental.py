@@ -8,7 +8,7 @@ from pyspark.sql import functions as F
 from gtdp.io import LaterPartitionError
 from gtdp.silver.pipelines import PIPELINES, rejects_path, table_path
 
-from .lakes import DAYS, local
+from .lakes import DAYS, Lake, lake_config, local
 
 pytestmark = pytest.mark.slow
 
@@ -22,10 +22,13 @@ def content(frame) -> str:
 
 
 def silver_state(lake) -> dict[str, str]:
-    """Checksums of every silver table and rejects table, run ids of the rejects aside."""
+    """Checksums of every silver table and rejects table, run ids of the rejects aside and their
+    source file named from the landing root, which differs between lakes."""
     state = {source: content(lake.table(source)) for source in PIPELINES}
     for source in PIPELINES:
-        state[f"rejects/{source}"] = content(lake.rejects(source).drop("_run_id"))
+        rejects = lake.rejects(source).drop("_run_id")
+        landed = F.regexp_extract("_source_file", r"/landing/(.*)$", 1)
+        state[f"rejects/{source}"] = content(rejects.withColumn("_source_file", landed))
     return state
 
 
@@ -49,6 +52,19 @@ def test_replaying_a_day_rewrites_the_same_silver_and_only_its_partitions(fresh_
 
     assert silver_state(lake) == before
     assert {path: files(lake, path, J1) for path in j1_files} == j1_files
+
+
+def test_bronze_then_silver_day_by_day_gives_the_silver_of_all_bronze_first(
+    seed42, published, tmp_path
+):
+    lake = Lake(seed42.spark, lake_config(tmp_path), seed42.drops)
+
+    for day in DAYS:
+        lake.land(day)
+        lake.run("bronze", day)
+        lake.run("silver", day)
+
+    assert silver_state(lake) == silver_state(published)
 
 
 def test_a_day_before_a_published_day_is_refused_unless_forced(fresh_lake):
