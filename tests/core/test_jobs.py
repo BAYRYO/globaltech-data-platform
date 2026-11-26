@@ -170,3 +170,67 @@ def test_smoke_job_runs_from_the_zip_and_writes_its_audit_row(spark, cluster_lik
     smoke = spark.read.parquet(f"{lake}/ops/smoke")
     assert smoke.count() == 10
     assert {r.run_id for r in smoke.select("run_id").distinct().collect()} == {row.run_id}
+
+
+PROBE = """
+import sys
+
+from gtdp.audit import Layer
+from gtdp.jobs.registry import job
+
+
+@job("effective-conf", Layer.PERF, "store the effective Spark properties in the audit row")
+def effective_conf(ctx):
+    for key in ("spark.sql.shuffle.partitions", "spark.sql.adaptive.enabled"):
+        ctx.run.metrics[key] = ctx.spark.conf.get(key)
+
+
+# Imported after the @job functions: run.py lists the jobs registered when it is imported.
+from gtdp.jobs.run import main  # noqa: E402
+
+sys.exit(main())
+"""
+
+
+@pytest.mark.slow
+def test_spark_submit_properties_win_over_the_configuration(spark, cluster_like_checkout, tmp_path):
+    (cluster_like_checkout / "probe.py").write_text(PROBE)
+    env = clean_env(PYSPARK_PYTHON=sys.executable, PYSPARK_DRIVER_PYTHON=sys.executable)
+    env.pop("PYTHONPATH", None)
+    submit = ["spark-submit", "--master", "local[1]", "--py-files", "dist/gtdp.zip"]
+    tuning = [
+        "--conf",
+        "spark.sql.shuffle.partitions=200",
+        "--conf",
+        "spark.sql.adaptive.enabled=false",
+    ]
+    job = ["probe.py", "effective-conf", "--env", "local", *lake_args(tmp_path)]
+
+    result = subprocess.run(
+        [*submit, *tuning, *job],
+        cwd=cluster_like_checkout,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=300,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    [row] = spark.read.parquet(str(tmp_path / "lake" / "ops" / "audit")).collect()
+    assert json.loads(row.metrics_json) == {
+        "spark.sql.adaptive.enabled": "false",
+        "spark.sql.shuffle.partitions": "200",
+    }
+    # spark-submit merges the stderr of the Python driver into its stdout.
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert all(line.startswith("{") for line in lines), lines
+    [effective] = [e for e in json_lines(result.stdout) if e["message"] == "spark configuration"]
+    assert effective["spark_conf"]["spark.sql.shuffle.partitions"] == {
+        "value": "200",
+        "origin": "spark-submit",
+    }
+    assert effective["spark_conf"]["spark.sql.session.timeZone"] == {
+        "value": "UTC",
+        "origin": "gtdp",
+    }
