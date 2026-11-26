@@ -218,6 +218,35 @@ def test_customers_start_from_the_kit_base_and_new_ids_follow_it(ci_root):
     assert min(new_ids) == "C005001"
 
 
+def test_spike_sensors_read_above_threshold_in_every_minute_of_the_spike(ci_root):
+    above = {"temperature": 85, "vibration": 7.1, "pressure": 8}
+    below = {"temperature": float("-inf"), "vibration": float("-inf"), "pressure": 4}
+    readings: dict[str, list[tuple[float, float | None]]] = {}
+    for path in sorted((ci_root / "sensors" / J1).glob("sensors_*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            moment = datetime.strptime(event["event_time"], "%Y-%m-%dT%H:%M:%S.%fZ")
+            seconds = (moment - datetime(2026, 1, 1)).total_seconds()
+            key = (event["sensor_id"], event["metric"])
+            readings.setdefault(key, []).append((seconds, event["value"]))
+    alerts = {
+        (sensor, metric): [
+            s for s, v in rows if v is not None and not below[metric] <= v <= above[metric]
+        ]
+        for (sensor, metric), rows in readings.items()
+    }
+    spikes = {key: seconds for key, seconds in alerts.items() if seconds}
+    assert len(spikes) == 5
+    for (sensor, metric), seconds in spikes.items():
+        first, last = int(min(seconds) // 60) * 60, int(max(seconds) // 60) * 60 + 60
+        assert last - first >= 120, sensor
+        window = [v for s, v in readings[sensor, metric] if first <= s < last]
+        assert all(v is not None and v > above[metric] for v in window), (sensor, window)
+
+
 def test_malformed_sensor_lines_stay_invalid_when_single_quotes_are_allowed(ci_root):
     def parses(line: str) -> bool:
         try:
