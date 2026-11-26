@@ -101,6 +101,26 @@ def test_invalid_environment_override_fails_at_load(conf_dir, monkeypatch, varia
         load_config("local", conf_dir)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("app.timezone", "Mars/Phobos"),
+        ("app.timezone", ""),
+        ("spark.master", "nope"),
+        ("spark.master", "local[0]"),
+        ("spark.master", "spark://host:7077"),
+    ],
+)
+def test_an_unknown_timezone_or_master_fails_at_load(conf_dir, key, value):
+    with pytest.raises(ConfigError, match=key.partition(".")[2]):
+        load_config("local", conf_dir, overrides={key: value})
+
+
+@pytest.mark.parametrize("master", ["local", "local[4]", "local[*]", "yarn"])
+def test_supported_masters_load(conf_dir, master):
+    assert load_config("local", conf_dir, overrides={"spark.master": master}).spark.master == master
+
+
 def test_invalid_explicit_override_fails_at_load(conf_dir):
     with pytest.raises(ConfigError, match="paths.lake"):
         load_config("local", conf_dir, overrides={"paths.lake": "/x"})

@@ -5,7 +5,8 @@
     run.py list
 
 Works as ``python -m gtdp.jobs.run`` and as a file given to spark-submit with
-``--py-files dist/gtdp.zip``. Exit codes: 0 success, 1 job failure, 2 usage or configuration error.
+``--py-files dist/gtdp.zip``. Exit codes: 0 success, 1 job failure, 2 usage error, invalid
+configuration, or Spark could not start.
 """
 
 from __future__ import annotations
@@ -44,7 +45,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             logger.error("invalid configuration: %s", exc)
             return 2
         logger.info("configuration loaded", extra={"config": asdict(cfg)})
-        spark = build_spark(cfg, f"{cfg.app.name}-{spec.name}")
+        try:
+            spark = build_spark(cfg, f"{cfg.app.name}-{spec.name}")
+        except Exception:
+            logger.exception("could not start Spark")
+            return 2
         try:
             with audited_run(spark, cfg, spec.name, spec.layer, args.source, args.date) as run:
                 if args.force:
