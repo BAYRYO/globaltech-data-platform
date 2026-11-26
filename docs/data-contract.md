@@ -108,9 +108,10 @@ multiplié par `(1 − remise commerciale)` tirée uniformément dans `[0 ; 0,10
 Les lignes du kit gardent leur prix (indépendant du catalogue, voir plus haut).
 
 Déséquilibre de clé : 20 % des lignes synthétiques portent le produit `P00042`. En profil
-`full`, le ratio max/médiane du nombre de lignes par produit **du catalogue** vaut 244,6 (190,8 en
-`dev`) ; les identifiants inconnus `P9…` de l'anomalie `UNKNOWN_PRODUCT` sont exclus du calcul, comme
-ils le sont de la jointure avec les produits.
+`full`, le ratio max/médiane du nombre de lignes par produit **du catalogue** vaut 244,6 (190,9 en
+`dev`), mesuré sur les commandes de J1 avec la graine 42. Les identifiants inconnus `P9…` de
+l'anomalie `UNKNOWN_PRODUCT` sont exclus du calcul, comme ils le sont de la jointure avec les
+produits.
 
 Un doublon inter-jours renvoyé dans J3 prend le format de J3 : les 8 valeurs d'origine à
 l'identique et un 9ᵉ champ `discount_pct` vide.
@@ -223,8 +224,8 @@ finalisées que si des données plus récentes arrivent ; la démonstration en t
   "profile": "dev",
   "ingestion_date": "2026-01-02",
   "files": [
-    {"source": "orders", "path": "orders/orders_20260102.csv", "rows": 2803, "sha256": "…",
-     "anomalies": {"DUPLICATE_EXACT": 28, "DUPLICATE_CROSS_DAY": 14, "NULL_CUSTOMER": 14}}
+    {"source": "orders", "path": "orders/orders_20260102.csv", "rows": 2740, "sha256": "…",
+     "anomalies": {"DUPLICATE_EXACT": 27, "DUPLICATE_CROSS_DAY": 14, "NULL_CUSTOMER": 14}}
   ]
 }
 ```
