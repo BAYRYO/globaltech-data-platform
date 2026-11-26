@@ -115,7 +115,7 @@ def start_queries(
         .text(f"{paths.incoming}/{FILE_GLOB}")
         .select(F.col("value").alias("raw_line"), F.input_file_name().alias("source_file"))
     )
-    parsed = parse(lines)
+    parsed = parse(lines, settings.future_tolerance_s)
     outputs = {
         AGGREGATES: window_aggregates(events(parsed)),
         ALERTS: threshold_breaches(events(parsed), thresholds_frame(spark, settings.thresholds)),

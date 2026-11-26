@@ -59,12 +59,17 @@ REJECT_RULES: tuple[tuple[str, str], ...] = (
     (
         "MISSING_FIELD",
         "event_id IS NULL OR sensor_id IS NULL OR site IS NULL OR machine_id IS NULL"
-        " OR metric IS NULL OR event_time IS NULL",
+        " OR metric IS NULL OR event_time IS NULL OR emitted_at IS NULL",
     ),
     ("NULL_VALUE", "value IS NULL"),
     ("BAD_VALUE", "isnan(value) OR abs(value) = double('Infinity')"),
+    ("FUTURE_EVENT", "event_time > emitted_at + make_dt_interval(0, 0, 0, {future_tolerance_s})"),
 )
-"""(code, SQL condition) in priority order: a rejected line gets the code of its first match."""
+"""(code, SQL condition) in priority order: a rejected line gets the code of its first match.
+
+``{future_tolerance_s}`` is ``[streaming] future_tolerance_s``: an event dated more than that
+after its emission would move the watermark ahead of the stream.
+"""
 
 BREACHES = {"above": operator.gt, "below": operator.lt}
 """How a value crosses a threshold of each direction of ``[streaming.thresholds]``."""
@@ -118,7 +123,7 @@ REJECTS_SCHEMA = StructType(
 )
 
 
-def parse(lines: DataFrame) -> DataFrame:
+def parse(lines: DataFrame, future_tolerance_s: int) -> DataFrame:
     """Parse ``raw_line`` against the contract schema and add ``reject_reason`` (null if valid).
 
     ``lines`` holds ``raw_line`` and ``source_file``. A line is valid JSON for the contract when
@@ -138,7 +143,12 @@ def parse(lines: DataFrame) -> DataFrame:
         F.from_json(wrapped, _PARSE_SCHEMA, options).alias("parsed"),
         F.from_json(listed, "array<string>", _STRICT_JSON).alias(_VALUES),
     ).select("raw_line", "source_file", "parsed.event.*", f"parsed.{_CORRUPT}", _VALUES)
-    reason = F.coalesce(*(F.when(F.expr(rule), F.lit(code)) for code, rule in REJECT_RULES))
+    reason = F.coalesce(
+        *(
+            F.when(F.expr(rule.format(future_tolerance_s=future_tolerance_s)), F.lit(code))
+            for code, rule in REJECT_RULES
+        )
+    )
     return parsed.withColumn("reject_reason", reason).drop(_CORRUPT, _VALUES)
 
 
