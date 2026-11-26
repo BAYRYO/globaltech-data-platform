@@ -109,8 +109,9 @@ la couche bronze correspondent à 10 Go logiques en réplication 3.
 
 Pour chaque jour d'ingestion `D` (J1 = 2026-01-01, J2 = 2026-01-02, J3 = 2026-01-03) :
 
-1. **Dépôt** : `scripts/land.sh D` copie le dépôt local du générateur vers
-   `/datalake/landing/<source>/ingestion_date=D/`.
+1. **Dépôt** : `scripts/cluster/land.sh <dépôt> D` vérifie le dépôt local du générateur contre
+   son manifeste, puis le publie vers `/datalake/landing/<source>/ingestion_date=D/` en remplaçant
+   le landing précédent de `D` d'un bloc ([guide de la plateforme](platform.md#déposer-un-jour-de-données)).
 2. **Bronze** : lecture de chaque fichier avec un schéma tout en `string` dérivé de son en-tête
    (aucune perte, changement de schéma toléré, [ADR-0007](adr/0007-evolution-schema.md)), ajout de
    `_ingested_at`, `_source_file`, `_run_id`, `_record_hash`, `_corrupt_record`. Écriture Parquet
