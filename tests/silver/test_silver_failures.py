@@ -80,3 +80,15 @@ def test_records_that_do_not_add_up_fail_the_run_and_keep_their_counts(fresh_lak
     assert failed.status == "FAILED"
     assert report["rejects_written"] == report["rejected"] - 1
     assert failed.rows_in == failed.rows_out + failed.rows_rejected + failed.rows_duplicated
+
+
+def test_a_log_line_whose_time_does_not_parse_is_rejected_and_the_day_published(fresh_lake):
+    lake = fresh_lake
+    line = next(line for line in lake.landed_lines(J1, "weblogs") if '" 200 ' in line)
+    bad = line.replace(line[line.index("[") + 1 : line.index("]")], "1/Jan/2026:20:21:48 +0000")
+    lake.append_lines(J1, "weblogs", [bad])
+
+    run = lake.run("silver", J1, "weblogs")
+
+    assert run.metrics["sources"]["weblogs"]["clean"] > 0
+    assert lake.rejects("weblogs").where(F.col("raw_record") == bad).count() == 1

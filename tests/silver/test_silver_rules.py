@@ -303,7 +303,20 @@ def test_requests_map_to_event_types_and_errors_are_kept(
         LOG.replace('"', ""),
         "01/Jan/2026:20:21:48 +0000 worker process exited on signal 9, client: 198.18.12.34",
         LOG.replace("01/Jan/2026", "31/Feb/2026"),
+        LOG.replace("01/Jan/2026:20:21:48 +0000", "1/Jan/2026:20:21:48 +0000"),
+        LOG.replace("01/Jan/2026:20:21:48 +0000", "01/Jan/2026:20:21:48 +0000 x"),
+        LOG.replace("01/Jan/2026:20:21:48 +0000", "01/Jan/2026:20:21:48 GMT"),
+        LOG.replace("01/Jan/2026:20:21:48 +0000", "01/Jan/2026:24:21:48 +0000"),
+        LOG.replace("01/Jan/2026:20:21:48 +0000", "01/Jan/2026:20:21:48 +2500"),
     ],
 )
 def test_a_line_outside_the_combined_log_format_is_rejected(spark, line):
     assert reasons(spark, "weblogs", {"value": LOG}, {"value": line}) == ["MALFORMED_LINE"]
+
+
+def test_a_log_time_offset_is_converted_to_utc(spark):
+    line = LOG.replace("01/Jan/2026:20:21:48 +0000", "01/Jan/2026:00:21:48 +0200")
+
+    (row,) = classified(spark, "weblogs", [{"value": line}])
+
+    assert str(row.event_ts) == "2025-12-31 22:21:48"
