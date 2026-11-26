@@ -206,6 +206,46 @@ def test_a_job_holding_the_table_lock_keeps_writers_out_until_it_releases_it(
     assert sorted(os.listdir(tmp_path)) == ["orders"]
 
 
+class LockHeldForAnInstant:
+    """A filesystem on which another run creates the lock, then deletes it, during our create."""
+
+    def __init__(self, fs):
+        self._fs, self.raced = fs, False
+
+    def __getattr__(self, name):
+        return getattr(self._fs, name)
+
+    def create(self, path, overwrite, *args):
+        if self.raced or not path.getName().endswith(".lock"):
+            return self._fs.create(path, overwrite, *args)
+        self.raced = True
+        self._fs.create(path, True).close()
+        try:
+            return self._fs.create(path, overwrite)
+        finally:
+            self._fs.delete(path, False)
+
+
+def test_a_lock_another_run_held_for_an_instant_is_not_an_error(
+    spark, orders, tmp_path, monkeypatch
+):
+    path, replay = orders
+    racing = []
+
+    def filesystem(spark_, path_):
+        fs, hadoop_path = real(spark_, path_)
+        racing.append(LockHeldForAnInstant(fs))
+        return racing[-1], hadoop_path
+
+    real = gtdp.io._filesystem
+    monkeypatch.setattr(gtdp.io, "_filesystem", filesystem)
+    write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
+    monkeypatch.undo()
+
+    assert any(fs.raced for fs in racing)
+    assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
+
+
 def test_a_reader_leaves_a_locked_swap_to_its_writer(spark, tmp_path):
     gold = tmp_path / "gold"
     path = str(gold / "dim")

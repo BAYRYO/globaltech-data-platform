@@ -336,11 +336,15 @@ def _locked_message(fs: Any, target: Any, lock: Any) -> str:
 
 
 def _create(fs: Any, path: Any, text: str) -> bool:
-    """Create the file ``path`` holding ``text``; ``False`` if it already exists."""
+    """Create the file ``path`` holding ``text``; ``False`` if it already exists.
+
+    The file may be deleted again by the run that held it before ``exists`` looks: the error
+    class says it existed.
+    """
     try:
         stream = fs.create(path, False)
-    except Py4JJavaError:
-        if fs.exists(path):
+    except Py4JJavaError as exc:
+        if exc.java_exception.getClass().getName() == _FILE_EXISTS or fs.exists(path):
             return False
         raise
     try:
