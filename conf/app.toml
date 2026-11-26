@@ -59,3 +59,6 @@ pressure = { below = 4.0, above = 8.0 }
 # Products kept per country in kpi_top_products_country, by dense rank of revenue: products tied
 # at a rank share it, so a country can list more than top_n products (docs/runbook/gold.md).
 top_n = 5
+# Days of the moving average of daily revenue per country in kpi_revenue_moving_avg, the day
+# included, over a calendar where a day without sales counts as 0.
+moving_average_days = 7

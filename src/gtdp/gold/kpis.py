@@ -21,9 +21,9 @@ from gtdp.io import INGESTION_DATE
 from gtdp.schemas import REJECT_REASONS
 
 COMPLETED, CANCELLED, RETURNED = "COMPLETED", "CANCELLED", "RETURNED"
-WINDOW_DAYS = 7
-FUNNEL = (("view", "views"), ("cart", "carts"), ("purchase", "purchases"))
-"""Event type of each step of the conversion funnel, and the column counting it."""
+FUNNEL = (("view", "product_views"), ("cart", "carts"), ("purchase", "orders"))
+"""The steps of the conversion funnel after the visit: the event type a visit must also hold to
+reach the step, and the column counting the visits that reach it."""
 ORDER_BEFORE_SIGNUP = "ORDER_BEFORE_SIGNUP"
 PRICE_RATIO_ACCURACY = 10_000
 
@@ -91,27 +91,27 @@ def top_products_by_country(sales: DataFrame, products: DataFrame, n: int) -> Da
     return ranked.join(current, "product_id", "left").select(*columns, "quantity", "orders")
 
 
-def revenue_moving_avg(sales: DataFrame) -> DataFrame:
-    """Daily revenue per country and its average over the last 7 days, the day included.
+def revenue_moving_avg(sales: DataFrame, days: int) -> DataFrame:
+    """Daily revenue per country and its average over the last ``days`` days, the day included.
 
     The calendar is complete: every day from the first to the last order date, for every country
-    with orders. A day without completed order counts as 0, so the 7 rows of a window always span
-    7 calendar days. The first 6 days of the calendar have fewer rows before them: their average
-    is over ``window_days`` days, 1 to 6.
+    with orders. A day without completed order counts as 0, so the ``days`` rows of a window
+    always span ``days`` calendar days. The first ``days - 1`` days of the calendar have fewer
+    rows before them: their average is over ``window_days`` days only.
     """
     daily = revenue_daily(sales).select(ORDER_DATE, "country", "revenue_eur")
-    days = calendar(sales.select(F.col(ORDER_DATE).alias("date"))).select(
+    every_day = calendar(sales.select(F.col(ORDER_DATE).alias("date"))).select(
         F.col("date").alias(ORDER_DATE)
     )
     filled = (
-        days.crossJoin(sales.select("country").distinct())
+        every_day.crossJoin(sales.select("country").distinct())
         .join(daily, [ORDER_DATE, "country"], "left")
         .select(ORDER_DATE, "country", F.coalesce("revenue_eur", F.lit(0)).alias("revenue_eur"))
     )
-    window = Window.partitionBy("country").orderBy(ORDER_DATE).rowsBetween(1 - WINDOW_DAYS, 0)
+    window = Window.partitionBy("country").orderBy(ORDER_DATE).rowsBetween(1 - days, 0)
     return filled.select(
         "*",
-        F.round(F.avg("revenue_eur").over(window), 2).alias("revenue_ma7_eur"),
+        F.round(F.avg("revenue_eur").over(window), 2).alias("revenue_moving_avg_eur"),
         F.count(F.lit(1)).over(window).alias("window_days"),
     )
 
@@ -131,11 +131,12 @@ def price_deviation(sales: DataFrame, products: DataFrame) -> DataFrame:
 
 
 def cancel_return_rate(sales: DataFrame, products: DataFrame) -> DataFrame:
-    """Share of cancelled and of returned lines per channel and category of the version applied."""
+    """Share of cancelled and of returned lines per order date, country, channel and category of
+    the version applied. The counts add up to any coarser grain, such as a country per day."""
     status = F.col("status")
     totals = (
         sales.join(products.select("product_sk", "category"), "product_sk")
-        .groupBy("channel", "category")
+        .groupBy(ORDER_DATE, "country", "channel", "category")
         .agg(
             F.count(F.lit(1)).alias("lines"),
             _count_of(status == CANCELLED).alias("cancelled"),
@@ -150,56 +151,64 @@ def cancel_return_rate(sales: DataFrame, products: DataFrame) -> DataFrame:
 
 
 def avg_basket(sales: DataFrame, customers: DataFrame) -> DataFrame:
-    """Average completed order per country and customer segment.
+    """Average completed order per order date, country and customer segment.
 
     A basket is one transaction: the contract has no basket identifier grouping several lines.
     ``avg_basket_eur`` is at the applicable catalog price, ``avg_invoiced_eur`` at the invoiced
-    price.
+    price. ``revenue_eur / orders`` gives the average at any coarser grain.
     """
     segments = customers.select("customer_id", "segment")
     return (
         _completed(sales)
         .join(segments, "customer_id", "left")
-        .groupBy("country", "segment")
+        .groupBy(ORDER_DATE, "country", "segment")
         .agg(
             F.count(F.lit(1)).alias("orders"),
+            F.sum("revenue_eur").alias("revenue_eur"),
             F.round(F.avg("revenue_eur"), 2).alias("avg_basket_eur"),
             F.round(F.avg("invoiced_amount_eur"), 2).alias("avg_invoiced_eur"),
-            F.round(F.avg("quantity"), 2).alias("avg_quantity"),
         )
     )
 
 
 def http_errors_hourly(web_events: DataFrame) -> DataFrame:
-    """Requests, 404 and 500 responses, and their shares, per hour of the logs."""
+    """Requests, client errors (4xx) and server errors (5xx), and their shares, per hour."""
     status = F.col("http_status")
     totals = web_events.groupBy(F.date_trunc("hour", "event_ts").alias("event_hour")).agg(
         F.count(F.lit(1)).alias("requests"),
-        _count_of(status == 404).alias("http_404"),
-        _count_of(status == 500).alias("http_500"),
+        _count_of(status.between(400, 499)).alias("http_4xx"),
+        _count_of(status.between(500, 599)).alias("http_5xx"),
     )
     return totals.select(
         "*",
-        _ratio("http_404", "requests").alias("rate_404"),
-        _ratio("http_500", "requests").alias("rate_500"),
+        _ratio("http_4xx", "requests").alias("rate_4xx"),
+        _ratio("http_5xx", "requests").alias("rate_5xx"),
     )
 
 
 def conversion_funnel(web_events: DataFrame) -> DataFrame:
-    """Product views, cart additions and purchases per device, and the rate of each step.
+    """Visits per device, and the visits that reach each step: product viewed, cart, order.
 
-    Only served requests count (``http_status`` below 400): a 404 product page or a failed
-    checkout is no step of the funnel.
+    A visit is one customer on one device on one day: the contract has no session identifier.
+    Only served requests (``http_status`` below 400) of an identified customer count: a 404
+    product page or a failed checkout is no step. A visit reaches a step when it holds the event
+    of that step and of every step before, so the counts never increase along the funnel.
     """
-    served = web_events.where(F.col("http_status") < 400)
-    steps = served.groupBy("device").agg(
-        *[_count_of(F.col("event_type") == event).alias(name) for event, name in FUNNEL]
+    served = web_events.where((F.col("http_status") < 400) & F.col("customer_id").isNotNull())
+    visits = served.groupBy("customer_id", F.to_date("event_ts"), "device").agg(
+        *[F.max(F.col("event_type") == event).alias(event) for event, _ in FUNNEL]
     )
-    return steps.select(
+    reached, steps = F.lit(True), []
+    for event, name in FUNNEL:
+        reached = reached & F.col(event)
+        steps.append(_count_of(reached).alias(name))
+    counts = visits.groupBy("device").agg(F.count(F.lit(1)).alias("visits"), *steps)
+    return counts.select(
         "*",
-        _ratio("carts", "views").alias("view_to_cart"),
-        _ratio("purchases", "carts").alias("cart_to_purchase"),
-        _ratio("purchases", "views").alias("view_to_purchase"),
+        _ratio("product_views", "visits").alias("view_rate"),
+        _ratio("carts", "product_views").alias("cart_rate"),
+        _ratio("orders", "carts").alias("order_rate"),
+        _ratio("orders", "visits").alias("conversion_rate"),
     )
 
 
@@ -240,7 +249,9 @@ KPIS: Mapping[str, Kpi] = MappingProxyType(
         "kpi_top_products_country": lambda star, settings: top_products_by_country(
             star.sales, star.products, settings.top_n
         ),
-        "kpi_revenue_moving_avg": lambda star, _: revenue_moving_avg(star.sales),
+        "kpi_revenue_moving_avg": lambda star, settings: revenue_moving_avg(
+            star.sales, settings.moving_average_days
+        ),
         "kpi_price_deviation": lambda star, _: price_deviation(star.sales, star.products),
         "kpi_cancel_return_rate": lambda star, _: cancel_return_rate(star.sales, star.products),
         "kpi_avg_basket": lambda star, _: avg_basket(star.sales, star.customers),
