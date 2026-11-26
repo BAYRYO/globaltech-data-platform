@@ -1,7 +1,10 @@
 """Layered configuration parsed once into frozen, typed settings.
 
 Precedence, last wins: ``conf/app.toml`` < ``conf/env/<env>.toml`` < ``GTDP_<SECTION>__<KEY>``
-environment variables < explicit overrides (``run.py --set section.key=value``).
+environment variables < explicit overrides (``run.py --set section.key=value``). A nested table,
+such as ``[streaming.thresholds]``, merges key by key: a layer replaces only the keys it sets. A
+nested key is named ``GTDP_STREAMING__THRESHOLDS__TEMPERATURE__ABOVE`` or
+``streaming.thresholds.temperature.above``.
 """
 
 from __future__ import annotations
@@ -204,11 +207,11 @@ def load_config(
     raw = _merge(_read_toml(conf_dir / "app.toml"), _read_toml(conf_dir / "env" / f"{env}.toml"))
     for name, value in os.environ.items():
         if name.startswith(ENV_PREFIX) and "__" in name:
-            section, _, key = name.removeprefix(ENV_PREFIX).lower().partition("__")
-            _override(raw, section, key, value, label=name)
+            section, *keys = name.removeprefix(ENV_PREFIX).lower().split("__")
+            _override(raw, section, keys, value, label=name)
     for dotted, value in (overrides or {}).items():
-        section, _, key = dotted.partition(".")
-        _override(raw, section, key, value, label=f"--set {dotted}")
+        section, *keys = dotted.split(".")
+        _override(raw, section, keys, value, label=f"--set {dotted}")
 
     paths = _section("paths", _PathsSection, raw)
     root = conf_dir.resolve().parent
@@ -260,20 +263,42 @@ def _read_toml(path: Path) -> dict[str, dict[str, object]]:
 def _merge(*layers: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
     merged: dict[str, dict[str, object]] = {}
     for layer in layers:
-        for section, table in layer.items():
-            merged.setdefault(section, {}).update(table)
+        _merge_into(merged, layer)
     return merged
 
 
+def _merge_into(target: dict[str, object], layer: Mapping[str, object]) -> None:
+    """Copy ``layer`` into ``target``; a table merges into the table it replaces, key by key."""
+    for key, value in layer.items():
+        if isinstance(value, dict):
+            if not isinstance(target.get(key), dict):
+                target[key] = {}
+            _merge_into(typing.cast(dict[str, object], target[key]), value)
+        else:
+            target[key] = value
+
+
 def _override(
-    raw: dict[str, dict[str, object]], section: str, key: str, text: str, label: str
+    raw: dict[str, dict[str, object]], section: str, keys: list[str], text: str, label: str
 ) -> None:
+    """Set ``[section] keys[0].keys[1]...`` to ``text``, typed by the settings class."""
     if section not in _SECTIONS:
         raise ConfigError(f"{label}: unknown section {section!r}, expected one of {_valid()}")
     hints = typing.get_type_hints(_SECTIONS[section])
+    key, *nested = keys
     if key not in hints:
         raise ConfigError(f"{label}: unknown key {key!r} in [{section}], expected {sorted(hints)}")
-    raw.setdefault(section, {})[key] = _parse_text(text, _base_type(hints[key]), label)
+    table: dict[str, object] = raw.setdefault(section, {})
+    hint = hints[key]
+    for name in nested:
+        if _base_type(hint) is not Mapping or not isinstance(table.setdefault(key, {}), dict):
+            raise ConfigError(f"{label}: {key!r} in [{section}] is not a table")
+        table, key, hint = (
+            typing.cast(dict[str, object], table[key]),
+            name,
+            typing.get_args(hint)[1],
+        )
+    table[key] = _parse_text(text, _base_type(hint), label)
 
 
 def _parse_text(text: str, typ: type, label: str) -> object:
@@ -282,6 +307,11 @@ def _parse_text(text: str, typ: type, label: str) -> object:
             return int(text)
         except ValueError:
             raise ConfigError(f"{label}: expected an integer, got {text!r}") from None
+    if typ is float:
+        try:
+            return float(text)
+        except ValueError:
+            raise ConfigError(f"{label}: expected a number, got {text!r}") from None
     if typ is bool:
         lowered = text.strip().lower()
         if lowered not in ("true", "false"):
