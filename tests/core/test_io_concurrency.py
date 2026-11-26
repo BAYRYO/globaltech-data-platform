@@ -17,6 +17,8 @@ from gtdp.io import (
     INGESTION_DATE,
     RUN_ID_PROPERTY,
     TableLockedError,
+    drop_partitions,
+    list_partition_values,
     path_exists,
     read_table,
     replace_table,
@@ -174,6 +176,18 @@ def test_a_stop_signal_during_the_swap_waits_for_its_end(spark, orders, tmp_path
 
     assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
     assert sorted(os.listdir(tmp_path)) == ["orders"]
+
+
+def test_drop_partitions_deletes_the_named_partitions_that_exist(spark, orders, tmp_path):
+    path, _ = orders
+
+    assert drop_partitions(spark, path, {INGESTION_DATE: [JAN_2, date(2026, 1, 3)]}) == [
+        "ingestion_date=2026-01-02"
+    ]
+
+    assert list_partition_values(spark, path, INGESTION_DATE) == ["2026-01-01"]
+    (tmp_path / "_orders.lock").write_text("{}")
+    assert drop_partitions(spark, path, {INGESTION_DATE: [JAN_2]}) == []
 
 
 def test_a_reader_leaves_a_locked_swap_to_its_writer(spark, tmp_path):

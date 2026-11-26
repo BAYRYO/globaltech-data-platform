@@ -89,6 +89,27 @@ def write_partitions(
     spark.catalog.refreshByPath(path)
 
 
+def drop_partitions(
+    spark: SparkSession, path: str, partitions: Mapping[str, Sequence[PartitionValue]]
+) -> list[str]:
+    """Delete the named partitions of ``path``; return those that existed, as ``col=value``.
+
+    ``partitions`` names them as for ``write_partitions``. The table's lock is taken only when one
+    of them exists.
+    """
+    named = [
+        _partition_dir(spark, partitions, values)
+        for values in itertools.product(*_value_lists(partitions))
+    ]
+    fs, target = _filesystem(spark, path)
+    present = [name for name in named if fs.exists(_hadoop_path(spark, f"{path}/{name}"))]
+    if present:
+        with _locked(spark, fs, target), _stop_signals_deferred():
+            present = [n for n in present if fs.delete(_hadoop_path(spark, f"{path}/{n}"), True)]
+        spark.catalog.refreshByPath(path)
+    return present
+
+
 def replace_table(df: DataFrame, path: str) -> None:
     """Replace the whole table at ``path`` with ``df``, which may read ``path`` itself.
 
