@@ -176,8 +176,8 @@ class KilledHousekeeping(BaseException):
 class KillAfter:
     """A Hadoop FileSystem that dies when its ``kill_at``-th delete or rename starts.
 
-    A compaction of 2025-12-31 deletes its 3 partitions, moves the merged one in, then deletes
-    its staging directory: 5 steps.
+    A compaction of 2025-12-31 moves its journal in, deletes its 3 partitions, moves the merged
+    one in, then deletes its staging directory: 6 steps.
     """
 
     def __init__(self, fs, kill_at: int):
@@ -200,7 +200,7 @@ class KillAfter:
         return self._fs.rename(source, target)
 
 
-@pytest.mark.parametrize("kill_at", range(5), ids=lambda n: f"step{n}")
+@pytest.mark.parametrize("kill_at", range(6), ids=lambda n: f"step{n}")
 def test_a_compaction_killed_at_any_step_is_finished_by_the_next_run(
     spark, stream, monkeypatch, kill_at
 ):
@@ -243,6 +243,53 @@ def test_a_compaction_killed_while_staging_is_discarded_and_redone(spark, stream
     (stage / "part-00000.parquet").write_bytes(b"half a file")
 
     assert finish_interrupted(spark, paths.tables[AGGREGATES], OUTPUTS[AGGREGATES])
+    compact_all(spark, paths)
+
+    assert content(spark, paths) == before
+    assert len(batch_partitions(spark, paths, AGGREGATES)["2025-12-31"]) == 1
+
+
+class KilledWhileWritingTheJournal:
+    """A Hadoop FileSystem that dies once it has created a journal file, before writing it."""
+
+    def __init__(self, fs):
+        self._fs = fs
+
+    def __getattr__(self, name):
+        return getattr(self._fs, name)
+
+    def create(self, path, *args):
+        stream = self._fs.create(path, *args)
+        if "_journal" in path.getName():
+            stream.close()
+            raise KilledHousekeeping
+        return stream
+
+
+def test_a_compaction_killed_while_writing_its_journal_is_discarded_and_redone(
+    spark, stream, monkeypatch
+):
+    paths, _ = stream
+    before = content(spark, paths)
+    real = housekeeping.filesystem
+    monkeypatch.setattr(
+        housekeeping,
+        "filesystem",
+        lambda spark_, path: (
+            KilledWhileWritingTheJournal(real(spark_, path)[0]),
+            real(spark_, path)[1],
+        ),
+    )
+    with pytest.raises(KilledHousekeeping):
+        compact_table(
+            spark,
+            paths.tables[AGGREGATES],
+            OUTPUTS[AGGREGATES],
+            read_checkpoint(spark, paths.checkpoint(AGGREGATES)),
+            STALE_AFTER_S,
+        )
+    monkeypatch.undo()
+
     compact_all(spark, paths)
 
     assert content(spark, paths) == before
