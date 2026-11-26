@@ -18,7 +18,7 @@ from gtdp.bronze.landing import (
     scan,
 )
 from gtdp.bronze.transform import check_counts, to_bronze
-from gtdp.io import INGESTION_DATE, read_table, write_partitions
+from gtdp.io import INGESTION_DATE, drop_partitions, read_table, write_partitions
 from gtdp.jobs.registry import JobContext, job
 from gtdp.schemas import CORRUPT_RECORD, SOURCE_FILE, SOURCES, bronze_schema
 
@@ -46,7 +46,8 @@ def bronze(ctx: JobContext) -> None:
 
     Fails before writing anything if a file differs from its manifest entry (SHA-256, data lines),
     is not UTF-8, lacks a required column, or reads into another row count; and after writing if
-    the rows written differ from the data lines.
+    the rows written differ from the data lines. Without ``--source``, a source that has a
+    partition for the date but no file in its manifest loses that partition.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -113,6 +114,13 @@ def bronze(ctx: JobContext) -> None:
             for key, r in reports.items()
         }
     )
+
+    if ctx.run.source is None:
+        ctx.run.metrics["removed_sources"] = [
+            source
+            for source in sorted(SOURCES.keys() - frames.keys())
+            if drop_partitions(spark, f"{paths.bronze}/{source}", {INGESTION_DATE: [day]})
+        ]
 
 
 def _record(run: Run, reports: dict[str, FileReport]) -> None:

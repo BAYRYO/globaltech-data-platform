@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 
 import pytest
 from pyspark.sql import functions as F
@@ -163,6 +164,49 @@ def test_a_day_without_its_manifest_is_not_ingested(lake):
     assert failed_row(lake).status == "FAILED"
 
 
+def land_without(lake, day, source):
+    """Land ``day`` again without ``source``, as land.sh publishes a drop that lacks it."""
+    manifest = lake.land(day)
+    shutil.rmtree(lake.landing_file(day, f"{source}/x").parent)
+    manifest["files"] = [e for e in manifest["files"] if e["source"] != source]
+    lake.write_manifest(day, manifest)
+    return manifest
+
+
+def test_a_source_missing_from_a_day_loses_its_partition_of_that_day(lake):
+    lake.land(J1)
+    lake.land(J2)
+    lake.run(J1)
+    lake.run(J2)
+    j1_weblogs = lake.table("weblogs").where(F.col("ingestion_date") == J1).count()
+    orders = lake.table("orders").count()
+
+    land_without(lake, J2, "weblogs")
+    run = lake.run(J2)
+
+    assert not lake.partition("weblogs", J2).exists()
+    assert lake.table("weblogs").count() == j1_weblogs
+    assert lake.table("orders").count() == orders
+    rows = {row.run_id: row for row in lake.audit()}
+    assert json.loads(rows[run.run_id].metrics_json)["removed_sources"] == ["weblogs"]
+
+    again = lake.run(J2)
+
+    assert (
+        json.loads({r.run_id: r for r in lake.audit()}[again.run_id].metrics_json)[
+            "removed_sources"
+        ]
+        == []
+    )
+
+
+def test_source_names_a_source_missing_from_the_manifest_fails(lake):
+    land_without(lake, J2, "weblogs")
+
+    with pytest.raises(LandingError, match=r"lists no file for \['weblogs'\]"):
+        lake.run(J2, source="weblogs")
+
+
 def test_a_table_locked_by_another_run_fails_the_run_at_once(lake):
     lake.land(J2)
     lock = lake.partition("orders", J2).parents[1] / "_orders.lock"
@@ -188,6 +232,7 @@ def test_source_ingests_that_source_only(lake):
     [row] = lake.audit()
     assert (row.source, row.status) == ("customers", "SUCCESS")
     assert list(json.loads(row.metrics_json)["files"]) == [entry["path"]]
+    assert "removed_sources" not in json.loads(row.metrics_json)
 
 
 def test_an_unknown_source_fails(lake):
