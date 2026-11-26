@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import threading
 import time
 from datetime import date
@@ -11,6 +12,7 @@ from datetime import date
 import pytest
 
 import gtdp.io
+from gtdp.audit import RunStopped
 from gtdp.io import (
     INGESTION_DATE,
     RUN_ID_PROPERTY,
@@ -135,6 +137,41 @@ def test_a_lock_left_by_a_dead_run_is_taken_over(spark, orders, tmp_path, caplog
         write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
 
     assert "run-killed" in caplog.text
+    assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
+    assert sorted(os.listdir(tmp_path)) == ["orders"]
+
+
+def test_staging_left_by_a_killed_run_is_removed_by_the_next_writer(spark, orders, tmp_path):
+    path, replay = orders
+    dead, live = tmp_path / "_orders.staging-dead", tmp_path / "_orders.staging-live"
+    for staging in (dead, live):
+        (staging / "ingestion_date=2026-01-02").mkdir(parents=True)
+    make_old(dead)
+
+    write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
+
+    assert sorted(os.listdir(tmp_path)) == ["_orders.staging-live", "orders"]
+
+
+def test_a_stop_signal_during_the_swap_waits_for_its_end(spark, orders, tmp_path, monkeypatch):
+    path, replay = orders
+    real_rename = gtdp.io._rename
+
+    def stop_then_rename(fs, source, destination):
+        os.kill(os.getpid(), signal.SIGTERM)  # after the delete of the published day 2
+        real_rename(fs, source, destination)
+
+    def raise_stopped(signum, _frame):
+        raise RunStopped(signal.Signals(signum))
+
+    monkeypatch.setattr(gtdp.io, "_rename", stop_then_rename)
+    previous = signal.signal(signal.SIGTERM, raise_stopped)
+    try:
+        with pytest.raises(RunStopped):
+            write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
     assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
     assert sorted(os.listdir(tmp_path)) == ["orders"]
 

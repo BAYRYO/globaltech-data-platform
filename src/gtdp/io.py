@@ -5,6 +5,8 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import signal
+import threading
 import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
@@ -26,6 +28,7 @@ RUN_ID_PROPERTY = "gtdp.run_id"
 # Age in seconds from which a table lock or a staging directory counts as left by a dead run.
 STALE_AFTER_CONF = "spark.gtdp.io.staleAfterSeconds"
 STALE_AFTER_DEFAULT_S = 6 * 3600
+_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 _FILE_EXISTS = "org.apache.hadoop.fs.FileAlreadyExistsException"
 
 PartitionValue = str | date
@@ -49,12 +52,13 @@ def write_partitions(
     The run first takes the table's lock (``TableLockedError`` while another run holds it). ``df``
     is written in full to a staging directory of its own, the hidden sibling
     ``_<name>.staging-<id>``. Only after that write succeeds is each named partition deleted and
-    replaced by its staged copy, so a failed write leaves the table as it was. A named partition
-    without rows becomes an empty directory holding a ``_SUCCESS`` marker: it still counts as
-    produced for ``ensure_no_later_partition``, and ``read_table`` reads it as empty. A row outside
-    the named partitions raises ``ValueError`` and publishes nothing. Writing the same ``df`` again
-    gives the same table (ADR-0002). A crash between the delete and the rename of a partition
-    leaves that partition missing until the day is replayed.
+    replaced by its staged copy, so a failed write leaves the table as it was. SIGTERM and SIGINT
+    wait for the end of that swap: a stopped run leaves each partition old or new, never missing.
+    A named partition without rows becomes an empty directory holding a ``_SUCCESS`` marker: it
+    still counts as produced for ``ensure_no_later_partition``, and ``read_table`` reads it as
+    empty. A row outside the named partitions raises ``ValueError`` and publishes nothing. Writing
+    the same ``df`` again gives the same table (ADR-0002). A process killed outright between the
+    delete and the rename of a partition leaves that partition missing until the day is replayed.
     """
     spark = df.sparkSession
     named = [
@@ -69,15 +73,16 @@ def write_partitions(
             staged = _partition_dirs(fs, _hadoop_path(spark, staging), len(partitions))
             if stray := sorted(staged - set(named)):
                 raise ValueError(f"df has rows outside the partitions named for {path}: {stray}")
-            for directory in named:
-                source = _hadoop_path(spark, f"{staging}/{directory}")
-                if directory not in staged:
-                    fs.mkdirs(source)
-                    fs.create(_hadoop_path(spark, f"{staging}/{directory}/_SUCCESS")).close()
-                destination = _hadoop_path(spark, f"{path}/{directory}")
-                fs.delete(destination, True)
-                fs.mkdirs(destination.getParent())
-                _rename(fs, source, destination)
+            with _stop_signals_deferred():
+                for directory in named:
+                    source = _hadoop_path(spark, f"{staging}/{directory}")
+                    if directory not in staged:
+                        fs.mkdirs(source)
+                        fs.create(_hadoop_path(spark, f"{staging}/{directory}/_SUCCESS")).close()
+                    destination = _hadoop_path(spark, f"{path}/{directory}")
+                    fs.delete(destination, True)
+                    fs.mkdirs(destination.getParent())
+                    _rename(fs, source, destination)
         finally:
             fs.delete(_hadoop_path(spark, staging), True)
     # A cached read of the table would keep serving the partitions that were just replaced.
@@ -89,9 +94,10 @@ def replace_table(df: DataFrame, path: str) -> None:
 
     The run holds the table's lock throughout, as ``write_partitions`` does. ``df`` is written in
     full to the hidden sibling ``_<name>.tmp``. Then the old table moves aside to ``_<name>.old``,
-    the new one moves into place, and the old one is deleted. If a crash left the table missing,
-    ``replace_table``, ``read_table`` and ``path_exists`` first put back the latest complete table:
-    ``_<name>.tmp`` when it holds ``_SUCCESS``, else ``_<name>.old``.
+    the new one moves into place, and the old one is deleted; stop signals wait for the end of the
+    two moves. If a crash left the table missing, ``replace_table``, ``read_table`` and
+    ``path_exists`` first put back the latest complete table: ``_<name>.tmp`` when it holds
+    ``_SUCCESS``, else ``_<name>.old``.
     """
     spark = df.sparkSession
     fs, target = _filesystem(spark, path)
@@ -102,9 +108,10 @@ def replace_table(df: DataFrame, path: str) -> None:
         df.write.mode("overwrite").parquet(staging.toString())
         if not fs.exists(staging.suffix("/_SUCCESS")):
             fs.create(staging.suffix("/_SUCCESS")).close()
-        if fs.exists(target):
-            _rename(fs, target, aside)
-        _rename(fs, staging, target)
+        with _stop_signals_deferred():
+            if fs.exists(target):
+                _rename(fs, target, aside)
+            _rename(fs, staging, target)
         fs.delete(aside, True)
     spark.catalog.refreshByPath(path)
 
@@ -251,7 +258,7 @@ def _lock_path(target: Any) -> Any:
 
 @contextmanager
 def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
-    """Hold the lock of the table ``target`` for the block.
+    """Hold the lock of the table ``target`` for the block, then remove dead runs' staging.
 
     The lock is a file created only if absent, which HDFS decides atomically. It holds the run id,
     the application id and the time it was taken. A lock younger than ``STALE_AFTER_CONF`` seconds
@@ -267,22 +274,25 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
             "token": uuid.uuid4().hex,
         }
     )
-    if not _create(fs, lock, holder):
-        age = _age_s(fs, lock)
-        if age is not None and age < stale_after:
-            raise TableLockedError(_locked_message(fs, target, lock))
-        if age is not None:
-            logger.warning(
-                "taking over the lock of %s, %.0f s old: %s", target, age, _read(fs, lock)
-            )
-            fs.delete(lock, False)
+    with _stop_signals_deferred():
         if not _create(fs, lock, holder):
-            raise TableLockedError(_locked_message(fs, target, lock))
+            age = _age_s(fs, lock)
+            if age is not None and age < stale_after:
+                raise TableLockedError(_locked_message(fs, target, lock))
+            if age is not None:
+                logger.warning(
+                    "taking over the lock of %s, %.0f s old: %s", target, age, _read(fs, lock)
+                )
+                fs.delete(lock, False)
+            if not _create(fs, lock, holder):
+                raise TableLockedError(_locked_message(fs, target, lock))
     try:
+        _remove_stale_staging(fs, target, stale_after)
         yield
     finally:
-        if _read(fs, lock) == holder:
-            fs.delete(lock, False)
+        with _stop_signals_deferred():
+            if _read(fs, lock) == holder:
+                fs.delete(lock, False)
 
 
 def _locked_message(fs: Any, target: Any, lock: Any) -> str:
@@ -330,6 +340,44 @@ def _age_s(fs: Any, path: Any) -> float | None:
 
 def _stale_after_s(spark: SparkSession) -> float:
     return float(spark.conf.get(STALE_AFTER_CONF, str(STALE_AFTER_DEFAULT_S)))
+
+
+def _remove_stale_staging(fs: Any, target: Any, stale_after: float) -> None:
+    """Delete the ``_<name>.staging-*`` directories of ``target`` older than ``stale_after``.
+
+    The holder of the lock calls it: such a directory belongs to a run that was killed outright.
+    """
+    prefix = f"_{target.getName()}.staging-"
+    for status in fs.listStatus(target.getParent()):
+        path = status.getPath()
+        age = time.time() - status.getModificationTime() / 1000
+        if path.getName().startswith(prefix) and age >= stale_after:
+            logger.warning("removing %s, left %.0f s ago by a run that died", path, age)
+            fs.delete(path, True)
+
+
+@contextmanager
+def _stop_signals_deferred() -> Iterator[None]:
+    """Hold SIGTERM and SIGINT until the block ends, then raise the first one received.
+
+    The handler that was in place (run.py's stops the run) then runs as if the signal had just
+    arrived. Only the main thread receives signals: in another thread the block runs as is.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    received: list[int] = []
+    previous = {
+        sig: signal.signal(sig, lambda signum, _frame: received.append(signum))
+        for sig in _STOP_SIGNALS
+    }
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, signal.SIG_DFL if handler is None else handler)
+        if received:
+            signal.raise_signal(received[0])
 
 
 def _has_data_file(fs: Any, directory: Any) -> bool:

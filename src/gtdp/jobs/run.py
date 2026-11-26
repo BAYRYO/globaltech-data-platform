@@ -7,7 +7,8 @@
 Works as ``python -m gtdp.jobs.run`` and as a file given to spark-submit with
 ``--py-files dist/gtdp.zip``. Apart from ``list`` and the usage messages, it writes only JSON log
 lines. SIGTERM and SIGINT stop the job and give the run a ``STOPPED`` audit row; a second signal
-kills the process at once. ``EXIT_CODES`` lists the exit codes.
+kills the process at once. A signal that arrives while ``gtdp.io`` swaps a table takes effect when
+the swap ends. ``EXIT_CODES`` lists the exit codes.
 """
 
 from __future__ import annotations
