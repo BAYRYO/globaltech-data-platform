@@ -95,4 +95,4 @@ fi
 wait "$replay_pid"
 echo "$(date +%T) $(grep '^published' "$logs/replay.log")"
 wait "$job_pid"
-echo "$(date +%T) job stopped: $(grep -o '"stop_reason": "[a-z ]*"' "$logs"/job-*.log | tail -1)"
+echo "$(date +%T) job stopped: $(grep -ho '"stop_reason": "[a-z ]*"' "$logs"/job-*.log | tail -1)"
