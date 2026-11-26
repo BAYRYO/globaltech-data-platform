@@ -1,6 +1,10 @@
 """Hadoop Streaming mapper of Lot 6: revenue per country and invalid order lines.
 
-Usage: python3 mapper.py CUSTOMERS_FILE [CUSTOMERS_FILE ...] < order lines
+Usage: python3 mapper.py CUSTOMERS_FILE [CUSTOMERS_FILE ...] < ORDERS_FILE
+
+It reads every file as Hadoop's line reader splits it: a line ends with LF, CR LF or a lone CR,
+and a leading UTF-8 BOM is dropped. Locally, feed it one orders file at a time, as Hadoop feeds a
+split: `cat a b` would join the last line of a file without a final newline to the next file.
 
 For each valid COMPLETED order line it writes `country<TAB>amount<TAB>1`. The amount is the
 invoiced amount in units of 1e-5 EUR (price cents times thousandths of discount), so sums stay
@@ -14,6 +18,7 @@ on the same files and compares their outputs.
 
 from __future__ import annotations
 
+import io
 import re
 import sys
 from collections import Counter
@@ -114,18 +119,23 @@ def amount(fields: list[str]) -> int:
     return int(fields[QUANTITY]) * price_cents(fields[PRICE]) * (1000 - milli)
 
 
+def text_lines(binary: io.BufferedIOBase) -> io.TextIOWrapper:
+    """The lines of ``binary`` as Hadoop's LineRecordReader splits them, a leading BOM dropped."""
+    return io.TextIOWrapper(binary, encoding="utf-8-sig", errors="replace", newline=None)
+
+
 def _read_files(paths: Iterable[str]) -> Iterator[str]:
     for path in paths:
-        with open(path, encoding="utf-8", errors="replace") as handle:
-            yield from handle
+        with open(path, "rb") as handle:
+            yield from text_lines(handle)
 
 
 def main(customer_files: list[str]) -> int:
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
+    for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
     countries = load_countries(_read_files(customer_files))
     counters: Counter[tuple[str, str]] = Counter()
-    for line in sys.stdin:
+    for line in text_lines(sys.stdin.buffer):
         fields = line.rstrip("\n").split(",")
         counter = classify(fields, countries)
         counters[counter] += 1
