@@ -11,6 +11,7 @@ from pyspark.sql import functions as F
 
 from gtdp.io import read_table
 from gtdp.schemas import SOURCES, bronze_schema
+from gtdp.silver.products import violations, with_applicable_price
 from gtdp.silver.reconcile import compare, expected, manifest_expected, table_measures
 from gtdp.silver.report import contents, price_history, print_report, reconciliation
 
@@ -81,12 +82,20 @@ def test_a_reject_keeps_its_line_and_reasons(published):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("seed", [7, 2026])
-def test_other_seeds_reconcile_with_their_manifests(spark, tmp_path, seed):
+def test_other_seeds_reconcile_and_hold_what_gold_relies_on(spark, tmp_path, seed):
     lake = bronze_lake(spark, tmp_path, seed)
     for day in DAYS:
         run = lake.run("silver", day)
         for source, counts in manifest_expected(lake.manifest(day)).items():
             assert compare(counts, run.metrics["sources"][source]["measures"]) == [], (seed, day)
+
+    orders, products = lake.table("orders"), lake.table("products")
+    priced = with_applicable_price(orders, products)
+    assert orders.count() == orders.select("transaction_id").distinct().count() == priced.count()
+    assert priced.where(F.col("product_sk").isNull()).count() == 0
+    assert orders.join(lake.table("customers"), "customer_id", "left_anti").count() == 0
+    assert orders.where(F.col("discount_pct").isNull()).count() == 0
+    assert sum(violations(products).values()) == 0
 
 
 def test_a_code_missing_from_the_disposition_table_is_an_error():
