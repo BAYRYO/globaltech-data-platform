@@ -180,17 +180,18 @@ def test_synthetic_orders_follow_the_catalog_price_and_the_hot_product(ci_root):
 
 
 def test_product_anomalies_never_touch_a_first_version(ci_root):
-    first_versions: dict[str, set[str]] = {}
+    first_versions: dict[str, list[str]] = {}
     for day in (J1, J2, J3):
         path = ci_root / "landing" / day / "products" / f"products_{day.replace('-', '')}.csv"
         for line in data_lines(path):
             product_id, _, _, _, updated_at = line.split(",")
             if updated_at == "2024-12-31T00:00:00" or product_id >= "P01001":
-                first_versions.setdefault(product_id, set()).add(line)
+                first_versions.setdefault(product_id, []).append(line)
     assert {f"P{n:05d}" for n in range(1, 1001)} < first_versions.keys()
-    for lines in first_versions.values():
-        assert len(lines) == 1
-        _, _, category, price, _ = lines.pop().split(",")
+    repeated = {pid: lines for pid, lines in first_versions.items() if len(lines) > 1}
+    assert repeated == {}
+    for (line,) in first_versions.values():
+        _, _, category, price, _ = line.split(",")
         assert category
         assert re.fullmatch(r"\d+(\.\d{1,2})?", price)
 

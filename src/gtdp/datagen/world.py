@@ -14,6 +14,7 @@ import unicodedata
 from bisect import bisect_right
 from dataclasses import dataclass, replace
 from datetime import date
+from functools import cache
 from pathlib import Path
 
 from gtdp.datagen.model import DROPS, HISTORY_SECONDS, HISTORY_START, history_stamp, iso_stamp
@@ -83,7 +84,9 @@ def _event_offset(event_time: str) -> int:
     return day * 86_400 + hours * 3600 + minutes * 60 + seconds
 
 
+@cache
 def load_kit(directory: Path) -> Kit:
+    """Read once per process: tests and seed sweeps generate many times."""
     with gzip.open(directory / "transactions.csv.gz", "rb") as handle:
         transactions = io.TextIOWrapper(handle, encoding="utf-8").read().splitlines()[1:]
     with gzip.open(directory / "events.jsonl.gz", "rt", encoding="utf-8") as handle:
