@@ -17,7 +17,8 @@ Le premier lancement construit l'image `gtdp/hadoop-spark:3.3.6-3.5.3` et télé
 1,04 Go d'archives Apache depuis archive.apache.org : `hadoop-3.3.6.tar.gz` (730 Mo) et
 `spark-3.5.3-bin-without-hadoop.tgz` (314 Mo). Ce premier build a pris 6 min 52 s sur la machine
 de référence (16 CPU, 15 Gio pour Docker). La durée dépend surtout du débit d'archive.apache.org. Les builds
-suivants réutilisent le cache Docker.
+suivants réutilisent le cache Docker. L'image construite occupe 2,10 Go sur disque (810 Mo
+compressés).
 
 ## Démarrage en moins de 10 minutes
 
@@ -326,23 +327,23 @@ scripts/cluster/client.sh bash -c 'hadoop jar "$HADOOP_STREAMING_JAR" \
 
 `scripts/cluster/init-hdfs.sh` porte la table qui fait foi. Le tableau ci-dessous la reprend.
 
-| Chemin | Propriétaire | Mode | ACL | Quota d'espace |
-| --- | --- | --- | --- | --- |
-| `/datalake` | `etl:datalake` | `755` | | |
-| `/datalake/landing` et ses sous-dossiers | `etl:datalake` | `770` | | 20 Go |
-| `/datalake/bronze` | `etl:datalake` | `750` | | 30 Go |
-| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x`, par défaut aussi | 30 Go |
-| `/datalake/silver/rejects` | `etl:datalake` | `750` | `group:analysts:---`, par défaut aussi | |
-| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x`, par défaut aussi | 10 Go |
-| `/datalake/streaming`, `checkpoints/`, `rejects/` | `etl:datalake` | `750` | | 5 Go |
-| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x`, par défaut aussi | 2 Go |
-| `/spark-logs` | `spark:hadoop` | `1777` | | 5 Go |
-| `/app-logs`, `/tmp` | `hadoop:hadoop` | `1777` | | |
-| `/mr-history`, `/user`, `/apps`, `/apps/spark` | `hadoop:hadoop` | `755` | | |
-| `/user/etl` | `etl:datalake` | `755` | | |
-| `/benchmarks` | `etl:datalake` | `755` | | 20 Go |
-| `/benchmarks/rep3` | `etl:datalake` | `755` | réplication forcée | |
-| `/benchmarks/ec` | `etl:datalake` | `755` | erasure coding `XOR-2-1-1024k` | |
+| Chemin | Propriétaire | Mode | ACL | Quota d'espace | Quota de noms |
+| --- | --- | --- | --- | --- | --- |
+| `/datalake` | `etl:datalake` | `755` | | | |
+| `/datalake/landing` et ses sous-dossiers | `etl:datalake` | `770` | | 20 Go | 100 000 |
+| `/datalake/bronze` | `etl:datalake` | `750` | | 30 Go | 200 000 |
+| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x`, par défaut aussi | 30 Go | 200 000 |
+| `/datalake/silver/rejects` | `etl:datalake` | `750` | `group:analysts:---`, par défaut aussi | | |
+| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x`, par défaut aussi | 10 Go | 200 000 |
+| `/datalake/streaming`, `checkpoints/`, `rejects/` | `etl:datalake` | `750` | | 5 Go | 500 000 |
+| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x`, par défaut aussi | 2 Go | 100 000 |
+| `/spark-logs` | `spark:hadoop` | `1777` | | 5 Go | 100 000 |
+| `/app-logs`, `/tmp` | `hadoop:hadoop` | `1777` | | | |
+| `/mr-history`, `/user`, `/apps`, `/apps/spark` | `hadoop:hadoop` | `755` | | | |
+| `/user/etl` | `etl:datalake` | `755` | | | |
+| `/benchmarks` | `etl:datalake` | `755` | | 20 Go | 100 000 |
+| `/benchmarks/rep3` | `etl:datalake` | `755` | réplication forcée | | |
+| `/benchmarks/ec` | `etl:datalake` | `755` | erasure coding `XOR-2-1-1024k` | | |
 
 Les sous-dossiers de landing sont `orders`, `customers`, `products`, `weblogs`, `_manifests` et
 `sensors/incoming`. Les sorties du streaming (`/datalake/gold/sensor_aggregates`,
@@ -358,7 +359,9 @@ Choix de droits :
 - **Gold et ops.** L'ACL par défaut fait hériter la lecture aux tables et aux fichiers d'audit
   créés plus tard.
 - **Quotas.** Un quota d'espace HDFS compte les octets répliqués. 30 Go en réplication 3 font
-  donc 10 Go de données.
+  donc 10 Go de données. Un quota de noms compte les fichiers et répertoires : il borne la
+  prolifération de petits fichiers (un micro-batch de streaming en crée plusieurs, d'où 500 000
+  sur `/datalake/streaming`), qui coûtent de la mémoire au NameNode (environ 150 octets par objet).
 - **Utilisateurs.** Les comptes `hadoop`, `etl` (groupe `datalake`), `analyst` (groupe
   `analysts`) et `spark` (groupe `hadoop`), ainsi que le groupe `ops`, existent dans l'image. Le
   NameNode résout les groupes avec `id` (`ShellBasedUnixGroupsMapping`).

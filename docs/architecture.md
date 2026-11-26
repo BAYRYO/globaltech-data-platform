@@ -91,16 +91,16 @@ Justification :
 
 ### Droits et quotas
 
-| Chemin | Propriétaire | Mode | ACL | Quota espace |
-| --- | --- | --- | --- | --- |
-| `/datalake/landing` | `etl:datalake` | `770` | — | 20 Go |
-| `/datalake/bronze` | `etl:datalake` | `750` | — | 30 Go |
-| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x` sur les entités pseudonymisées | 30 Go |
-| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x` (défaut hérité) | 10 Go |
-| `/datalake/streaming` | `etl:datalake` | `750` | — | 5 Go |
-| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x` | 2 Go |
-| `/spark-logs` | `spark:hadoop` | `1777` | — | 5 Go |
-| `/benchmarks` | `etl:datalake` | `755` | — | 20 Go |
+| Chemin | Propriétaire | Mode | ACL | Quota espace | Quota de noms |
+| --- | --- | --- | --- | --- | --- |
+| `/datalake/landing` | `etl:datalake` | `770` | — | 20 Go | 100 000 |
+| `/datalake/bronze` | `etl:datalake` | `750` | — | 30 Go | 200 000 |
+| `/datalake/silver` | `etl:datalake` | `750` | `group:analysts:r-x` sur les entités pseudonymisées | 30 Go | 200 000 |
+| `/datalake/gold` | `etl:datalake` | `755` | `group:analysts:r-x` (défaut hérité) | 10 Go | 200 000 |
+| `/datalake/streaming` | `etl:datalake` | `750` | — | 5 Go | 500 000 |
+| `/datalake/ops` | `etl:datalake` | `750` | `group:ops:r-x` | 2 Go | 100 000 |
+| `/spark-logs` | `spark:hadoop` | `1777` | — | 5 Go | 100 000 |
+| `/benchmarks` | `etl:datalake` | `755` | — | 20 Go | 100 000 |
 
 Les quotas d'espace HDFS comptent l'espace physique (réplication incluse) : 30 Go de quota pour
 la couche bronze correspondent à 10 Go logiques en réplication 3.
