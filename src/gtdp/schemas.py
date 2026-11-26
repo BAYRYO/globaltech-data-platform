@@ -11,7 +11,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
-from pyspark.sql.types import DateType, StringType, StructField, StructType, TimestampType
+from pyspark.sql.types import (
+    ArrayType,
+    BooleanType,
+    DateType,
+    DecimalType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 from gtdp.io import INGESTION_DATE
 
@@ -105,3 +116,95 @@ def bronze_schema(source: Source) -> StructType:
     the technical columns, then the partition column."""
     raw = [StructField(column, StringType()) for column in source.columns]
     return StructType([*raw, *TECHNICAL_COLUMNS.fields, StructField(INGESTION_DATE, DateType())])
+
+
+AMOUNT = DecimalType(10, 2)
+DISCOUNT = DecimalType(4, 3)
+REJECT_REASONS = "reject_reasons"
+QUALITY_FLAGS = "quality_flags"
+RAW_RECORD = "raw_record"
+
+SILVER_ORDERS = StructType(
+    [
+        StructField("transaction_id", StringType(), False),
+        StructField("event_time", TimestampType(), False),
+        StructField("customer_id", StringType(), False),
+        StructField("product_id", StringType(), False),
+        StructField("quantity", IntegerType(), False),
+        StructField("unit_price_eur", AMOUNT, False),
+        StructField("channel", StringType(), False),
+        StructField("status", StringType(), False),
+        StructField("discount_pct", DISCOUNT, False),
+        StructField(RECORD_HASH, StringType(), False),
+        StructField(INGESTION_DATE, DateType(), False),
+    ]
+)
+"""``silver/orders``, partitioned by ``ingestion_date``: one row per ``transaction_id``."""
+
+SILVER_CUSTOMERS = StructType(
+    [
+        StructField("customer_id", StringType(), False),
+        StructField("email_hash", StringType()),
+        StructField("region", StringType()),
+        StructField("country", StringType(), False),
+        StructField("segment", StringType()),
+        StructField("signup_date", DateType()),
+        StructField("updated_at", TimestampType()),
+        StructField(QUALITY_FLAGS, ArrayType(StringType()), False),
+        StructField(RECORD_HASH, StringType(), False),
+        StructField(INGESTION_DATE, DateType(), False),
+    ]
+)
+"""``silver/customers`` (SCD type 1): the latest record of each ``customer_id``, pseudonymised."""
+
+SILVER_PRODUCTS_SCD2 = StructType(
+    [
+        StructField("product_sk", StringType(), False),
+        StructField("product_id", StringType(), False),
+        StructField("product_name", StringType()),
+        StructField("category", StringType(), False),
+        StructField("unit_price_eur", AMOUNT, False),
+        StructField("valid_from", TimestampType(), False),
+        StructField("valid_to", TimestampType(), False),
+        StructField("is_current", BooleanType(), False),
+        StructField("version", IntegerType(), False),
+        StructField(RECORD_HASH, StringType(), False),
+        StructField(INGESTION_DATE, DateType(), False),
+    ]
+)
+"""``silver/products_scd2`` (SCD type 2): one row per version, ``valid_from <= t < valid_to``."""
+
+SILVER_WEBLOGS = StructType(
+    [
+        StructField("log_id", StringType(), False),
+        StructField("event_ts", TimestampType(), False),
+        StructField("ip_hash", StringType(), False),
+        StructField("ip_prefix", StringType(), False),
+        StructField("customer_id", StringType()),
+        StructField("method", StringType(), False),
+        StructField("path", StringType(), False),
+        StructField("protocol", StringType(), False),
+        StructField("http_status", IntegerType(), False),
+        StructField("bytes_sent", LongType()),
+        StructField("referer", StringType()),
+        StructField("user_agent", StringType()),
+        StructField("device", StringType()),
+        StructField("event_type", StringType(), False),
+        StructField("product_id", StringType()),
+        StructField(INGESTION_DATE, DateType(), False),
+    ]
+)
+"""``silver/weblogs``, partitioned by ``ingestion_date``: one parsed, pseudonymised request."""
+
+SILVER_REJECTS = StructType(
+    [
+        StructField("source", StringType(), False),
+        StructField(REJECT_REASONS, ArrayType(StringType()), False),
+        StructField(RAW_RECORD, StringType(), False),
+        StructField(RECORD_HASH, StringType(), False),
+        StructField(SOURCE_FILE, StringType()),
+        StructField(RUN_ID, StringType(), False),
+        StructField(INGESTION_DATE, DateType(), False),
+    ]
+)
+"""``silver/rejects/<source>``, partitioned by ``ingestion_date``: one rejected bronze record."""
