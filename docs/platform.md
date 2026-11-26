@@ -54,9 +54,9 @@ Le chronométrage ci-dessous suppose l'image déjà construite.
 
 	La dernière ligne doit être `==> smoke OK`.
 
-Sur la machine de référence, avec des volumes vides et l'image construite, `up.sh` prend 15 s,
-`init-hdfs.sh` 27 s et `smoke/run.sh` 60 s. Un deuxième `init-hdfs.sh` prend aussi 27 s et ne
-change rien.
+Sur la machine de référence, depuis un clone neuf avec l'image construite et des volumes vidés
+par `scripts/cluster/reset.sh` (4 s), `up.sh` prend 15 s, `init-hdfs.sh` 26 s et `smoke/run.sh`
+54 s, soit 99 s au total. Un deuxième `init-hdfs.sh` prend 22 s et ne change rien.
 
 Avec `make`, les mêmes étapes sont `make cluster-up`, `make cluster-init` et `make cluster-smoke`.
 
@@ -98,8 +98,8 @@ Le plafond par instance vaut le tas plus 256 Mio de mémoire hors tas (métaspac
 JIT), plus la mémoire YARN pour un NodeManager. Pour le conteneur client, il vaut le tas du driver
 plus les 384 Mio de surcoût que Spark réserve aussi pour un conteneur YARN (mémoire hors tas et
 processus Python du driver). YARN tue un conteneur qui dépasse sa réservation (contrôle de mémoire
-physique actif). `docker stats` mesure 2,6 Gio pour le cluster au repos et 4,9 Gio au pic de
-`smoke/run.sh`, client compris.
+physique actif). `docker stats` mesure 3,1 Gio pour le cluster au repos après un smoke et
+4,3 Gio au pic de `smoke/run.sh`, client compris (un échantillon toutes les 4 s environ).
 
 Deux drivers en mode client en même temps (le streaming et un batch) font deux conteneurs client.
 YARN ne loge alors que deux ApplicationMasters et deux exécuteurs, soit 4 352 Mio au plus. Le
