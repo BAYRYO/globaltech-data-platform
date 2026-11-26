@@ -7,13 +7,18 @@
    covered the date yet, ``MISMATCH`` otherwise. Shown for the last 7 order dates, the dates
    whose orders came in several drops (late orders) and every date that is not ``ok``.
 2. The invariants of the star (unique keys, no orphan fact) and the optional references.
-3. Rows and content checksum of each gold table: a replay that rewrites the same rows keeps the
+3. Gold against silver recomputed in one pass: orders, revenue at the applicable price, invoiced
+   amount, orders without exactly one valid version or without customer, calendar coverage,
+   completed revenue of ``kpi_revenue_daily``, and a funnel that never increases.
+4. The top products of FR recomputed with a plain ``groupBy`` and ``orderBy``, beside the
+   indicator.
+5. Rows and content checksum of each gold table: a replay that rewrites the same rows keeps the
    same ``content_sum``.
-4. The versions of P00042 and its ``fact_sales`` rows on either side of its first price change.
-5. Samples of the indicators: top products per country, moving average of the first and last
+6. The versions of P00042 and its ``fact_sales`` rows on either side of its first price change.
+7. Samples of the indicators: top products per country, moving average of the first and last
    days of FR, price deviation of P00042's categories, and every other indicator.
-6. The audit rows of the gold runs.
-7. With ``--explain``, the physical plan of the ``fact_sales`` build for the order dates of that
+8. The audit rows of the gold runs.
+9. With ``--explain``, the physical plan of the ``fact_sales`` build for the order dates of that
    drop, with the default join selection, then with broadcast joins disabled.
 """
 
@@ -24,14 +29,15 @@ import sys
 from collections.abc import Sequence
 from datetime import date
 from functools import reduce
+from itertools import zip_longest
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 from gtdp.audit import audit_path
 from gtdp.config import AppConfig, Env, load_config
-from gtdp.gold import checks, facts
-from gtdp.gold.kpis import KPIS
+from gtdp.gold import checks, dimensions, facts
+from gtdp.gold.kpis import COMPLETED, KPIS
 from gtdp.gold.tables import DIM_CUSTOMER, DIM_PRODUCT, FACT_SALES, ORDER_DATE, STAR, table_path
 from gtdp.io import INGESTION_DATE, read_table
 from gtdp.silver.days import complete_days
@@ -95,6 +101,113 @@ def integrity(tables: dict[str, DataFrame]) -> list[tuple[str, int, str]]:
     return lines
 
 
+def _line(check: str, silver: object, gold: object) -> tuple[str, str, str, str]:
+    return check, str(silver), str(gold), "ok" if silver == gold else "MISMATCH"
+
+
+def reconciliation(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, str, str, str]]:
+    """``(check, silver, gold, status)``: gold beside silver recomputed in one pass."""
+    orders = _silver_orders(spark, cfg)
+    products = dimensions.products(
+        read_table(spark, silver_path(cfg.paths.silver, "products"), PIPELINES["products"].schema)
+    )
+    customers = dimensions.customers(
+        read_table(spark, silver_path(cfg.paths.silver, "customers"), PIPELINES["customers"].schema)
+    )
+    recomputed = facts.sales(orders, products, customers)
+    net = F.lit(1) - F.col("discount_pct")
+    invoiced = F.round(F.col("quantity") * F.col("unit_price_eur") * net, 2)
+    silver = orders.agg(F.count(F.lit(1)), F.sum(invoiced)).first()
+    revenue = recomputed.agg(F.sum("revenue_eur")).first()[0]
+    sales = _gold(spark, cfg, FACT_SALES.name, FACT_SALES.schema)
+    gold = sales.agg(
+        F.count(F.lit(1)),
+        F.sum("revenue_eur"),
+        F.sum("invoiced_amount_eur"),
+        F.sum(F.when(F.col("status") == COMPLETED, F.col("revenue_eur"))),
+        F.min(ORDER_DATE),
+        F.max(ORDER_DATE),
+    ).first()
+    broken = facts.build_violations(recomputed, silver[0])
+    calendar = _gold(spark, cfg, "dim_date").agg(F.min("date"), F.max("date"), F.count(F.lit(1)))
+    first, last, days = calendar.first()
+    expected_days = (gold[5] - gold[4]).days + 1 if gold[4] else 0
+    covered = (
+        first is not None
+        and first <= gold[4]
+        and last >= gold[5]
+        and days == (last - first).days + 1
+    )
+    daily = _gold(spark, cfg, "kpi_revenue_daily").agg(F.sum("revenue_eur")).first()[0]
+    funnel = _gold(spark, cfg, "kpi_conversion_funnel")
+    rising = funnel.where(
+        (F.col("product_views") > F.col("visits"))
+        | (F.col("carts") > F.col("product_views"))
+        | (F.col("orders") > F.col("carts"))
+    )
+    return [
+        _line("orders", silver[0], gold[0]),
+        _line("revenue_eur (applicable price)", revenue, gold[1]),
+        _line("invoiced_amount_eur", silver[1], gold[2]),
+        *[_line(f"orders with {kind}", 0, count) for kind, count in broken.items()],
+        _line(
+            "dim_date covers the order dates, without gap",
+            f"{gold[4]} .. {gold[5]} ({expected_days} days)",
+            f"{first} .. {last} ({days} days)" if covered else f"NOT COVERED: {first} .. {last}",
+        ),
+        _line("kpi_revenue_daily revenue_eur = COMPLETED revenue", gold[3], daily),
+        _line(
+            "kpi_conversion_funnel never increases",
+            [],
+            [row["device"] for row in rising.select("device").collect()],
+        ),
+    ]
+
+
+def top_products_check(spark: SparkSession, cfg: AppConfig, country: str) -> list[tuple]:
+    """``(position, product, revenue)`` of a plain ``groupBy``/``orderBy`` beside ``(rank,
+    product, revenue)`` of ``kpi_top_products_country``, and whether the two agree."""
+    n = cfg.gold.top_n if cfg.gold else 0
+    plain = (
+        _gold(spark, cfg, FACT_SALES.name, FACT_SALES.schema)
+        .where((F.col("status") == COMPLETED) & (F.col("country") == country))
+        .groupBy("product_id")
+        .agg(F.sum("revenue_eur").alias("revenue_eur"))
+        .orderBy(F.col("revenue_eur").desc(), "product_id")
+        .limit(n)
+        .collect()
+    )
+    indicator = (
+        _gold(spark, cfg, "kpi_top_products_country")
+        .where(F.col("country") == country)
+        .orderBy("rank", "product_id")
+        .collect()
+    )
+
+    def agree(mine, kept) -> bool:
+        if kept is None:
+            return False
+        if mine is None:  # a product tied with the last one the plain top N keeps
+            return bool(plain) and kept["revenue_eur"] == plain[-1]["revenue_eur"]
+        return (mine["product_id"], mine["revenue_eur"]) == (
+            kept["product_id"],
+            kept["revenue_eur"],
+        )
+
+    return [
+        (
+            position,
+            mine["product_id"] if mine else None,
+            str(mine["revenue_eur"]) if mine else None,
+            kept["rank"] if kept else None,
+            kept["product_id"] if kept else None,
+            str(kept["revenue_eur"]) if kept else None,
+            agree(mine, kept),
+        )
+        for position, (mine, kept) in enumerate(zip_longest(plain, indicator), start=1)
+    ]
+
+
 def contents(spark: SparkSession, cfg: AppConfig) -> DataFrame:
     """``table, rows, content_sum`` for every gold table."""
     names = [table.name for table in STAR] + list(KPIS)
@@ -156,7 +269,6 @@ def samples(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, DataFrame]]:
     )
     categories = [row["category"] for row in hot.select("category").distinct().collect()]
     average = kpi("kpi_revenue_moving_avg").where(F.col("country") == SAMPLE_COUNTRY)
-    daily = kpi("kpi_revenue_daily")
     return [
         (
             "kpi_top_products_country",
@@ -178,16 +290,33 @@ def samples(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, DataFrame]]:
         ),
         (
             "kpi_revenue_daily, last 4 dates",
-            daily.crossJoin(daily.agg(F.max(ORDER_DATE).alias("_last")))
-            .where(F.col(ORDER_DATE) >= F.date_sub("_last", 3))
-            .drop("_last")
+            _recent(kpi("kpi_revenue_daily"), 3).orderBy(ORDER_DATE, "country"),
+        ),
+        (
+            "kpi_cancel_return_rate summed per country and day, last 2 dates",
+            _recent(kpi("kpi_cancel_return_rate"), 1)
+            .groupBy(ORDER_DATE, "country")
+            .agg(*[F.sum(c).alias(c) for c in ("lines", "cancelled", "returned")])
+            .select("*", _share("cancelled", "lines"), _share("returned", "lines"))
             .orderBy(ORDER_DATE, "country"),
         ),
-        ("kpi_cancel_return_rate", kpi("kpi_cancel_return_rate").orderBy("channel", "category")),
-        ("kpi_avg_basket", kpi("kpi_avg_basket").orderBy("country", "segment")),
         (
-            "kpi_http_errors_hourly, 8 hours with the highest 404 rate",
-            kpi("kpi_http_errors_hourly").orderBy(F.col("rate_404").desc(), "event_hour").limit(8),
+            "kpi_avg_basket summed per country and day, last 2 dates",
+            _recent(kpi("kpi_avg_basket"), 1)
+            .groupBy(ORDER_DATE, "country")
+            .agg(F.sum("orders").alias("orders"), F.sum("revenue_eur").alias("revenue_eur"))
+            .select("*", F.round(F.col("revenue_eur") / F.col("orders"), 2).alias("avg_basket_eur"))
+            .orderBy(ORDER_DATE, "country"),
+        ),
+        (
+            f"kpi_avg_basket, last date, {SAMPLE_COUNTRY}",
+            _recent(kpi("kpi_avg_basket"), 0)
+            .where(F.col("country") == SAMPLE_COUNTRY)
+            .orderBy("segment"),
+        ),
+        (
+            "kpi_http_errors_hourly, 8 hours with the highest 4xx rate",
+            kpi("kpi_http_errors_hourly").orderBy(F.col("rate_4xx").desc(), "event_hour").limit(8),
         ),
         ("kpi_conversion_funnel", kpi("kpi_conversion_funnel").orderBy("device")),
         (
@@ -195,6 +324,20 @@ def samples(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, DataFrame]]:
             kpi("kpi_data_quality").orderBy(INGESTION_DATE, "source", "disposition", "code"),
         ),
     ]
+
+
+def _recent(frame: DataFrame, days_before: int) -> DataFrame:
+    """The rows of the last ``order_date`` and of the ``days_before`` days before it."""
+    last = frame.agg(F.max(ORDER_DATE).alias("_last"))
+    return (
+        frame.crossJoin(last)
+        .where(F.col(ORDER_DATE) >= F.date_sub("_last", days_before))
+        .drop("_last")
+    )
+
+
+def _share(part: str, whole: str):
+    return F.round(F.col(part) / F.col(whole), 4).alias(f"{part}_rate")
 
 
 def runs(spark: SparkSession, cfg: AppConfig) -> DataFrame:
@@ -262,6 +405,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             50, truncate=False
         )
         violated = [line for line in lines if line[2] == "VIOLATED"]
+        totals = reconciliation(spark, cfg)
+        spark.createDataFrame(
+            totals, "check string, silver string, gold string, status string"
+        ).show(50, truncate=False)
+        violated += [line for line in totals if line[3] != "ok"]
+        top = top_products_check(spark, cfg, SAMPLE_COUNTRY)
+        print(f"== top products of {SAMPLE_COUNTRY}: plain groupBy/orderBy beside the indicator")
+        spark.createDataFrame(
+            top,
+            "position int, plain_product string, plain_revenue string, kpi_rank int,"
+            " kpi_product string, kpi_revenue string, same boolean",
+        ).show(50, truncate=False)
+        violated += [line for line in top if not line[-1]]
         contents(spark, cfg).show(50, truncate=False)
         for frame in price_history(spark, cfg):
             frame.show(20, truncate=False)
@@ -269,7 +425,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"== {title}")
             frame.show(60, truncate=False)
         runs(spark, cfg).show(100, truncate=False)
-        print(f"{mismatches} order dates mismatched, {len(violated)} invariants violated")
+        print(f"{mismatches} order dates mismatched, {len(violated)} checks failed")
         if args.explain:
             explain(spark, cfg, args.explain)
     finally:

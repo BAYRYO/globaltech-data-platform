@@ -79,6 +79,10 @@ def test_the_report_finds_every_order_date_built_and_the_star_sound(generated):
     assert any(row.drops > 1 for row in dates)
     assert {status for _, _, status in report.integrity(report.star(spark, cfg))} <= {"ok", "info"}
     assert all(frame.count() > 0 for _, frame in report.samples(spark, cfg))
+    assert [line for line in report.reconciliation(spark, cfg) if line[3] != "ok"] == []
+    top = report.top_products_check(spark, cfg, "FR")
+    assert len(top) >= cfg.gold.top_n
+    assert all(line[-1] for line in top)
     assert {row.applicable_unit_price for row in around.collect()} == {
         row.unit_price_eur for row in versions.where("version <= 2").collect()
     }
