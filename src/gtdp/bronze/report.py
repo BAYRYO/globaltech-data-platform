@@ -1,13 +1,15 @@
 """Print the state of the bronze tables, to check an ingestion or a replay.
 
-    scripts/cluster/submit.sh src/gtdp/bronze/report.py [--env local]
+    scripts/cluster/submit.sh src/gtdp/bronze/report.py [--env local] [--samples N]
 
 1. One line per source and ingestion day: rows, corrupt records, landing files, the run that
    wrote the partition, and ``hash_sum``, a checksum of the record hashes that ignores row order.
    Two runs of a day that wrote the same records give the same ``hash_sum``.
-2. Per source and day, the landing lines whose SHA-256 is no record hash, and the records whose
-   hash matches no landing line. A lossless bronze leaves out the CSV header lines only.
-3. The orders rows that hold a ``discount_pct`` value once read with ``mergeSchema`` (ADR-0007).
+2. Per source and day present in landing or in bronze, the landing lines whose SHA-256 is no
+   record hash, and the records whose hash matches no landing line: their counts and at most
+   ``--samples`` of their hashes, never their values (they hold personal data). A lossless bronze
+   leaves out the CSV header lines only.
+3. The orders rows that hold a ``discount_pct`` value (ADR-0007).
 4. The audit rows of the bronze runs, then the counts of each run and landed file.
 """
 
@@ -18,21 +20,21 @@ import sys
 from collections.abc import Sequence
 from functools import reduce
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, MapType, StringType, StructField, StructType
 
 from gtdp.audit import audit_path
 from gtdp.config import Env, load_config
-from gtdp.io import INGESTION_DATE, path_exists, read_table
+from gtdp.io import INGESTION_DATE, list_partition_values, read_table
 from gtdp.schemas import CORRUPT_RECORD, RECORD_HASH, RUN_ID, SOURCE_FILE, SOURCES, bronze_schema
 from gtdp.spark import build_spark
 
+SAMPLES = 5
+
 
 def _bronze(spark: SparkSession, bronze: str, source: str) -> DataFrame:
-    return read_table(
-        spark, f"{bronze}/{source}", bronze_schema(SOURCES[source]), merge_schema=True
-    )
+    return read_table(spark, f"{bronze}/{source}", bronze_schema(SOURCES[source]))
 
 
 def partitions(spark: SparkSession, bronze: str) -> DataFrame:
@@ -56,29 +58,28 @@ def partitions(spark: SparkSession, bronze: str) -> DataFrame:
     return reduce(DataFrame.unionByName, per_source).orderBy("source", INGESTION_DATE)
 
 
-def unmatched(spark: SparkSession, landing: str, bronze: str) -> DataFrame:
-    """Per source and day, the landing lines and the records that only one side holds."""
+def unmatched(spark: SparkSession, landing: str, bronze: str, samples: int = SAMPLES) -> DataFrame:
+    """Per source and day of landing or bronze, the line hashes that only one side holds."""
     per_source = []
     for source in SOURCES:
-        if not path_exists(spark, f"{landing}/{source}"):
-            continue
-        lines = spark.read.text(f"{landing}/{source}").select(
-            INGESTION_DATE, "value", F.sha2("value", 256).alias("hash")
-        )
-        keys = lines.select(INGESTION_DATE, "hash")
         records = _bronze(spark, bronze, source).select(
             INGESTION_DATE, F.col(RECORD_HASH).alias("hash")
         )
-        only_landing = keys.exceptAll(records)
+        lines = records.limit(0)
+        if list_partition_values(spark, f"{landing}/{source}", INGESTION_DATE):
+            lines = spark.read.text(f"{landing}/{source}").select(
+                INGESTION_DATE, F.sha2("value", 256).alias("hash")
+            )
         per_source.append(
-            keys.groupBy(INGESTION_DATE)
-            .agg(F.count(F.lit(1)).alias("landing_lines"))
-            .join(_count(only_landing, "landing_not_in_bronze"), INGESTION_DATE, "left")
-            .join(_count(records.exceptAll(keys), "bronze_not_in_landing"), INGESTION_DATE, "left")
+            _count(lines, "landing_lines")
+            .join(_count(records, "bronze_rows"), INGESTION_DATE, "full")
             .join(
-                lines.join(only_landing.distinct(), [INGESTION_DATE, "hash"], "left_semi")
-                .groupBy(INGESTION_DATE)
-                .agg(F.array_sort(F.collect_set("value")).alias("lines_not_in_bronze")),
+                _gap(lines.exceptAll(records), "landing_not_in_bronze", samples),
+                INGESTION_DATE,
+                "left",
+            )
+            .join(
+                _gap(records.exceptAll(lines), "bronze_not_in_landing", samples),
                 INGESTION_DATE,
                 "left",
             )
@@ -92,16 +93,27 @@ def _count(frame: DataFrame, name: str) -> DataFrame:
     return frame.groupBy(INGESTION_DATE).agg(F.count(F.lit(1)).alias(name))
 
 
-def discounts(spark: SparkSession, bronze: str) -> DataFrame:
-    """Per day, the orders rows and those with a ``discount_pct`` value.
-
-    No partition holds the column before J3 is ingested: the merged schema then lacks it.
-    """
-    orders = _bronze(spark, bronze, "orders")
-    discount = F.col("discount_pct") if "discount_pct" in orders.columns else F.lit(None)
+def _gap(hashes: DataFrame, name: str, samples: int) -> DataFrame:
+    """Per day, the number of ``hashes`` as ``name``, and the ``samples`` smallest."""
+    smallest = Window.partitionBy(INGESTION_DATE).orderBy("hash")
     return (
-        orders.groupBy(INGESTION_DATE)
-        .agg(F.count(F.lit(1)).alias("rows"), F.count(discount).alias("with_discount_pct"))
+        hashes.withColumn("rank", F.row_number().over(smallest))
+        .groupBy(INGESTION_DATE)
+        .agg(
+            F.count(F.lit(1)).alias(name),
+            F.array_sort(F.collect_list(F.when(F.col("rank") <= samples, F.col("hash")))).alias(
+                f"{name}_hashes"
+            ),
+        )
+    )
+
+
+def discounts(spark: SparkSession, bronze: str) -> DataFrame:
+    """Per day, the orders rows and those with a ``discount_pct`` value."""
+    return (
+        _bronze(spark, bronze, "orders")
+        .groupBy(INGESTION_DATE)
+        .agg(F.count(F.lit(1)).alias("rows"), F.count("discount_pct").alias("with_discount_pct"))
         .orderBy(INGESTION_DATE)
     )
 
@@ -144,11 +156,15 @@ def file_counts(bronze_runs: DataFrame) -> DataFrame:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--env", choices=[env.value for env in Env], default=Env.CLUSTER.value)
-    cfg = load_config(parser.parse_args(argv).env)
+    parser.add_argument("--samples", type=int, default=SAMPLES, help="hashes shown per gap")
+    args = parser.parse_args(argv)
+    cfg = load_config(args.env)
     spark = build_spark(cfg, f"{cfg.app.name}-bronze-report")
     try:
         partitions(spark, cfg.paths.bronze).show(100, truncate=False)
-        unmatched(spark, cfg.paths.landing, cfg.paths.bronze).show(100, truncate=False)
+        unmatched(spark, cfg.paths.landing, cfg.paths.bronze, args.samples).show(
+            100, truncate=False
+        )
         discounts(spark, cfg.paths.bronze).show(truncate=False)
         bronze_runs = runs(spark, audit_path(cfg))
         bronze_runs.drop("metrics_json").show(100, truncate=False)
