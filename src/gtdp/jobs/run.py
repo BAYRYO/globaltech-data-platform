@@ -1,6 +1,7 @@
 """spark-submit entrypoint.
 
-    run.py <job> --env {local,cluster} [--date YYYY-MM-DD] [--source NAME] [--set S.KEY=VALUE ...]
+    run.py <job> --env {local,cluster} [--date YYYY-MM-DD] [--source NAME] [--force]
+               [--set SECTION.KEY=VALUE ...]
     run.py list
 
 Works as ``python -m gtdp.jobs.run`` and as a file given to spark-submit with
@@ -46,7 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         spark = build_spark(cfg, f"{cfg.app.name}-{spec.name}")
         try:
             with audited_run(spark, cfg, spec.name, spec.layer, args.source, args.date) as run:
-                spec.func(JobContext(spark, cfg, run))
+                if args.force:
+                    run.metrics["force"] = True
+                spec.func(JobContext(spark, cfg, run, force=args.force))
         except Exception:
             logger.exception("job failed")
             return 1
@@ -60,6 +63,11 @@ def _parser() -> argparse.ArgumentParser:
     options.add_argument("--env", required=True, choices=[env.value for env in Env])
     options.add_argument("--date", type=_iso_date, help="ingestion date, YYYY-MM-DD")
     options.add_argument("--source", help="source name, for example orders")
+    options.add_argument(
+        "--force",
+        action="store_true",
+        help="process --date even when the target already holds a later day",
+    )
     options.add_argument(
         "--set",
         dest="overrides",
