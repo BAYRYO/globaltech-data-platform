@@ -1,8 +1,9 @@
 """Products: J1 version history of the kit catalog, then daily deltas.
 
 Anomalies never touch a product's first version. BAD_PRICE and NULL_CATEGORY rows are extra
-versions at timestamps no valid version uses; a CONFLICTING_VERSION row restates the key of a
-valid later version with another price.
+versions at timestamps no valid version uses. DUPLICATE_EXACT and CONFLICTING_VERSION rows restate
+later versions of kit products, drawn up front as disjoint sets: a duplicate copies its version
+verbatim, a conflict restates its key with another price.
 """
 
 import random
@@ -25,7 +26,9 @@ CATEGORY, PRICE = 2, 3
 
 
 class Products(RowSource):
-    def __init__(self, rng: random.Random, world: World, drop: Drop, n_conflicts: int) -> None:
+    def __init__(
+        self, rng: random.Random, world: World, drop: Drop, counts: dict[str, int]
+    ) -> None:
         super().__init__(rng)
         self.drop = drop
         self.valid_rows = world.product_drops[drop.index]
@@ -39,15 +42,16 @@ class Products(RowSource):
             for v in self.valid_rows
             if v.product_id in kit_ids and v.updated_at != INITIAL_VERSION_AT
         ]
-        self._conflicts = rng.sample(later_versions, n_conflicts)
-        self._conflicting_lines = {v.line() for v in self._conflicts}
+        n_conflicts = counts["CONFLICTING_VERSION"]
+        targets = rng.sample(later_versions, n_conflicts + counts["DUPLICATE_EXACT"])
+        self._conflicts = targets[:n_conflicts]
+        self._duplicates = targets[n_conflicts:]
 
     def next_clean(self) -> str:
         return next(self._clean)
 
-    def remember(self, line: str) -> None:
-        if line not in self._conflicting_lines:
-            super().remember(line)
+    def duplicate(self) -> str:
+        return self._duplicates.pop().line()
 
     def noise(self) -> list[str]:
         """The valid attributes of a kit product, restated at a timestamp no version uses."""
@@ -73,7 +77,7 @@ class Products(RowSource):
 
 
 ANOMALIES = (
-    Anomaly("DUPLICATE_EXACT", 0.01, Products.recent),
+    Anomaly("DUPLICATE_EXACT", 0.01, Products.duplicate),
     Anomaly(
         "BAD_PRICE", 0.005, lambda s: s.damaged(PRICE, s.rng.choice(("-12.50", "0", "", "abc")))
     ),
@@ -86,7 +90,7 @@ def write_products(landing: Path, seed: int, drop: Drop, world: World) -> Writte
     relative = f"products/products_{drop.tag}.csv"
     n_valid = len(world.product_drops[drop.index])
     counts = anomaly_counts(ANOMALIES, n_valid, has_history=not drop.is_initial)
-    source = Products(file_rng(seed, relative), world, drop, counts["CONFLICTING_VERSION"])
+    source = Products(file_rng(seed, relative), world, drop, counts)
     return write_source_file(
         landing,
         relative,
