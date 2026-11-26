@@ -44,9 +44,17 @@ jobs:
           distribution: temurin
           java-version: "17"
       - run: pip install -r requirements-dev.txt -e .
-      - run: pytest -p no:cacheprovider --junitxml=reports/junit.xml
+      - run: >-
+          pytest -p no:cacheprovider --junitxml=reports/junit.xml
+          --cov --cov-report=term --cov-report=xml:reports/coverage.xml
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f .coverage ]; then
+            { echo '### Couverture (lignes et branches)'; echo '```'; coverage report --skip-covered; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: junit
-          path: reports/junit.xml
+          name: test-reports
+          path: reports/
