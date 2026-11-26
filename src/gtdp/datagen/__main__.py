@@ -1,4 +1,4 @@
-"""Command line: generate, verify."""
+"""Command line: generate, verify, replay-sensors."""
 
 import argparse
 import sys
@@ -8,6 +8,7 @@ from pathlib import Path
 
 from gtdp.datagen.generate import generate
 from gtdp.datagen.model import PROFILES
+from gtdp.datagen.replay import replay
 from gtdp.datagen.verify import Report, verify
 
 
@@ -24,6 +25,11 @@ def _parser() -> argparse.ArgumentParser:
     check = commands.add_parser("verify", help="recount every anomaly and compare to manifests")
     check.add_argument("--path", type=Path, required=True, help="data/generated/<profile>")
 
+    rep = commands.add_parser("replay-sensors", help="publish one sensor file per interval")
+    rep.add_argument("--src", type=Path, required=True)
+    rep.add_argument("--dst", required=True, help="local directory or hdfs:///path")
+    rep.add_argument("--interval", type=float, default=5.0)
+    rep.add_argument("--limit", type=int, help="replay only the first N files")
     return parser
 
 
@@ -49,11 +55,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "generate":
         files = generate(PROFILES[args.profile], args.seed, args.out, args.kit)
         summary = f"{len(files)} files, {sum(f.rows for f in files)} rows"
-    else:
+    elif args.command == "verify":
         report = verify(args.path)
         _print_report(report)
         status = 1 if report.problems else 0
         summary = f"{len(report.problems)} problems" if status else "OK"
+    else:
+        published = replay(args.src, args.dst, args.interval, args.limit)
+        summary = f"published {len(published)} files to {args.dst}"
     print(f"{summary} ({time.monotonic() - started:.1f} s)")
     return status
 
