@@ -15,7 +15,7 @@ from gtdp.schemas import (
     SILVER_WEBLOGS,
 )
 
-from .silver_lake import J1, J2, customer, order, reject, request, versions
+from .silver_lake import J1, J2, customer, frame, order, reject, request, versions
 
 pytestmark = pytest.mark.slow
 
@@ -68,7 +68,7 @@ def star(spark):
 @pytest.fixture
 def catalog(spark):
     def build(*rows):
-        return dimensions.products(spark.createDataFrame(list(rows), SILVER_PRODUCTS_SCD2))
+        return dimensions.products(frame(spark, SILVER_PRODUCTS_SCD2, list(rows)))
 
     return build
 
@@ -76,7 +76,7 @@ def catalog(spark):
 @pytest.fixture
 def customers(spark):
     def build(*rows):
-        return dimensions.customers(spark.createDataFrame(list(rows), SILVER_CUSTOMERS))
+        return dimensions.customers(frame(spark, SILVER_CUSTOMERS, list(rows)))
 
     return build
 
@@ -84,7 +84,7 @@ def customers(spark):
 @pytest.fixture
 def web(spark):
     def build(*rows):
-        return facts.web_events(spark.createDataFrame(list(rows), SILVER_WEBLOGS))
+        return facts.web_events(frame(spark, SILVER_WEBLOGS, list(rows)))
 
     return build
 
@@ -272,22 +272,24 @@ def test_the_funnel_counts_served_views_carts_and_purchases_per_device(web):
 
 
 def test_data_quality_counts_rejects_per_code_and_orders_before_signup(spark, customers):
-    rejects = spark.createDataFrame(
+    rejects = frame(
+        spark,
+        SILVER_REJECTS,
         [
             reject("orders", J1, "BAD_PRICE"),
             reject("orders", J1, "BAD_QUANTITY", "BAD_PRICE"),
             reject("orders", J2, "MALFORMED_ROW"),
             reject("customers", J1, "MISSING_KEY"),
         ],
-        SILVER_REJECTS,
     )
-    orders = spark.createDataFrame(
+    orders = frame(
+        spark,
+        SILVER_ORDERS,
         [
             order("T1", "2025-05-31T23:59:59"),
             order("T2", "2025-06-01T00:00:00"),
             order("T3", "2025-12-31T10:00:00", day=J2),
         ],
-        SILVER_ORDERS,
     )
     people = customers(customer("C1", signup="2025-06-01"))
 
