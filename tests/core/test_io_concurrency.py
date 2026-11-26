@@ -22,6 +22,7 @@ from gtdp.io import (
     path_exists,
     read_table,
     replace_table,
+    table_lock,
     write_partitions,
 )
 
@@ -188,6 +189,21 @@ def test_drop_partitions_deletes_the_named_partitions_that_exist(spark, orders, 
     assert list_partition_values(spark, path, INGESTION_DATE) == ["2026-01-01"]
     (tmp_path / "_orders.lock").write_text("{}")
     assert drop_partitions(spark, path, {INGESTION_DATE: [JAN_2]}) == []
+
+
+def test_a_job_holding_the_table_lock_keeps_writers_out_until_it_releases_it(
+    spark, orders, tmp_path
+):
+    path, replay = orders
+
+    with table_lock(spark, path):
+        with pytest.raises(TableLockedError):
+            write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
+        assert (tmp_path / "_orders.lock").exists()
+    write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
+
+    assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
+    assert sorted(os.listdir(tmp_path)) == ["orders"]
 
 
 def test_a_reader_leaves_a_locked_swap_to_its_writer(spark, tmp_path):
