@@ -4,6 +4,7 @@ import json
 import os
 import time
 from dataclasses import fields, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from pyspark.errors import StreamingQueryException
@@ -58,17 +59,22 @@ def event(
     )
 
 
+def file_name(index: int) -> str:
+    return f"sensors_{datetime(2026, 1, 1) + timedelta(seconds=5 * index):%Y%m%dT%H%M%S}.jsonl"
+
+
 def drop_files(paths: SensorPaths, files: list[list[str]], first: int = 0) -> None:
     """Write each list of lines as one sensor file, each file one second newer than the last.
 
-    The file source reads new files oldest first, so with one file per micro-batch, file ``k``
-    is micro-batch ``k``.
+    File ``k`` is named after the 5-second interval ``k`` of 2026-01-01, as the contract names
+    them. The file source reads new files oldest first, so with one file per micro-batch, file
+    ``k`` is micro-batch ``k``.
     """
     incoming = local_path(paths.incoming)
     incoming.mkdir(parents=True, exist_ok=True)
     origin = time.time() - 3600
     for index, lines in enumerate(files, start=first):
-        path = incoming / f"sensors_{index:04d}.jsonl"
+        path = incoming / file_name(index)
         path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         os.utime(path, (origin + index, origin + index))
 

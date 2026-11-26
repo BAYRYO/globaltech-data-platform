@@ -40,7 +40,8 @@ from gtdp.streaming.sensors import (
 
 logger = logging.getLogger(__name__)
 
-FILE_GLOB = "sensors_*.jsonl"
+FILE_PATTERN = "sensors_" + "[0-9]" * 8 + "T" + "[0-9]" * 6 + ".jsonl"
+"""Files the stream reads in ``incoming``: ``sensors_<yyyyMMdd>T<HHmmss>.jsonl`` (data contract)."""
 AGGREGATES, ALERTS, REJECTS = "aggregates", "alerts", "rejects"
 SCHEMAS = {AGGREGATES: AGGREGATES_SCHEMA, ALERTS: ALERTS_SCHEMA, REJECTS: REJECTS_SCHEMA}
 _SHUFFLE_PARTITIONS = "spark.sql.shuffle.partitions"
@@ -109,10 +110,16 @@ def start_queries(
     written: Written,
     trigger: Mapping[str, Any],
 ) -> dict[str, StreamingQuery]:
-    """Start the aggregates, alerts and rejects queries; ``trigger`` goes to ``writeStream``."""
+    """Start the aggregates, alerts and rejects queries; ``trigger`` goes to ``writeStream``.
+
+    The source lists the ``incoming`` directory and keeps the names that match ``FILE_PATTERN``.
+    A pattern in the path itself would be expanded to one path per file, which Spark lists with
+    one task per file in every micro-batch of every query.
+    """
     lines = (
         spark.readStream.option("maxFilesPerTrigger", settings.max_files_per_trigger)
-        .text(f"{paths.incoming}/{FILE_GLOB}")
+        .option("pathGlobFilter", FILE_PATTERN)
+        .text(paths.incoming)
         .select(F.col("value").alias("raw_line"), F.input_file_name().alias("source_file"))
     )
     parsed = parse(lines, settings.future_tolerance_s)

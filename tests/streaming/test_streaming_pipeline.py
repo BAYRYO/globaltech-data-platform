@@ -6,7 +6,7 @@ import pytest
 from pyspark.errors import StreamingQueryException
 from pyspark.sql import functions as F
 from pyspark.sql.types import TimestampType
-from stream_helpers import drop_files, event, lake, run_stream
+from stream_helpers import drop_files, event, file_name, lake, run_stream
 
 from gtdp.io import read_table
 from gtdp.streaming import stream
@@ -149,7 +149,7 @@ def test_unreadable_lines_and_null_values_go_to_rejects_with_their_reason(
         "MISSING_FIELD": 1,
     }
     assert {row.raw_line for row in rejected} >= {"not json", ""}
-    assert {row.source_file.rsplit("/", 1)[-1] for row in rejected} == {"sensors_0000.jsonl"}
+    assert {row.source_file.rsplit("/", 1)[-1] for row in rejected} == {file_name(0)}
     assert {row.batch_id for row in rejected} == {0}
     assert metrics[AGGREGATES]["input_rows"] == 15
     assert metrics[REJECTS]["rows_written"] == 5
