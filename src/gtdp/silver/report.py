@@ -7,7 +7,8 @@
    disposition table, the count in the audit row of the latest successful silver run of that day,
    and the count that the published tables show (rejects per reason, clean rows of a partitioned
    table). ``rows_in`` compares the manifest's rows with the bronze records the run counted.
-   A measure the manifest does not predict, such as ``flagged.FUTURE_SIGNUP``, is ``info``.
+   A measure the manifest does not predict, such as ``flagged.FUTURE_SIGNUP``, is ``info``; a
+   landed day that no silver run covered yet is ``no run``.
 2. Rows and content checksum of each partition of the silver tables (of the whole table when it
    has no partition), the rejects' ``_run_id`` aside: a replay that rewrites the same rows keeps
    the same ``content_sum``.
@@ -88,6 +89,8 @@ def _line(
 ) -> tuple:
     if manifest is None:
         status = "info"
+    elif audit is None:
+        status = "no run"
     elif audit == manifest and table in (None, audit):
         status = "ok"
     else:
@@ -219,7 +222,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             " `table` long, status string",
         ).show(1000, truncate=False)
         mismatches = [line for line in lines if line[-1] == "MISMATCH"]
-        print(f"{len(lines)} measures compared, {len(mismatches)} mismatches")
+        not_run = sorted({(line[0], line[1]) for line in lines if line[-1] == "no run"})
+        print(f"{len(lines)} measures, {len(mismatches)} mismatches, not run yet: {not_run}")
         contents(spark, cfg).show(100, truncate=False)
         runs(spark, cfg).show(100, truncate=False)
         for frame in price_history(spark, cfg):
