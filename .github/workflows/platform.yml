@@ -1,0 +1,86 @@
+name: Platform
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: platform-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (hadolint, compose)
+    runs-on: ubuntu-24.04
+    outputs:
+      cluster: ${{ steps.changes.outputs.cluster }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.12.0 hadolint - < docker/Dockerfile
+      - name: docker compose config
+        run: docker compose config -q
+      - name: Did the cluster change?
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          cluster=false
+          if [ "$EVENT" = workflow_dispatch ]; then
+            cluster=true
+          elif [ "$EVENT" = pull_request ] &&
+            git diff --name-only "origin/$BASE_REF...HEAD" |
+            grep -qE '^(docker/|docker-compose\.yml$|scripts/cluster/|\.github/workflows/platform\.yml$)'; then
+            cluster=true
+          fi
+          echo "cluster=$cluster" | tee -a "$GITHUB_OUTPUT"
+
+  cluster-smoke:
+    name: Cluster smoke (HDFS, YARN, Spark, MapReduce)
+    needs: lint
+    if: needs.lint.outputs.cluster == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # Smaller containers than the 2560 MB default (docs/platform.md, "Budget mémoire").
+      YARN_NM_MEMORY_MB: "2048"
+      GTDP_SPARK_SUBMIT_OPTS: --conf spark.executor.memory=512m --conf spark.driver.memory=512m
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          tags: gtdp/hadoop-spark:3.3.6-3.5.3
+          load: true
+          cache-from: type=gha,scope=hadoop-spark
+          cache-to: type=gha,mode=max,scope=hadoop-spark
+      - name: Start the cluster
+        run: scripts/cluster/up.sh
+      - name: init-hdfs.sh twice, the second run changes nothing
+        run: |
+          scripts/cluster/init-hdfs.sh
+          scripts/cluster/smoke/hdfs-state.sh > "$RUNNER_TEMP/state-1"
+          scripts/cluster/init-hdfs.sh
+          scripts/cluster/smoke/hdfs-state.sh > "$RUNNER_TEMP/state-2"
+          diff "$RUNNER_TEMP/state-1" "$RUNNER_TEMP/state-2"
+      - name: Spark, MapReduce and Hadoop Streaming on YARN
+        run: scripts/cluster/smoke/run.sh
+      - name: Status
+        run: scripts/cluster/status.sh
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+      - name: Tear down
+        if: always()
+        run: scripts/cluster/reset.sh
