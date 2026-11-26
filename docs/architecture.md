@@ -152,9 +152,9 @@ Un même calcul, deux moteurs, mêmes entrées et mêmes règles :
 | Élément | Définition |
 | --- | --- |
 | Entrée | fichiers CSV de commandes en landing (J1, ou J1 à J3), lus bruts par les deux moteurs |
-| Jointure pays | `customer_id` → pays par le référentiel clients : cache distribué (`-files`) et jointure côté map en Hadoop Streaming, jointure diffusée en Spark |
+| Jointure pays | `customer_id` → pays par le référentiel clients : cache distribué (`-files`) et jointure côté map en Hadoop Streaming, jointure diffusée en Spark ; un client sans région (anomalie `MISSING_REGION`, 0,99 % des lignes valides) est compté dans le pays `UNKNOWN` par les deux moteurs, comme en silver |
 | Mesure | montant facturé `quantity × unit_price_eur × (1 − discount_pct)` des lignes `COMPLETED` (pas de SCD2, impossible dans un mapper sans état) |
-| Lignes invalides | compteurs par motif : nombre de champs différent de 8 ou 9, quantité ou prix invalide, horodatage invalide, client vide ou inconnu ; compteurs Hadoop (`reporter:counter:`) contre accumulateurs ou agrégats Spark |
+| Lignes invalides | compteurs par motif : nombre de champs différent de 8 ou 9 (le contrat garantit qu'une ligne malformée n'a jamais 8 ni 9 champs), quantité ou prix invalide, horodatage invalide, client vide ou inconnu ; compteurs Hadoop (`reporter:counter:`) contre accumulateurs ou agrégats Spark |
 | Comparaison | durée (application YARN), lignes lues (`Map input records` contre métriques d'entrée Spark), lignes de code, résultats identiques au centime |
 
 ## Banc de performance (Lot 7)
@@ -190,6 +190,7 @@ Réplication 3 contre erasure coding : voir [ADR-0006](adr/0006-topologie-hdfs.m
 src/gtdp/
 ├── config.py        configuration TOML + surcharges d'environnement
 ├── log.py           journalisation structurée (JSON)
+├── io.py            écritures idempotentes et lectures tolérantes (write_partitions, replace_table, read_table)
 ├── spark.py         construction de la SparkSession
 ├── audit.py         table d'audit
 ├── schemas.py       schémas explicites des sources
