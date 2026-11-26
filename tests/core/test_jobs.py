@@ -1,8 +1,10 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import zipfile
 from dataclasses import fields
 from datetime import date
@@ -173,16 +175,27 @@ def test_smoke_job_runs_from_the_zip_and_writes_its_audit_row(spark, cluster_lik
 
 
 PROBE = """
+import faulthandler
+import logging
+import signal
 import sys
 
 from gtdp.audit import Layer
 from gtdp.jobs.registry import job
+
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 
 @job("effective-conf", Layer.PERF, "store the effective Spark properties in the audit row")
 def effective_conf(ctx):
     for key in ("spark.sql.shuffle.partitions", "spark.sql.adaptive.enabled"):
         ctx.run.metrics[key] = ctx.spark.conf.get(key)
+
+
+@job("blocked", Layer.STREAMING, "wait inside one Spark action that runs for days")
+def blocked(ctx):
+    logging.getLogger("probe").info("blocking")
+    ctx.spark.range(0, 10**15, 1, 1).selectExpr("sum(id)").collect()
 
 
 # Imported after the @job functions: run.py lists the jobs registered when it is imported.
@@ -234,3 +247,56 @@ def test_spark_submit_properties_win_over_the_configuration(spark, cluster_like_
         "value": "UTC",
         "origin": "gtdp",
     }
+
+
+def test_help_lists_the_exit_codes(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--help"])
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "130  stopped by SIGINT" in help_text
+    assert "143  stopped by SIGTERM" in help_text
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stop", [signal.SIGTERM, signal.SIGINT], ids=lambda s: s.name)
+def test_a_stop_signal_gives_a_stopped_row_and_exit_128_plus_the_signal(spark, tmp_path, stop):
+    (tmp_path / "probe.py").write_text(PROBE)
+    log = tmp_path / "driver.log"
+    # local[1]: the endless action holds the only executor thread until it is cancelled.
+    job = ["blocked", "--env", "local", "--set", "spark.master=local[1]", *lake_args(tmp_path)]
+    with log.open("w") as stderr:
+        driver = subprocess.Popen(
+            [sys.executable, str(tmp_path / "probe.py"), *job],
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+            env=clean_env(),
+        )
+    try:
+        deadline = time.monotonic() + 120
+        while '"message": "blocking"' not in log.read_text() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        time.sleep(2)  # the signal then arrives while the driver waits inside a py4j call
+
+        driver.send_signal(stop)
+
+        try:
+            returncode = driver.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            driver.send_signal(signal.SIGUSR1)  # the probe dumps its Python stacks
+            time.sleep(2)
+            pytest.fail(f"driver alive 60 s after {stop.name}:\n{log.read_text()[-6000:]}")
+    finally:
+        driver.kill()
+    output = log.read_text()
+    assert returncode == 128 + stop, output[-6000:]
+    [stopped] = [entry for entry in json_lines(output) if entry["message"] == "run stopped"]
+    assert stopped["signal"] == stop.name
+    assert raw_tracebacks(output) == []
+    [row] = spark.read.parquet(str(tmp_path / "lake" / "ops" / "audit")).collect()
+    assert (row.job_name, row.status, row.error_message) == (
+        "blocked",
+        "STOPPED",
+        f"stopped by {stop.name}",
+    )

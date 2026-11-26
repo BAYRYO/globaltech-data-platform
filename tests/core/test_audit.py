@@ -1,11 +1,16 @@
+import contextlib
 import json
 import logging
+import signal
+import threading
+import time
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
+from pyspark import InheritableThread
 
-from gtdp.audit import Counters, Layer, audit_path, audited_run
+from gtdp.audit import Counters, Layer, RunStopped, audit_path, audited_run
 from gtdp.log import configure_logging
 
 pytestmark = pytest.mark.slow
@@ -182,3 +187,31 @@ def test_a_counter_beyond_the_long_range_still_gives_one_row(spark, lake_config)
     [row] = audit_rows(spark, lake_config)
     assert (row.status, row.rows_in) == ("SUCCESS", None)
     assert "audit_error" in json.loads(row.metrics_json)
+
+
+def test_jobs_the_run_submits_after_the_stop_are_cancelled_until_its_row_is_written(
+    spark, lake_config
+):
+    """A streaming query, or the JVM still planning the stopped action, submits jobs late."""
+    stopped = threading.Event()
+
+    def submit_until_stopped():
+        while not stopped.is_set():
+            with contextlib.suppress(Exception):
+                # Minutes on each of the two executor threads of the test session.
+                spark.range(0, 10**12, 1, 2).selectExpr("sum(id)").collect()
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(RunStopped), audited_run(spark, lake_config, "sensors", Layer.STREAMING):
+            InheritableThread(target=submit_until_stopped, daemon=True).start()
+            time.sleep(1)
+            raise RunStopped(signal.SIGTERM)
+        elapsed = time.monotonic() - started
+    finally:
+        stopped.set()
+        spark.sparkContext.cancelAllJobs()
+
+    [row] = audit_rows(spark, lake_config)
+    assert row.status == "STOPPED"
+    assert elapsed < 10
