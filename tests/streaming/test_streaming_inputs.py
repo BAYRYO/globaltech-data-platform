@@ -1,9 +1,10 @@
-"""Inputs outside the contract: not strict JSON, not finite, dated after their emission."""
+"""Inputs outside the contract, and the alert a window carries."""
 
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from stream_helpers import drop_files, event, run_stream
 
 from gtdp.io import read_table
@@ -110,3 +111,29 @@ def test_an_event_within_the_tolerance_after_its_emission_is_kept(spark, stream_
 
     assert table(spark, paths, REJECTS).count() == 0
     assert windows(spark, paths)[(epoch("00:00:00"), "FR-LYON-M01-TEMP")][0] == 1
+
+
+@pytest.mark.parametrize(("files_per_trigger", "alert"), [(1, "E2"), (4, "E3")])
+def test_the_alert_carries_the_earliest_breach_of_the_micro_batch_where_its_window_breaches(
+    spark, stream_lake, files_per_trigger, alert
+):
+    """Documented behaviour: the alert follows the arrival order, not the smallest event_time.
+
+    E2 (00:01:40) arrives in file 1 and E3 (00:01:10), a 35 s late breach of the same window, in
+    file 2. Read one file per micro-batch, E2's micro-batch alerts first and E3 adds nothing.
+    Read together, E3 is the earliest breach of the micro-batch.
+    """
+    paths, settings = stream_lake
+    drop_files(
+        paths,
+        [
+            [event("E1", "00:00:05", 60.0)],
+            [event("E2", "00:01:40", 99.0)],
+            [event("E3", "00:01:10", 95.0), event("E4", "00:01:45", 61.0)],
+            [event("E5", "00:01:50", 62.0)],
+        ],
+    )
+
+    run_stream(spark, paths, replace(settings, max_files_per_trigger=files_per_trigger))
+
+    assert [r.event_id for r in table(spark, paths, ALERTS).collect()] == [alert]
