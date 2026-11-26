@@ -20,7 +20,8 @@ from gtdp.schemas import CORRUPT_RECORD, SOURCES, Format, Source
 
 # Spark's reading defaults, spelled out because changing them loses data: no whitespace trimming
 # (it would turn a key duplicate with a padded email into an exact duplicate) and one record per
-# physical line.
+# physical line. Quoting is off, so a value keeps its quotes and the fields joined by "," give the
+# line back: "" sets the quote to NUL, which ``scan`` refuses in a CSV file.
 CSV_OPTIONS = {
     "header": "true",
     "mode": "PERMISSIVE",
@@ -29,6 +30,8 @@ CSV_OPTIONS = {
     "ignoreTrailingWhiteSpace": "false",
     "multiLine": "false",
     "encoding": "UTF-8",
+    "quote": "",
+    "escape": "",
 }
 CHUNK_BYTES = 1 << 20
 
@@ -55,7 +58,7 @@ class Scan:
     data_lines: int
     """Physical lines, a last line without line break included, the CSV header excepted."""
     problem: str | None
-    """The first line that is not UTF-8."""
+    """The first line that is not UTF-8, or that holds a NUL byte in a CSV file."""
 
 
 def manifest_uri(landing: str, day: date) -> str:
@@ -118,7 +121,7 @@ def scan(spark: SparkSession, file: LandedFile) -> Scan:
     try:
         while chunk := bytes(stream.readNBytes(CHUNK_BYTES)):
             digest.update(chunk)
-            problem = problem or _text_problem(decoder, chunk, lines)
+            problem = problem or _text_problem(decoder, chunk, lines, is_csv)
             lines += chunk.count(b"\n")
             last = chunk[-1:]
     finally:
@@ -169,14 +172,17 @@ def read_records(spark: SparkSession, file: LandedFile, columns: tuple[str, ...]
     return spark.read.schema(schema).options(**CSV_OPTIONS).csv(file.uri)
 
 
-def _text_problem(decoder: Any, chunk: bytes, lines: int) -> str | None:
-    """Why ``chunk``, which starts after ``lines`` line breaks, is not UTF-8, if it is not."""
+def _text_problem(decoder: Any, chunk: bytes, lines: int, is_csv: bool) -> str | None:
+    """Why ``chunk``, which starts after ``lines`` line breaks, is not clean text, if it is not."""
     pending = len(decoder.getstate()[0])
     try:
         decoder.decode(chunk)
     except UnicodeDecodeError as exc:
         line = lines + chunk.count(b"\n", 0, max(exc.start - pending, 0)) + 1
         return f"not UTF-8 (line {line})"
+    if is_csv and (offset := chunk.find(b"\x00")) >= 0:
+        line = lines + chunk.count(b"\n", 0, offset) + 1
+        return f"NUL byte, which the CSV reader takes for a quote (line {line})"
     return None
 
 

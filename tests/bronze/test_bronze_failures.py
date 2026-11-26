@@ -95,8 +95,9 @@ def test_a_file_whose_bytes_differ_from_its_manifest_sha256_fails_before_any_wri
     ("line", "problem"),
     [
         ("C900001,Hélène Müller".encode("latin-1"), "not UTF-8 (line 3)"),
+        (b"C900001,nul\x00char", "NUL byte, which the CSV reader takes for a quote (line 3)"),
     ],
-    ids=["latin-1"],
+    ids=["latin-1", "nul-byte"],
 )
 def test_a_file_that_the_readers_would_alter_fails_before_any_write(lake, line, problem):
     manifest = lake.land(J2)
