@@ -29,6 +29,9 @@ make lint        # ruff
 Développement local sans Docker : Python 3.11, Java 11 ou 17, puis
 `pip install -r requirements-dev.txt && pip install -e .` et `pytest`.
 
+Couverture : `scripts/test.sh --cov` (ou `pytest --cov`) affiche la couverture des lignes et des
+branches du paquet `gtdp` ; la CI la publie dans le résumé du job de tests et joint `coverage.xml`.
+
 ## Règles de code
 
 - Transformations Spark = fonctions pures `DataFrame -> DataFrame` dans `src/gtdp/<couche>/`.

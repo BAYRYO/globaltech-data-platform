@@ -32,3 +32,13 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "PL", "RUF"]
 ignore = ["PLR0913", "PLR2004"]
+
+[tool.coverage.run]
+source = ["gtdp"]
+branch = true
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = true
+skip_empty = true
