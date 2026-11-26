@@ -1,9 +1,10 @@
 """Transformations of the sensor stream, from raw JSON lines to gold aggregates and alerts.
 
-Every function maps streaming DataFrames to streaming DataFrames (they also work on static ones),
-with the semantics of ADR-0008: a 2-minute watermark on ``event_time``, deduplication by
-``event_id`` within the watermark, 1-minute tumbling windows written once in append mode, and
-alerts emitted in the micro-batch where the event arrives.
+The functions map streaming DataFrames to streaming DataFrames (they also work on static ones),
+except ``first_alerts``, applied to each micro-batch. The semantics are those of ADR-0008: a
+2-minute watermark on ``event_time``, deduplication by ``event_id`` within the watermark, 1-minute
+tumbling windows written once in append mode, and alerts emitted in the micro-batch where the
+first breach of their window arrives.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Mapping
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DoubleType,
@@ -172,12 +173,10 @@ def window_aggregates(events: DataFrame) -> DataFrame:
     )
 
 
-def threshold_alerts(events: DataFrame, thresholds: DataFrame) -> DataFrame:
-    """One alert per sensor and 1-minute window: its first event beyond a threshold.
+def threshold_breaches(events: DataFrame, thresholds: DataFrame) -> DataFrame:
+    """Every event beyond a threshold, as a candidate alert of its sensor and 1-minute window.
 
-    The alert leaves in the micro-batch of that event, without waiting for the window to close.
-    ``alert_id`` hashes the sensor and the window start, so a replayed batch rewrites the same ids.
-    When several breaches of one window arrive in the same micro-batch, any one of them is kept.
+    ``alert_id`` hashes the sensor and the window start: the same in every run and every replay.
     """
     window = F.window("event_time", WINDOW_DURATION)
     crossed = F.coalesce(
@@ -203,7 +202,22 @@ def threshold_alerts(events: DataFrame, thresholds: DataFrame) -> DataFrame:
             "event_time",
             "event_id",
         )
-        .dropDuplicatesWithinWatermark(["alert_id"])
+    )
+
+
+def first_alerts(breaches: DataFrame, alerted: DataFrame) -> DataFrame:
+    """The earliest breach of each sensor and window of ``breaches`` not in ``alerted`` yet.
+
+    Applied to each micro-batch, with ``alerted`` the alerts of the earlier batches: a window
+    alerts in the micro-batch of its first breach, without waiting for its end, and never again.
+    Among breaches of one window that arrive together, the earliest ``event_time`` wins.
+    """
+    earliest = Window.partitionBy("alert_id").orderBy("event_time", "event_id")
+    return (
+        breaches.withColumn("rank", F.row_number().over(earliest))
+        .where(F.col("rank") == 1)
+        .drop("rank")
+        .join(alerted.select("alert_id"), "alert_id", "left_anti")
     )
 
 

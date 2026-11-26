@@ -3,7 +3,8 @@
 The recount reads the files with Python alone and applies the contract's rules: an unreadable
 line or a null value is rejected, an ``event_id`` counts once, an event more than 2 minutes older
 than its file is beyond the watermark, a window is final once the last event time minus 2 minutes
-passes its end, and an alert is a (sensor, minute) with a value beyond the contract's limits.
+passes its end, and an alert is the earliest event of a (sensor, minute) beyond the contract's
+limits.
 """
 
 import hashlib
@@ -28,7 +29,7 @@ WATERMARK = timedelta(minutes=2)
 
 
 def recount(day: Path) -> dict:
-    seen, values, alerts, beyond = set(), defaultdict(list), set(), 0
+    seen, values, alerts, beyond = set(), defaultdict(list), {}, 0
     last = datetime.min.replace(tzinfo=UTC)
     for path in sorted(day.glob("sensors_*.jsonl")):
         start = datetime.strptime(path.stem, "sensors_%Y%m%dT%H%M%S").replace(tzinfo=UTC)
@@ -51,14 +52,15 @@ def recount(day: Path) -> dict:
             values[(minute, event["sensor_id"])].append(event["value"])
             low, high = LIMITS[event["metric"]]
             if (low is not None and event["value"] < low) or event["value"] > high:
-                alerts.add((event["sensor_id"], minute))
+                alerts.setdefault((event["sensor_id"], minute), []).append((at, event["event_id"]))
     final = (last - WATERMARK).timestamp()
     windows = {
         key: (len(found), min(found), max(found), sum(found) / len(found))
         for key, found in values.items()
         if key[0] + 60 <= final
     }
-    return {"windows": windows, "alerts": alerts, "beyond_watermark": beyond}
+    first_breach = {key: min(found)[1] for key, found in alerts.items()}
+    return {"windows": windows, "alerts": first_breach, "beyond_watermark": beyond}
 
 
 @pytest.fixture(scope="module")
@@ -118,13 +120,13 @@ def test_final_windows_match_the_recount(spark, ci_day_stream):
         assert found[key].avg_value == pytest.approx(mean, abs=1e-9)
 
 
-def test_spikes_raise_one_alert_per_sensor_and_minute(spark, ci_day_stream):
+def test_spikes_raise_one_alert_per_sensor_and_minute_on_its_first_breach(spark, ci_day_stream):
     paths, _, _, _, expected = ci_day_stream
 
     alerts = read_table(spark, paths.tables[ALERTS], ALERTS_SCHEMA).collect()
 
     assert len(alerts) == len(expected["alerts"]) == 10  # 5 spiking sensors x 2 minutes
-    assert {row.alert_id for row in alerts} == {
-        hashlib.sha256(f"{sensor}|{minute}".encode()).hexdigest()
-        for sensor, minute in expected["alerts"]
+    assert {(row.alert_id, row.event_id) for row in alerts} == {
+        (hashlib.sha256(f"{sensor}|{minute}".encode()).hexdigest(), first)
+        for (sensor, minute), first in expected["alerts"].items()
     }

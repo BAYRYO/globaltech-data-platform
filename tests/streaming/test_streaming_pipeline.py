@@ -193,6 +193,25 @@ def test_one_value_beyond_its_threshold_raises_exactly_one_alert(spark, stream_l
     assert table(spark, paths, ALERTS).schema == ALERTS_SCHEMA
 
 
+def test_the_alert_of_a_window_is_its_earliest_breach_and_comes_once(spark, stream_lake):
+    paths, settings = stream_lake
+    drop_files(
+        paths,
+        [
+            [event("E1", "00:00:05", 60.0)],
+            [event("E3", "00:00:40", 99.0), event("E2", "00:00:20", 90.0)],
+            [event("E4", "00:00:10", 95.0), event("E5", "00:00:50", 97.0)],
+        ],
+    )
+
+    run_stream(spark, paths, settings)
+
+    alerts = readable(table(spark, paths, ALERTS)).collect()
+    assert [(a.event_id, a.event_time, a.value, a.batch_id) for a in alerts] == [
+        ("E2", "00:00:20", 90.0, 1)
+    ]
+
+
 def test_alerts_once_per_sensor_and_window_in_either_direction(spark, stream_lake):
     paths, settings = stream_lake
     pressure = {"metric": "pressure"}
