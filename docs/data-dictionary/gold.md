@@ -39,9 +39,21 @@ Chaque exécution vérifie, dans cet ordre :
 3. avant les indicateurs : clé unique de chaque table de l'étoile et aucun orphelin sur les
    références obligatoires, sur toutes les partitions.
 
+Une commande qui échoue au contrôle 1 est comptée dans `metrics_json.build_violations`
+(`no_version`, `several_versions`, `unknown_customer`) de la ligne d'audit, écrite aussi quand
+l'exécution échoue, puis l'exécution s'arrête sans écrire `fact_sales`. La garder sans prix
+applicable fausserait le chiffre d'affaires sans le signaler, et l'écarter ferait perdre une
+commande : gold préfère s'arrêter et nommer l'écart. Le rapport recalcule ces trois comptes
+depuis silver à chaque vérification (lignes `orders with ...`).
+
 Aucun membre `UNKNOWN` n'est nécessaire : silver ne publie une commande que si son client a une
-ligne silver et son produit une version SCD2 valide à sa date, et le contrôle 1 le confirme. Le pays `UNKNOWN` de `dim_customer` est celui
-d'un client sans région (drapeau `MISSING_REGION`), pas un membre technique.
+ligne silver et son produit une version SCD2 valide à sa date, et le contrôle 1 le confirme. Le
+pays `UNKNOWN` de `dim_customer` est celui d'un client sans région (drapeau `MISSING_REGION`), pas
+un membre technique.
+
+Le rapport (`src/gtdp/gold/report.py`) montre aussi que le total de `revenue_eur` et de
+`invoiced_amount_eur` de `fact_sales` est égal au total recalculé depuis silver, et que
+`dim_date` couvre toutes les dates de commande sans trou.
 
 ## `fact_sales`
 
@@ -154,7 +166,9 @@ Les produits de rang 1 à `top_n` (`[gold] top_n`, 5 par défaut) par chiffre d'
 chaque pays, sur tout l'historique. `rank` est un `dense_rank` sur une fenêtre partitionnée par
 pays et ordonnée par chiffre d'affaires décroissant : des produits à égalité partagent un rang et
 sont tous gardés, un pays peut donc lister plus de `top_n` produits, et les rangs se suivent sans
-trou. Le résultat ne dépend que des montants (décimaux exacts), jamais de l'ordre de lecture.
+trou. Le résultat ne dépend que des montants (décimaux exacts), jamais de l'ordre de lecture. Un
+test vérifie la règle d'égalité pour `top_n` = 1, 2 et 3, et le rapport remet à côté de
+l'indicateur le top `top_n` de FR recalculé par un `groupBy` et un `orderBy` simples.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -167,20 +181,22 @@ trou. Le résultat ne dépend que des montants (décimaux exacts), jamais de l'o
 
 ### `kpi_revenue_moving_avg`
 
-Chiffre d'affaires quotidien par pays et sa moyenne sur 7 jours, le jour compris (fenêtre
-`rowsBetween(-6, 0)` partitionnée par pays, ordonnée par date). Le calendrier est complet : tous
-les jours de la première à la dernière date de commande, pour chaque pays ayant des commandes. Un
-jour sans vente vaut 0 : sans cette ligne, les 7 lignes d'une fenêtre couvriraient plus de
-7 jours et la moyenne serait surestimée. Les 6 premiers jours du calendrier ont moins de 7 jours
-derrière eux : leur moyenne porte sur `window_days` jours (1 à 6).
+Chiffre d'affaires quotidien par pays et sa moyenne sur les `N` derniers jours, le jour compris,
+avec `N = [gold] moving_average_days` (7 par défaut) : fenêtre `rowsBetween(-(N - 1), 0)`
+partitionnée par pays et ordonnée par date, sans boucle sur les pays. Le calendrier est complet :
+tous les jours de la première à la dernière date de commande, pour chaque pays ayant des
+commandes. Un jour sans vente vaut 0 : sans cette ligne, les `N` lignes d'une fenêtre
+couvriraient plus de `N` jours et la moyenne serait surestimée. Les `N - 1` premiers jours du
+calendrier ont moins de `N` jours derrière eux : leur moyenne porte sur `window_days` jours (1 à
+6 pour `N = 7`). Un test compare le résultat à un calcul en Python simple, pour `N` = 1, 3 et 7.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `order_date` | date | Jour du calendrier. | `2025-01-03` |
 | `country` | string | Pays. | `FR` |
-| `revenue_eur` | decimal(22,2) | Chiffre d'affaires du jour, 0 sans commande. | `5155128.61` |
-| `revenue_ma7_eur` | decimal(23,2) | Moyenne de `revenue_eur` sur la fenêtre. | `5055677.62` |
-| `window_days` | bigint | Jours dans la fenêtre : 7, sauf les 6 premiers jours. | `3` |
+| `revenue_eur` | decimal(22,2) | Chiffre d'affaires `COMPLETED` du jour, 0 sans commande. | `5155128.61` |
+| `revenue_moving_avg_eur` | decimal(23,2) | Moyenne de `revenue_eur` sur la fenêtre, arrondie au centime. | `5055677.62` |
+| `window_days` | bigint | Jours dans la fenêtre : `N`, sauf les `N - 1` premiers jours. | `3` |
 
 ### `kpi_price_deviation`
 
@@ -199,51 +215,74 @@ médiane proche de 0,95.
 
 ### `kpi_cancel_return_rate`
 
+Part des lignes annulées et des lignes retournées, par date de commande, pays, canal et catégorie
+de la version appliquée, toutes lignes comptées quel que soit leur statut. Les comptes
+s'additionnent vers un grain plus large : un taux par pays et par jour vaut
+`somme(cancelled) / somme(lines)` sur les canaux et catégories du jour.
+
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `channel` | string | Canal. | `web` |
-| `category` | string | Catégorie de la version appliquée. | `Security` |
-| `lines` | bigint | Lignes de commande, tous statuts. | `96199` |
-| `cancelled`, `returned` | bigint | Lignes `CANCELLED`, `RETURNED`. | `2839`, `3006` |
-| `cancel_rate`, `return_rate` | double | `cancelled / lines`, `returned / lines`. | `0.0295`, `0.0312` |
+| `order_date` | date | Date de commande. | `2026-01-02` |
+| `country` | string | Pays du client. | `FR` |
+| `channel` | string | Canal. | `partner` |
+| `category` | string | Catégorie de la version appliquée. | `Lighting` |
+| `lines` | bigint | Lignes de commande, tous statuts. | `135` |
+| `cancelled`, `returned` | bigint | Lignes `CANCELLED`, `RETURNED`. | `4`, `3` |
+| `cancel_rate`, `return_rate` | double | `cancelled / lines`, `returned / lines`. | `0.0296`, `0.0222` |
 
 ### `kpi_avg_basket`
 
-Un panier est une transaction : le contrat n'a pas d'identifiant de panier qui regrouperait
-plusieurs lignes.
+Panier moyen des commandes `COMPLETED`, par date de commande, pays et segment du client. Un panier
+est une transaction : le contrat n'a pas d'identifiant de panier qui regrouperait plusieurs lignes.
+Pour un grain plus large (un pays par jour, par exemple), le panier moyen vaut
+`somme(revenue_eur) / somme(orders)`.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `country` | string | Pays du client. | `UNKNOWN` |
-| `segment` | string | Segment du client dans `dim_customer`. | `ENTERPRISE` |
-| `orders` | bigint | Commandes `COMPLETED`. | `2016` |
-| `avg_basket_eur` | decimal(13,2) | Moyenne de `revenue_eur`. | `4847.27` |
-| `avg_invoiced_eur` | decimal(13,2) | Moyenne de `invoiced_amount_eur`. | `4556.03` |
-| `avg_quantity` | double | Moyenne des quantités, arrondie à 2 décimales. | `6.47` |
+| `order_date` | date | Date de commande. | `2026-01-02` |
+| `country` | string | Pays du client. | `FR` |
+| `segment` | string | Segment du client dans `dim_customer`. | `SMB` |
+| `orders` | bigint | Commandes `COMPLETED`. | `528` |
+| `revenue_eur` | decimal(22,2) | Somme de `revenue_eur`. | `2390096.37` |
+| `avg_basket_eur` | decimal(13,2) | Moyenne de `revenue_eur` (prix catalogue applicable). | `4526.70` |
+| `avg_invoiced_eur` | decimal(13,2) | Moyenne de `invoiced_amount_eur` (prix facturé). | `4309.14` |
 
 ### `kpi_http_errors_hourly`
 
+Taux d'erreurs HTTP par heure des logs web : erreurs client (4xx) et erreurs serveur (5xx)
+rapportées à toutes les requêtes valides de l'heure. Le contrat n'injecte que des 404 et des 500.
+
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `event_hour` | timestamp | `event_ts` tronqué à l'heure. | `2025-07-22 18:00:00` |
-| `requests` | bigint | Requêtes de l'heure. | `9` |
-| `http_404`, `http_500` | bigint | Réponses 404, 500. | `0`, `0` |
-| `rate_404`, `rate_500` | double | Part des 404, des 500. | `0.0`, `0.0` |
+| `event_hour` | timestamp | `event_ts` tronqué à l'heure. | `2025-12-06 23:00:00` |
+| `requests` | bigint | Requêtes de l'heure. | `6` |
+| `http_4xx`, `http_5xx` | bigint | Réponses de 400 à 499, de 500 à 599. | `2`, `0` |
+| `rate_4xx`, `rate_5xx` | double | `http_4xx / requests`, `http_5xx / requests`. | `0.3333`, `0.0` |
 
 ### `kpi_conversion_funnel`
 
-Vues de produit, ajouts au panier et achats par appareil. Seules les requêtes servies comptent
-(`http_status` < 400) : une page produit en 404 ou un paiement en erreur 500 n'est pas une étape.
-Constat sur les données : le kit tire ses événements de façon uniforme entre les types, l'entonnoir
-est donc plat (rapports proches de 1), ce que l'indicateur montre tel quel.
+Entonnoir visite → produit vu → panier → commande, par appareil. Une visite est un client sur un
+appareil un jour donné : le contrat n'a pas d'identifiant de session. Seules les requêtes servies
+(`http_status` < 400) d'un client identifié comptent : une page produit en 404 ou un paiement en
+erreur 500 n'est pas une étape, et une requête anonyme ne se rattache à aucune visite. Une visite
+atteint une étape quand elle contient l'événement de cette étape et ceux de toutes les étapes
+précédentes (`view`, puis `cart`, puis `purchase`) : chaque étape ne garde que des visites de
+l'étape d'avant, les comptes ne croissent donc jamais le long de l'entonnoir (vérifié par un test
+et par le rapport). Constat sur les données : le kit tire ses événements indépendamment les uns
+des autres, une visite en contient rarement plus d'un, d'où des taux de panier et de commande très
+faibles, que l'indicateur montre tels quels.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `device` | string | Appareil. | `mobile` |
-| `views`, `carts`, `purchases` | bigint | Événements `view`, `cart`, `purchase` servis. | `8179`, `8179`, `7974` |
-| `view_to_cart` | double | `carts / views`. | `1.0` |
-| `cart_to_purchase` | double | `purchases / carts`. | `0.9749` |
-| `view_to_purchase` | double | `purchases / views`. | `0.9749` |
+| `device` | string | Appareil. | `tablet` |
+| `visits` | bigint | Visites (client, appareil, jour) avec au moins une requête servie. | `32055` |
+| `product_views` | bigint | Visites avec un `view`. | `8136` |
+| `carts` | bigint | Visites avec un `view` et un `cart`. | `40` |
+| `orders` | bigint | Visites avec un `view`, un `cart` et un `purchase`. | `1` |
+| `view_rate` | double | `product_views / visits`. | `0.2538` |
+| `cart_rate` | double | `carts / product_views`. | `0.0049` |
+| `order_rate` | double | `orders / carts`. | `0.025` |
+| `conversion_rate` | double | `orders / visits`. | `0.0000312` |
 
 ### `kpi_data_quality`
 
