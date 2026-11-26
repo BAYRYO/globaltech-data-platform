@@ -104,11 +104,18 @@ def test_a_stop_marker_ends_the_job_between_batches(spark, tmp_path):
     assert not marker.exists()
 
 
-def test_sigterm_to_the_driver_stops_the_job_with_a_stopped_audit_row(spark, tmp_path):
+def test_sigterm_to_the_driver_stops_the_job_with_a_stopped_audit_row_and_its_counts(
+    spark, tmp_path
+):
     job, root, log = start_running_job(tmp_path)
 
     job.send_signal(signal.SIGTERM)
     job.wait(timeout=120)
 
     assert job.returncode == 143, log.read_text()[-3000:]
-    assert audit_row(spark, root)["status"] == "STOPPED"
+    row = audit_row(spark, root)
+    assert row["status"] == "STOPPED"
+    # The three files fit in the first micro-batch, committed before the signal.
+    assert (row["rows_in"], row["rows_rejected"], row["rows_duplicated"]) == (LINES, 1, 1)
+    assert row["rows_out"] is not None
+    assert row["metrics"]["stop_reason"] == "signal SIGTERM"
