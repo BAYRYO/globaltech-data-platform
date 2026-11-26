@@ -1,4 +1,4 @@
-"""Write the three landing drops of one profile."""
+"""Write the three landing drops and the sensor day of one profile."""
 
 from pathlib import Path
 
@@ -7,6 +7,7 @@ from gtdp.datagen.engine import WrittenFile, write_manifest
 from gtdp.datagen.model import DROPS, GENERATOR_VERSION, Profile
 from gtdp.datagen.orders import OrdersHistory, write_orders
 from gtdp.datagen.products import write_products
+from gtdp.datagen.sensors import write_sensors
 from gtdp.datagen.weblogs import write_weblogs
 from gtdp.datagen.world import build_world, load_kit
 
@@ -34,4 +35,4 @@ def generate(profile: Profile, seed: int, out: Path, kit_dir: Path) -> list[Writ
         }
         write_manifest(landing, header, files)
         written += files
-    return written
+    return written + write_sensors(root, seed, profile)
