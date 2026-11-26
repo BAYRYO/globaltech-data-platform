@@ -24,6 +24,8 @@ def build_spark(
         "spark.sql.sources.partitionOverwriteMode": "dynamic",
         "spark.sql.session.timeZone": cfg.app.timezone,
         "spark.sql.parquet.compression.codec": "snappy",
+        # The console progress bar would interleave with the JSON log lines on stderr.
+        "spark.ui.showConsoleProgress": "false",
         **(extra_conf or {}),
     }
     builder = SparkSession.builder.appName(app_name)
