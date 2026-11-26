@@ -5,6 +5,7 @@ from pyspark.sql import functions as F
 
 from gtdp.bronze.landing import LandingError
 from gtdp.bronze.transform import ReconciliationError
+from gtdp.io import TableLockedError
 
 pytestmark = pytest.mark.slow
 
@@ -93,6 +94,20 @@ def test_a_day_without_its_manifest_is_not_ingested(lake):
         lake.run(J2)
 
     assert failed_row(lake).status == "FAILED"
+
+
+def test_a_table_locked_by_another_run_fails_the_run_at_once(lake):
+    lake.land(J2)
+    lock = lake.partition("orders", J2).parents[1] / "_orders.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text('{"run_id": "20261126T000000Z-other"}')
+
+    with pytest.raises(TableLockedError, match="20261126T000000Z-other"):
+        lake.run(J2, source="orders")
+
+    assert failed_row(lake).error_message.startswith("TableLockedError: ")
+    assert lock.exists()
+    assert not lake.partition("orders", J2).exists()
 
 
 def test_source_ingests_that_source_only(lake):

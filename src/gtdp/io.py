@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import time
 import uuid
-from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from datetime import UTC, date, datetime
 from typing import Any
 
+from py4j.protocol import Py4JJavaError
+from pyspark import SparkContext
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StructType
 
@@ -16,12 +21,22 @@ logger = logging.getLogger(__name__)
 
 # Partition column of landing, bronze and incremental silver: ingestion_date=YYYY-MM-DD.
 INGESTION_DATE = "ingestion_date"
+# Spark local property naming the audited run of the current thread, written into table locks.
+RUN_ID_PROPERTY = "gtdp.run_id"
+# Age in seconds from which a table lock or a staging directory counts as left by a dead run.
+STALE_AFTER_CONF = "spark.gtdp.io.staleAfterSeconds"
+STALE_AFTER_DEFAULT_S = 6 * 3600
+_FILE_EXISTS = "org.apache.hadoop.fs.FileAlreadyExistsException"
 
 PartitionValue = str | date
 
 
 class LaterPartitionError(RuntimeError):
     """The target already holds a partition later than the one a job is about to produce."""
+
+
+class TableLockedError(RuntimeError):
+    """Another run holds the lock of the table: it is writing the table right now."""
 
 
 def write_partitions(
@@ -31,7 +46,8 @@ def write_partitions(
 
     ``partitions`` maps each partition column, in directory order, to the values this run
     (re)produces, for example ``{"source": ["orders"], "ingestion_date": [date(2026, 1, 2)]}``.
-    ``df`` is written in full to a staging directory of its own, the hidden sibling
+    The run first takes the table's lock (``TableLockedError`` while another run holds it). ``df``
+    is written in full to a staging directory of its own, the hidden sibling
     ``_<name>.staging-<id>``. Only after that write succeeds is each named partition deleted and
     replaced by its staged copy, so a failed write leaves the table as it was. A named partition
     without rows becomes an empty directory holding a ``_SUCCESS`` marker: it still counts as
@@ -47,22 +63,23 @@ def write_partitions(
     ]
     fs, target = _filesystem(spark, path)
     staging = f"{target.getParent().toString()}/_{target.getName()}.staging-{uuid.uuid4().hex}"
-    try:
-        df.write.partitionBy(*partitions).parquet(staging)
-        staged = _partition_dirs(fs, _hadoop_path(spark, staging), len(partitions))
-        if stray := sorted(staged - set(named)):
-            raise ValueError(f"df has rows outside the partitions named for {path}: {stray}")
-        for directory in named:
-            source = _hadoop_path(spark, f"{staging}/{directory}")
-            if directory not in staged:
-                fs.mkdirs(source)
-                fs.create(_hadoop_path(spark, f"{staging}/{directory}/_SUCCESS")).close()
-            destination = _hadoop_path(spark, f"{path}/{directory}")
-            fs.delete(destination, True)
-            fs.mkdirs(destination.getParent())
-            _rename(fs, source, destination)
-    finally:
-        fs.delete(_hadoop_path(spark, staging), True)
+    with _locked(spark, fs, target):
+        try:
+            df.write.partitionBy(*partitions).parquet(staging)
+            staged = _partition_dirs(fs, _hadoop_path(spark, staging), len(partitions))
+            if stray := sorted(staged - set(named)):
+                raise ValueError(f"df has rows outside the partitions named for {path}: {stray}")
+            for directory in named:
+                source = _hadoop_path(spark, f"{staging}/{directory}")
+                if directory not in staged:
+                    fs.mkdirs(source)
+                    fs.create(_hadoop_path(spark, f"{staging}/{directory}/_SUCCESS")).close()
+                destination = _hadoop_path(spark, f"{path}/{directory}")
+                fs.delete(destination, True)
+                fs.mkdirs(destination.getParent())
+                _rename(fs, source, destination)
+        finally:
+            fs.delete(_hadoop_path(spark, staging), True)
     # A cached read of the table would keep serving the partitions that were just replaced.
     spark.catalog.refreshByPath(path)
 
@@ -70,22 +87,25 @@ def write_partitions(
 def replace_table(df: DataFrame, path: str) -> None:
     """Replace the whole table at ``path`` with ``df``, which may read ``path`` itself.
 
-    ``df`` is written in full to the hidden sibling ``_<name>.tmp``. Then the old table moves
-    aside to ``_<name>.old``, the new one moves into place, and the old one is deleted. If a crash
-    left the table missing, ``replace_table``, ``read_table`` and ``path_exists`` first put back the
-    latest complete table: ``_<name>.tmp`` when it holds ``_SUCCESS``, else ``_<name>.old``.
+    The run holds the table's lock throughout, as ``write_partitions`` does. ``df`` is written in
+    full to the hidden sibling ``_<name>.tmp``. Then the old table moves aside to ``_<name>.old``,
+    the new one moves into place, and the old one is deleted. If a crash left the table missing,
+    ``replace_table``, ``read_table`` and ``path_exists`` first put back the latest complete table:
+    ``_<name>.tmp`` when it holds ``_SUCCESS``, else ``_<name>.old``.
     """
     spark = df.sparkSession
-    fs, target = _recovered(spark, path)
-    staging, aside = _siblings(target)
-    fs.delete(aside, True)
-    df.write.mode("overwrite").parquet(staging.toString())
-    if not fs.exists(staging.suffix("/_SUCCESS")):
-        fs.create(staging.suffix("/_SUCCESS")).close()
-    if fs.exists(target):
-        _rename(fs, target, aside)
-    _rename(fs, staging, target)
-    fs.delete(aside, True)
+    fs, target = _filesystem(spark, path)
+    with _locked(spark, fs, target):
+        _recover(fs, target)
+        staging, aside = _siblings(target)
+        fs.delete(aside, True)
+        df.write.mode("overwrite").parquet(staging.toString())
+        if not fs.exists(staging.suffix("/_SUCCESS")):
+            fs.create(staging.suffix("/_SUCCESS")).close()
+        if fs.exists(target):
+            _rename(fs, target, aside)
+        _rename(fs, staging, target)
+        fs.delete(aside, True)
     spark.catalog.refreshByPath(path)
 
 
@@ -178,20 +198,138 @@ def _siblings(target: Any) -> tuple[Any, Any]:
 
 
 def _recovered(spark: SparkSession, path: str) -> tuple[Any, Any]:
-    """``_filesystem(spark, path)``, after putting back a table that a crash left missing."""
+    """``_filesystem(spark, path)``, after putting back a table that a crash left missing.
+
+    A table missing while a live run holds its lock is that run's swap in progress: left alone.
+    """
     fs, target = _filesystem(spark, path)
     if not fs.exists(target):
-        staging, aside = _siblings(target)
-        source = staging if fs.exists(staging.suffix("/_SUCCESS")) else aside
-        # A concurrent reader may win the rename: the table is back all the same.
-        if fs.exists(source) and fs.rename(source, target):
-            logger.warning("finished an interrupted replace_table: %s became %s", source, target)
+        age = _age_s(fs, _lock_path(target))
+        if age is None or age >= _stale_after_s(spark):
+            _recover(fs, target)
     return fs, target
 
 
+def _recover(fs: Any, target: Any) -> None:
+    """Put back the table ``target`` if a crash left it missing (see ``replace_table``)."""
+    if fs.exists(target):
+        return
+    staging, aside = _siblings(target)
+    source = staging if fs.exists(staging.suffix("/_SUCCESS")) else aside
+    if not fs.exists(source):
+        return
+    try:
+        _rename(fs, source, target)
+    except (FileExistsError, Py4JJavaError):
+        if not fs.exists(target):
+            raise
+        return  # A concurrent reader put the table back first.
+    logger.warning("finished an interrupted replace_table: %s became %s", source, target)
+
+
 def _rename(fs: Any, source: Any, destination: Any) -> None:
-    if not fs.rename(source, destination):
-        raise OSError(f"could not rename {source} to {destination}")
+    """Rename ``source`` to ``destination``; ``FileExistsError`` if ``destination`` exists.
+
+    ``FileSystem.rename`` moves a directory into an existing destination directory, which nests a
+    partition inside itself. ``FileContext.rename`` refuses instead, in one NameNode call on HDFS.
+    """
+    jvm = SparkContext._jvm
+    context = jvm.org.apache.hadoop.fs.FileContext.getFileContext(fs.getUri(), fs.getConf())
+    no_overwrite = SparkContext._gateway.new_array(jvm.org.apache.hadoop.fs.Options.Rename, 0)
+    try:
+        context.rename(fs.makeQualified(source), fs.makeQualified(destination), no_overwrite)
+    except Py4JJavaError as exc:
+        if exc.java_exception.getClass().getName() == _FILE_EXISTS:
+            raise FileExistsError(f"not renaming {source} onto {destination}: it exists") from None
+        raise
+
+
+def _lock_path(target: Any) -> Any:
+    """``_<name>.lock``, beside the table ``target``: ``replace_table`` moves the table itself."""
+    return target.getParent().suffix(f"/_{target.getName()}.lock")
+
+
+@contextmanager
+def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
+    """Hold the lock of the table ``target`` for the block.
+
+    The lock is a file created only if absent, which HDFS decides atomically. It holds the run id,
+    the application id and the time it was taken. A lock younger than ``STALE_AFTER_CONF`` seconds
+    belongs to a live run: ``TableLockedError`` at once, no wait. An older one was left by a run
+    that died: it is taken over with a warning.
+    """
+    lock, stale_after = _lock_path(target), _stale_after_s(spark)
+    holder = json.dumps(
+        {
+            "run_id": spark.sparkContext.getLocalProperty(RUN_ID_PROPERTY),
+            "application_id": spark.sparkContext.applicationId,
+            "locked_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "token": uuid.uuid4().hex,
+        }
+    )
+    if not _create(fs, lock, holder):
+        age = _age_s(fs, lock)
+        if age is not None and age < stale_after:
+            raise TableLockedError(_locked_message(fs, target, lock))
+        if age is not None:
+            logger.warning(
+                "taking over the lock of %s, %.0f s old: %s", target, age, _read(fs, lock)
+            )
+            fs.delete(lock, False)
+        if not _create(fs, lock, holder):
+            raise TableLockedError(_locked_message(fs, target, lock))
+    try:
+        yield
+    finally:
+        if _read(fs, lock) == holder:
+            fs.delete(lock, False)
+
+
+def _locked_message(fs: Any, target: Any, lock: Any) -> str:
+    return (
+        f"{target} is being written by another run, which holds {lock}: {_read(fs, lock)}. "
+        f"Wait for that run to end; if no run is active, delete {lock}"
+    )
+
+
+def _create(fs: Any, path: Any, text: str) -> bool:
+    """Create the file ``path`` holding ``text``; ``False`` if it already exists."""
+    try:
+        stream = fs.create(path, False)
+    except Py4JJavaError:
+        if fs.exists(path):
+            return False
+        raise
+    try:
+        stream.write(bytearray(text.encode()))
+    finally:
+        stream.close()
+    return True
+
+
+def _read(fs: Any, path: Any) -> str | None:
+    """The UTF-8 text of the small file ``path``, ``None`` if it cannot be read."""
+    try:
+        stream = fs.open(path)
+    except Py4JJavaError:
+        return None
+    try:
+        return bytes(stream.readAllBytes()).decode("utf-8", "replace")
+    finally:
+        stream.close()
+
+
+def _age_s(fs: Any, path: Any) -> float | None:
+    """Seconds since ``path`` was last modified, ``None`` if it does not exist."""
+    try:
+        modified_ms = fs.getFileStatus(path).getModificationTime()
+    except Py4JJavaError:
+        return None
+    return time.time() - modified_ms / 1000
+
+
+def _stale_after_s(spark: SparkSession) -> float:
+    return float(spark.conf.get(STALE_AFTER_CONF, str(STALE_AFTER_DEFAULT_S)))
 
 
 def _has_data_file(fs: Any, directory: Any) -> bool:

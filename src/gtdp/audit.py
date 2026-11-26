@@ -25,6 +25,7 @@ from pyspark.sql.types import (
 )
 
 from gtdp.config import AppConfig
+from gtdp.io import RUN_ID_PROPERTY
 from gtdp.log import bind
 
 logger = logging.getLogger(__name__)
@@ -129,8 +130,9 @@ def audited_run(
 ) -> Iterator[Run]:
     """Yield the ``Run`` of ``job``; on exit append its audit row, then re-raise any error.
 
-    The Spark jobs of the run carry the tag ``gtdp-run-<run_id>``. ``RunStopped`` cancels them
-    until the ``STOPPED`` row is written. A failure to write the audit row is logged and never
+    The Spark jobs of the run carry the tag ``gtdp-run-<run_id>``, and the thread the Spark local
+    property ``RUN_ID_PROPERTY``, which table locks record. ``RunStopped`` cancels the jobs until
+    the ``STOPPED`` row is written. A failure to write the audit row is logged and never
     replaces the job's own exception.
     """
     started_at = datetime.now(UTC)
@@ -140,6 +142,7 @@ def audited_run(
     with bind(run_id=run_id, job=job):
         logger.info("run started", extra={"layer": layer, "source": source})
         spark.sparkContext.addJobTag(tag)
+        spark.sparkContext.setLocalProperty(RUN_ID_PROPERTY, run_id)
         try:
             yield run
         except RunStopped as stop:
@@ -159,6 +162,7 @@ def _untag(spark: SparkSession, tag: str) -> None:
     """Stop tagging the jobs of this thread: the audit write must escape ``_cancelling``."""
     try:
         spark.sparkContext.removeJobTag(tag)
+        spark.sparkContext.setLocalProperty(RUN_ID_PROPERTY, None)
     except Exception:
         logger.exception("could not remove the job tag of the run")
 
