@@ -1,6 +1,8 @@
-FROM eclipse-temurin:11-jre AS jre
+# Base images pinned by digest (multi-arch index of the tag named before @), so a rebuild
+# gets the same bytes. Bump both digests on purpose, e.g. for security updates.
+FROM eclipse-temurin:11-jre@sha256:7db5776af2396377c8aae2aa124712da7b72a5b6b014c17d77ae37eb5276f37b AS jre
 
-FROM python:3.11-slim-bookworm AS hadoop
+FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1 AS hadoop
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG APACHE_MIRROR=https://archive.apache.org/dist
 ARG HADOOP_VERSION=3.3.6
@@ -17,7 +19,7 @@ RUN python /usr/local/bin/fetch.py \
         /opt/hadoop/share/hadoop/tools/lib/aliyun-*.jar \
         /opt/hadoop/share/hadoop/tools/lib/cos_api-bundle-*.jar
 
-FROM python:3.11-slim-bookworm AS spark
+FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1 AS spark
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG APACHE_MIRROR=https://archive.apache.org/dist
 ARG SPARK_VERSION=3.5.3
@@ -30,7 +32,7 @@ RUN python /usr/local/bin/fetch.py \
     && tar -xzf /tmp/spark.tgz -C /opt/spark --strip-components=1 \
     && rm -rf /tmp/spark.tgz /opt/spark/examples /opt/spark/data /opt/spark/R /opt/spark/kubernetes
 
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV JAVA_HOME=/opt/java/openjdk \
