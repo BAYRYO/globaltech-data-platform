@@ -1,6 +1,9 @@
-"""Inputs outside the contract, and the alert a window carries."""
+"""Inputs outside the contract, the alert a window carries, and a table lock held by another run."""
 
 import json
+import logging
+import threading
+import time
 import tracemalloc
 from collections import Counter
 from dataclasses import replace
@@ -140,6 +143,36 @@ def test_the_alert_carries_the_earliest_breach_of_the_micro_batch_where_its_wind
     run_stream(spark, paths, replace(settings, max_files_per_trigger=files_per_trigger))
 
     assert [r.event_id for r in table(spark, paths, ALERTS).collect()] == [alert]
+
+
+def test_a_batch_waits_for_the_lock_another_run_holds_then_writes(spark, stream_lake, caplog):
+    paths, settings = stream_lake
+    drop_files(paths, [[event("E1", "00:00:05", 60.0)], *CLOSING])
+    lock = local_path(paths.tables[AGGREGATES]).parent / "_sensor_aggregates.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text('{"run_id": "housekeeping"}')
+    threading.Timer(4.0, lock.unlink).start()
+
+    with caplog.at_level(logging.INFO, logger="gtdp.streaming.stream"):
+        started = time.monotonic()
+        run_stream(spark, paths, settings)
+
+    assert time.monotonic() - started >= 4.0
+    assert "table locked, waiting for its lock" in caplog.text
+    assert windows(spark, paths)[(epoch("00:00:00"), "FR-LYON-M01-TEMP")][0] == 1
+
+
+def test_a_batch_takes_over_the_lock_of_a_run_that_died_once_it_is_stale(spark, stream_lake):
+    paths, settings = stream_lake
+    drop_files(paths, [[event("E1", "00:00:05", 60.0)], *CLOSING])
+    lock = local_path(paths.tables[AGGREGATES]).parent / "_sensor_aggregates.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text('{"run_id": "killed while writing"}')
+
+    run_stream(spark, paths, replace(settings, stale_after_s=3))
+
+    assert windows(spark, paths)[(epoch("00:00:00"), "FR-LYON-M01-TEMP")][0] == 1
+    assert not lock.exists()
 
 
 def progress(batch_id: int) -> dict:
