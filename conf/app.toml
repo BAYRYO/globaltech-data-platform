@@ -1,0 +1,24 @@
+# Configuration shared by every environment.
+#
+# Each key can be overridden, last wins:
+#   1. this file
+#   2. conf/env/<env>.toml, where <env> is the --env given to run.py (local or cluster)
+#   3. an environment variable GTDP_<SECTION>__<KEY>, for example GTDP_SPARK__SHUFFLE_PARTITIONS=64
+#   4. run.py --set <section>.<key>=<value>, for example --set spark.adaptive=false
+#
+# An unknown section or key, or a value of the wrong type, stops the job before Spark starts.
+# No secret goes in these files: the pseudonymization salt comes only from GTDP_PSEUDO_SALT.
+
+[app]
+# Prefix of the Spark application name shown in YARN and the Spark History Server.
+name = "gtdp"
+# Spark session time zone. Timestamps are computed and stored in UTC.
+timezone = "UTC"
+
+[spark]
+# Partitions after a shuffle (joins, aggregations). Adaptive query execution merges small ones.
+shuffle_partitions = 8
+# Adaptive query execution: re-plans joins and shuffle partitions from runtime statistics.
+adaptive = true
+
+# [paths] has no common value: each environment sets its own in conf/env/<env>.toml.

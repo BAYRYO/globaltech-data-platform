@@ -1,0 +1,16 @@
+# Cluster environment: jobs submitted to YARN with scripts/cluster/submit.sh.
+# GTDP_PSEUDO_SALT must be set, otherwise every job stops at startup.
+
+[spark]
+# 2 NodeManagers run the executors; the project data sets are small.
+shuffle_partitions = 16
+
+[paths]
+# One HDFS root per layer, so permissions and quotas apply per layer (docs/architecture.md).
+landing = "hdfs://namenode:8020/datalake/landing"
+bronze = "hdfs://namenode:8020/datalake/bronze"
+silver = "hdfs://namenode:8020/datalake/silver"
+gold = "hdfs://namenode:8020/datalake/gold"
+streaming = "hdfs://namenode:8020/datalake/streaming"
+ops = "hdfs://namenode:8020/datalake/ops"
+checkpoints = "hdfs://namenode:8020/datalake/streaming/sensors/checkpoints"
