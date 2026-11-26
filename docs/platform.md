@@ -131,7 +131,7 @@ Tous les scripts se lancent depuis la racine du dépôt, sous Linux comme sous G
 | `scripts/cluster/status.sh` | Santé des services, DataNodes vivants et morts, NodeManagers, adresses web. |
 | `scripts/cluster/init-hdfs.sh` | Crée l'arborescence, les propriétaires, les modes, les ACL, les quotas, l'erasure coding et l'archive Spark. Idempotent. |
 | `scripts/cluster/client.sh [commande]` | Lance une commande dans un conteneur client éphémère. Sans commande, ouvre un shell. |
-| `scripts/cluster/land.sh <dossier_dépôt> <date>` | Copie un dépôt du générateur dans la zone landing. |
+| `scripts/cluster/land.sh <dossier_dépôt> <date>` | Vérifie un dépôt du générateur contre son manifeste, puis le publie dans la zone landing en remplaçant celui de la date. |
 | `scripts/cluster/submit.sh <job ou script.py> [args]` | Soumet une application PySpark à YARN. |
 | `scripts/cluster/smoke/run.sh` | Vérification de bout en bout (Spark, MapReduce, Hadoop Streaming). |
 | `scripts/cluster/smoke/hdfs-state.sh` | Affiche l'état géré par `init-hdfs.sh`, sans horodatage, pour comparer deux exécutions. |
@@ -174,11 +174,38 @@ scripts/cluster/land.sh data/generated/dev/landing/2026-01-01 2026-01-01
 ```
 
 Le dossier de dépôt doit se trouver dans la copie du dépôt, car seul ce dossier est monté dans le
-conteneur client. Pour chaque dossier source présent (`orders`, `customers`, `products`,
-`weblogs`), le script remplace `/datalake/landing/<source>/ingestion_date=<date>/`.
-`_MANIFEST.json` remplace `/datalake/landing/_manifests/ingestion_date=<date>/`. Les fichiers
-passent d'abord par `/datalake/landing/_staging/`, puis un renommage les met en place. Relancer
-la commande donne le même résultat, et un fichier retiré du dépôt disparaît de HDFS.
+conteneur client. Son chemin peut contenir des espaces et des accents.
+
+Avant d'écrire dans HDFS, le script vérifie que :
+
+- la date est une vraie date au format `AAAA-MM-JJ` (`2026-13-45` et `2026-02-30` sont refusées) ;
+- `_MANIFEST.json` existe et porte la même `ingestion_date` ;
+- le dépôt contient exactement les fichiers que le manifeste liste, ni plus ni moins, chacun dans un
+  dossier source (`orders`, `customers`, `products`, `weblogs`).
+
+Sinon il s'arrête avec le code 1 et la liste des écarts, sans rien modifier :
+
+```
+error: data/generated/dev/landing/2026-01-03 does not match its manifest
+  listed but missing: customers/customers_20260103.csv
+```
+
+Le landing d'une date se compose de `/datalake/landing/<source>/ingestion_date=<date>/` pour
+chaque source du manifeste et de `/datalake/landing/_manifests/ingestion_date=<date>/_MANIFEST.json`.
+Le script le remplace en trois temps :
+
+1. il copie tout le dépôt dans `/datalake/landing/_staging/ingestion_date=<date>/new/` ;
+2. il déplace chaque partition publiée de la date dans `.../old/`, le manifeste en premier ;
+3. il renomme chaque partition copiée à sa place, le manifeste en dernier, puis supprime
+   `_staging/ingestion_date=<date>`.
+
+Si une étape échoue, le script remet en place le landing précédent et s'arrête avec le code 1. Si
+le script est tué en cours de route (`kill -9`, conteneur arrêté), le `land.sh` suivant de la même
+date remet d'abord le landing précédent en place. Après chaque exécution, la date porte donc son
+landing précédent ou le nouveau, complet, jamais un mélange. Pendant les quelques secondes de
+l'étape 2 à l'étape 3, des partitions manquent : la présence du manifeste signale un landing
+complet. Une source absente du nouveau dépôt disparaît de la date, et relancer la commande donne
+le même résultat.
 
 ### Le secret de pseudonymisation
 
