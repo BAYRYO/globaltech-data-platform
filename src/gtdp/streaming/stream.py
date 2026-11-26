@@ -95,11 +95,12 @@ SCHEMAS = MappingProxyType({name: output.schema for name, output in OUTPUTS.item
 
 @dataclass(frozen=True)
 class SensorPaths:
-    """Where the stream reads, writes, keeps its checkpoints and looks for its stop marker."""
+    """Where the stream reads, writes, keeps its checkpoints, archives and finds its stop marker."""
 
     incoming: str
     tables: Mapping[str, str]
     checkpoints: str
+    archive: str
     stop_marker: str
 
     @classmethod
@@ -112,6 +113,7 @@ class SensorPaths:
                 REJECTS: f"{paths.streaming}/rejects",
             },
             checkpoints=paths.checkpoints,
+            archive=f"{paths.streaming}/archive/sensors",
             stop_marker=f"{paths.streaming}/control/stop-{job}",
         )
 
@@ -378,30 +380,31 @@ def checkpoint_state(spark: SparkSession, checkpoint: str) -> dict[str, int | No
     A planned batch without its commit is the one Spark replays when the query restarts.
     """
     return {
-        f"last_{kind}_batch": max(_numbered_files(spark, f"{checkpoint}/{folder}"), default=None)
+        f"last_{kind}_batch": max(numbered_files(spark, f"{checkpoint}/{folder}"), default=None)
         for kind, folder in (("planned", "offsets"), ("committed", "commits"))
     }
 
 
 def make_dirs(spark: SparkSession, path: str) -> None:
-    fs, hadoop_path = _filesystem(spark, path)
+    fs, hadoop_path = filesystem(spark, path)
     fs.mkdirs(hadoop_path)
 
 
 def delete_path(spark: SparkSession, path: str) -> bool:
     """Delete ``path`` if it exists; return whether it did."""
-    fs, hadoop_path = _filesystem(spark, path)
+    fs, hadoop_path = filesystem(spark, path)
     return bool(fs.delete(hadoop_path, True))
 
 
-def _numbered_files(spark: SparkSession, directory: str) -> list[int]:
-    fs, hadoop_path = _filesystem(spark, directory)
+def numbered_files(spark: SparkSession, directory: str) -> list[int]:
+    """The numbers of the files named by a number in ``directory`` (a checkpoint log)."""
+    fs, hadoop_path = filesystem(spark, directory)
     if not fs.exists(hadoop_path):
         return []
     names = [status.getPath().getName() for status in fs.listStatus(hadoop_path)]
     return [int(name) for name in names if name.isdigit()]
 
 
-def _filesystem(spark: SparkSession, path: str) -> tuple[Any, Any]:
+def filesystem(spark: SparkSession, path: str) -> tuple[Any, Any]:
     hadoop_path = spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
     return hadoop_path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()), hadoop_path

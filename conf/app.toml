@@ -24,7 +24,7 @@ adaptive = true
 # [paths] has no common value: each environment sets its own in conf/env/<env>.toml.
 
 [streaming]
-# Sensor stream job streaming-sensors (ADR-0008, docs/runbook/streaming.md).
+# Sensor stream job streaming-sensors and its housekeeping (ADR-0008, docs/runbook/streaming.md).
 # Seconds between two micro-batches; 0 starts the next one as soon as the previous one ends.
 trigger_interval_s = 5
 # Most new files read by one micro-batch: one minute of stream (one file per 5 s). Keep it at 18
@@ -42,6 +42,10 @@ future_tolerance_s = 60
 # a run that died: a restarted job waits up to this long for the lock of its previous run. Keep
 # it above the longest housekeeping step (spark.gtdp.io.staleAfterSeconds of both jobs).
 stale_after_s = 300
+# streaming-housekeeping moves each input file to <paths.streaming>/archive/sensors once every
+# query committed it, under the UTC day it arrived, and deletes the days older than this many
+# days before the current one: 2 keeps today and the two days before. 0 keeps today only.
+archive_retention_days = 2
 
 [streaming.thresholds]
 # Alert limits per metric (docs/data-contract.md#capteurs): an event alerts when its value is
