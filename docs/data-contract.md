@@ -108,7 +108,9 @@ multiplié par `(1 − remise commerciale)` tirée uniformément dans `[0 ; 0,10
 Les lignes du kit gardent leur prix (indépendant du catalogue, voir plus haut).
 
 Déséquilibre de clé : 20 % des lignes synthétiques portent le produit `P00042`. En profil
-`full`, le ratio max/médiane du nombre de lignes par produit vaut environ 245 (mesuré : 244,6).
+`full`, le ratio max/médiane du nombre de lignes par produit **du catalogue** vaut 244,6 (190,8 en
+`dev`) ; les identifiants inconnus `P9…` de l'anomalie `UNKNOWN_PRODUCT` sont exclus du calcul, comme
+ils le sont de la jointure avec les produits.
 
 Un doublon inter-jours renvoyé dans J3 prend le format de J3 : les 8 valeurs d'origine à
 l'identique et un 9ᵉ champ `discount_pct` vide.
@@ -127,7 +129,7 @@ Anomalies injectées (taux sur les lignes du dépôt, codes repris dans le manif
 | `BAD_TIMESTAMP` | 0,3 % | `2025/03/04 10:00`, `N/A`, vide |
 | `FUTURE_TIMESTAMP` | 0,1 % | `event_time` postérieur à `ingestion_date` + 1 jour |
 | `BAD_ENUM` | 0,2 % | `channel` = `fax` ou `status` = `UNKNOWN` |
-| `MALFORMED_ROW` | 0,1 % | nombre de champs différent de celui de l'en-tête du fichier |
+| `MALFORMED_ROW` | 0,1 % | nombre de champs différent de celui de l'en-tête du fichier, et jamais 8 ni 9 (deux champs de moins, deux de plus, ou `;` comme séparateur) |
 
 ## Produits (`products`)
 
@@ -140,7 +142,8 @@ En-tête : `product_id,product_name,category,unit_price_eur,updated_at`
   et quelques nouveaux produits `P01001+`.
 - `P00042` change de prix au moins une fois en 2025, pour que le prix applicable à la date de
   commande diffère du prix courant.
-- `product_name` vaut `<category> <numéro>` (tirage déterministe, le kit n'a pas de nom).
+- `product_name` vaut `<category> <product_id>` de la version initiale (le kit n'a pas de nom) ; il
+  ne change pas quand la catégorie change.
 
 Anomalies, injectées **uniquement sur des versions non initiales** pour que chaque produit garde
 toujours une version valide : `DUPLICATE_EXACT` 1 %, `BAD_PRICE` 0,5 %, `NULL_CATEGORY` 0,5 %,
@@ -183,7 +186,8 @@ lignes valides : elles alimentent l'indicateur d'erreurs, elles ne sont pas reje
 ## Capteurs (`sensors`)
 
 JSON Lines, un fichier par intervalle de 5 secondes (`sensors_<yyyyMMddTHHmmss>.jsonl`).
-60 capteurs (5 sites, un par pays, × 4 machines × 3 métriques), une lecture de base par capteur
+60 capteurs (5 sites `FR-LYON`, `DE-HAMBURG`, `ES-BILBAO`, `IT-TORINO`, `UK-LEEDS` × 4 machines ×
+3 métriques), une lecture de base par capteur
 et par fichier, soit 60 événements de base par fichier avant anomalies.
 
 ```json
@@ -205,7 +209,7 @@ Anomalies (taux sur les événements de base de la journée) :
 | `DUPLICATE_EVENT` | 3 % | même `event_id` réémis dans un fichier ultérieur |
 | `MALFORMED_JSON` | 0,5 % | ligne JSON illisible |
 | `NULL_VALUE` | 0,5 % | `value` à `null` |
-| `SPIKE` | 1 machine par site | une métrique au-delà du seuil pendant au moins 2 minutes consécutives (24 fichiers et plus), à partir de la 3ᵉ minute |
+| `SPIKE` | 1 machine par site | une métrique au-delà du seuil pendant au moins 2 minutes consécutives (24 fichiers et plus), à partir de la 3ᵉ minute (2ᵉ en `ci`) ; une pression en pic reste du côté haut (> 8 bar) et aucun autre type d'anomalie ne touche le capteur pendant son pic |
 
 Le flux étant fini, les fenêtres des dernières `watermark + fenêtre` minutes (3 min) ne sont
 finalisées que si des données plus récentes arrivent ; la démonstration en tient compte.
@@ -227,3 +231,21 @@ finalisées que si des données plus récentes arrivent ; la démonstration en t
 
 `rows` compte les lignes de données (hors en-tête). Les tests silver comparent leurs compteurs
 de rejets et de doublons à ces valeurs, selon la table de disposition du modèle de données.
+
+## Précisions d'implémentation (générateur 1.0.0)
+
+Fixées par l'implémentation et vérifiées en revue ; utiles aux auteurs de bronze, silver et
+MapReduce.
+
+| Sujet | Valeur |
+| --- | --- |
+| Identifiants synthétiques | `T000200001` et suivants dans J1 pour tous les profils, puis J2, J3 à la suite ; nouveaux clients `C005001+`, nouveaux produits `P01001+` |
+| Deltas quotidiens J2, J3 | 30 mises à jour et 12 nouveaux clients, 10 produits modifiés et 3 nouveaux ; logs web = volume de J1 / 365 |
+| Retardataires | environ 3 % des commandes de J2 et J3, datées de 1 à 3 jours avant le jour métier |
+| `FUTURE_TIMESTAMP` | `ingestion_date` + 2 à 30 jours |
+| `updated_at` des clients de J1 | `2025-12-31T00:00:00` |
+| Encodage | UTF-8 sans BOM, fins de ligne LF (les CRLF du kit deviennent LF), aucun champ entre guillemets ; noms avec accents et apostrophes |
+| Doublons de clé clients | email avec espaces ou majuscules : lire sans `ignoreLeading/TrailingWhiteSpace` |
+| Prix du kit | parfois une seule décimale (`26.9`) |
+| Adresses IP des logs | `198.18.0.0/15`, troisième octet par pays : FR 0-49, DE 50-99, ES 100-149, IT 150-199, UK 200-249 |
+| Capteurs | lire avec le motif `sensors_*.jsonl` (le `_MANIFEST.json` est dans le même répertoire) ; un doublon recopie un événement sain du fichier précédent (retard < 5 s) |

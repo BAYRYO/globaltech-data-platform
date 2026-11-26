@@ -38,7 +38,10 @@ Pour chaque source et chaque jour `D` :
    comme doublons ;
 2. **contrôles qualité en une seule projection** : un registre de règles (code, condition) produit
    la colonne `reject_reasons` (tableau des codes vérifiés) ; une ligne avec au moins un motif part
-   en rejet ;
+   en rejet. Une ligne dont `_corrupt_record` est non nul reçoit le seul motif `MALFORMED_ROW` : ses
+   colonnes sont décalées ou nulles, les autres règles ne sont évaluées que sur les lignes bien
+   formées (sinon un même enregistrement compterait sous plusieurs codes et la réconciliation par
+   code avec le manifeste serait fausse) ;
 3. **doublons de clé** dans le dépôt (même clé, contenu différent) : une ligne conservée par clé,
    choisie de façon déterministe, les autres comptées comme doublons ;
 4. **doublons inter-jours** (commandes) : clé déjà présente dans une partition silver antérieure
@@ -81,7 +84,7 @@ la ligne reste en silver, éventuellement avec un drapeau dans `quality_flags`.
 | `DUPLICATE_EXACT` | même `_record_hash` | doublon |
 | `DUPLICATE_KEY` | même `customer_id` et même `updated_at` après normalisation de l'email | doublon |
 | `MISSING_EMAIL` | email vide | conservé, `email_hash` nul, drapeau `MISSING_EMAIL` |
-| `BAD_EMAIL` | email hors `^[^@\s]+@[^@\s]+\.[a-z]{2,}$` | conservé, `email_hash` nul, drapeau `BAD_EMAIL` |
+| `BAD_EMAIL` | `lower(trim(email))` hors `^[^@\s]+@[^@\s]+\.[a-z]{2,}$` | conservé, `email_hash` nul, drapeau `BAD_EMAIL` |
 | `MISSING_REGION` | région vide | conservé, `country` = `UNKNOWN`, drapeau `MISSING_REGION` |
 | `BAD_DATE` | `signup_date` non ISO | conservé, date relue au format `dd/MM/yyyy` sinon nulle, drapeau `BAD_DATE` |
 | (kit) inscription future | `signup_date` > `ingestion_date` | conservé, drapeau `FUTURE_SIGNUP` |
