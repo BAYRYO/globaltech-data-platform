@@ -277,6 +277,26 @@ def test_read_table_merges_the_file_schemas_when_asked(spark, tmp_path):
     assert sorted(merged.columns) == ["discount_pct", "id", INGESTION_DATE]
 
 
+def test_read_table_reads_with_the_schema_it_is_given(spark, tmp_path):
+    path = str(tmp_path / "bronze")
+    day_1 = spark.createDataFrame(
+        [(1, "x", "2026-01-01")], "id int, coupon string, ingestion_date string"
+    )
+    write_partitions(day_1, path, {INGESTION_DATE: [JAN_1]})
+    schema = StructType(
+        [
+            StructField("id", IntegerType()),
+            StructField("discount_pct", StringType()),
+            StructField(INGESTION_DATE, DateType()),
+        ]
+    )
+
+    table = read_table(spark, path, schema)
+
+    assert table.schema == schema
+    assert [tuple(row) for row in table.collect()] == [(1, None, JAN_1)]
+
+
 BRONZE = "transaction_id string, amount int, ingestion_date string"
 SILVER = StructType(
     [

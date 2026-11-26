@@ -98,17 +98,22 @@ def read_table(
 ) -> DataFrame:
     """Read the Parquet table at ``path``; a missing table or one without data reads as empty.
 
-    A table holds no data file before its first write, or when every day written so far produced
-    no row. Its empty DataFrame has ``schema``, partition columns included; without ``schema`` such
-    a table raises ``FileNotFoundError``. ``merge_schema`` reads the union of the schemas of the
-    files (ADR-0007).
+    With ``schema``, the table is read with it: a column of ``schema`` that a file lacks reads as
+    null, and a file column outside ``schema`` is left out. A table holds no data file before its
+    first write, or when every day written so far produced no row: it then reads as an empty
+    DataFrame of ``schema``. Without ``schema``, the columns are those of the files, the union of
+    their schemas with ``merge_schema`` (ADR-0007), and a table without data file raises
+    ``FileNotFoundError``.
     """
     fs, hadoop_path = _recovered(spark, path)
     if not fs.exists(hadoop_path) or not _has_data_file(fs, hadoop_path):
         if schema is None:
             raise FileNotFoundError(f"{path} holds no data file: pass its schema to read it empty")
         return spark.createDataFrame([], schema)
-    return spark.read.option("mergeSchema", merge_schema).parquet(path)
+    reader = spark.read.option("mergeSchema", merge_schema)
+    if schema is not None:
+        reader = reader.schema(schema)
+    return reader.parquet(path)
 
 
 def path_exists(spark: SparkSession, path: str) -> bool:
