@@ -9,7 +9,7 @@ import os
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 Publisher = Callable[[Path], None]
@@ -53,8 +53,8 @@ def replay(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-) -> list[str]:
-    """Publish one file every `interval` seconds, in name order; return the names published."""
+) -> Iterator[Path]:
+    """Publish one file every `interval` seconds, in name order; yield each file once published."""
     if destination.startswith("hdfs://"):
         present, publish = hdfs_publisher(destination, run)
     else:
@@ -67,4 +67,10 @@ def replay(
         if delay > 0:
             sleep(delay)
         publish(path)
-    return [path.name for path in pending]
+        yield path
+
+
+def count_lines(path: Path) -> int:
+    """Lines of a sensor file: one event each, unreadable ones included."""
+    with path.open("rb") as handle:
+        return sum(1 for _ in handle)

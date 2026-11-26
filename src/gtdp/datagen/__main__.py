@@ -1,14 +1,16 @@
 """Command line: generate, verify, replay-sensors."""
 
 import argparse
+import signal
 import sys
 import time
 from collections import Counter
 from pathlib import Path
+from types import FrameType
 
 from gtdp.datagen.generate import generate
 from gtdp.datagen.model import PROFILES
-from gtdp.datagen.replay import replay
+from gtdp.datagen.replay import count_lines, replay
 from gtdp.datagen.verify import Report, verify
 
 
@@ -61,10 +63,38 @@ def main(argv: list[str] | None = None) -> int:
         status = 1 if report.problems else 0
         summary = f"{len(report.problems)} problems" if status else "OK"
     else:
-        published = replay(args.src, args.dst, args.interval, args.limit)
-        summary = f"published {len(published)} files to {args.dst}"
+        status, summary = _replay(args)
     print(f"{summary} ({time.monotonic() - started:.1f} s)")
     return status
+
+
+class _Stopped(BaseException):
+    def __init__(self, sig: signal.Signals) -> None:
+        super().__init__(sig.name)
+        self.signal = sig
+
+
+def _raise_stopped(signum: int, frame: FrameType | None) -> None:
+    raise _Stopped(signal.Signals(signum))
+
+
+def _replay(args: argparse.Namespace) -> tuple[int, str]:
+    """Replay until done, Ctrl+C or SIGTERM; return the exit status and what was published."""
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    for sig in previous:
+        signal.signal(sig, _raise_stopped)
+    published: list[Path] = []
+    status, stopped = 0, ""
+    try:
+        for path in replay(args.src, args.dst, args.interval, args.limit):
+            published.append(path)
+    except _Stopped as stop:
+        status, stopped = 128 + stop.signal, f", stopped by {stop.signal.name}"
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    events = sum(count_lines(path) for path in published)
+    return status, f"published {len(published)} files, {events} events to {args.dst}{stopped}"
 
 
 if __name__ == "__main__":
