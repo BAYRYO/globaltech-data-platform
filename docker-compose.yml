@@ -1,0 +1,154 @@
+# HDFS + YARN cluster (docs/platform.md). Start it with scripts/cluster/up.sh.
+# The project name is fixed so every checkout and worktree drives the same cluster.
+name: gtdp
+
+x-node: &node
+  image: gtdp/hadoop-spark:3.3.6-3.5.3
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  init: true
+  restart: unless-stopped
+  user: hadoop
+
+x-env: &env
+  YARN_NM_MEMORY_MB: ${YARN_NM_MEMORY_MB:-2560}
+  YARN_NM_VCORES: ${YARN_NM_VCORES:-4}
+
+x-health: &health
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 180s
+  start_interval: 2s
+
+x-datanode: &datanode
+  <<: *node
+  command: datanode
+  environment:
+    <<: *env
+    HDFS_DATANODE_OPTS: -Xmx384m
+  healthcheck:
+    <<: *health
+    test: ["CMD", "gtdp-healthcheck", "datanode"]
+  depends_on:
+    namenode:
+      condition: service_healthy
+
+x-nodemanager: &nodemanager
+  <<: *node
+  command: nodemanager
+  environment:
+    <<: *env
+    YARN_NODEMANAGER_OPTS: -Xmx512m
+  healthcheck:
+    <<: *health
+    test: ["CMD", "gtdp-healthcheck", "nodemanager"]
+  depends_on:
+    resourcemanager:
+      condition: service_healthy
+
+x-after-hdfs: &after-hdfs
+  datanode1:
+    condition: service_healthy
+  datanode2:
+    condition: service_healthy
+  datanode3:
+    condition: service_healthy
+
+services:
+  namenode:
+    <<: *node
+    hostname: namenode
+    command: namenode
+    environment:
+      <<: *env
+      HDFS_NAMENODE_OPTS: -Xmx768m
+    ports:
+      - "127.0.0.1:9870:9870"
+    volumes:
+      - namenode:/hadoop/dfs/name
+    healthcheck:
+      <<: *health
+      test: ["CMD", "gtdp-healthcheck", "namenode"]
+
+  datanode1:
+    <<: *datanode
+    hostname: datanode1
+    volumes:
+      - datanode1:/hadoop/dfs/data
+
+  datanode2:
+    <<: *datanode
+    hostname: datanode2
+    volumes:
+      - datanode2:/hadoop/dfs/data
+
+  datanode3:
+    <<: *datanode
+    hostname: datanode3
+    volumes:
+      - datanode3:/hadoop/dfs/data
+
+  resourcemanager:
+    <<: *node
+    hostname: resourcemanager
+    command: resourcemanager
+    environment:
+      <<: *env
+      YARN_RESOURCEMANAGER_OPTS: -Xmx768m
+    ports:
+      - "127.0.0.1:8088:8088"
+    healthcheck:
+      <<: *health
+      test: ["CMD", "gtdp-healthcheck", "resourcemanager"]
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+  nodemanager1:
+    <<: *nodemanager
+    hostname: nodemanager1
+
+  nodemanager2:
+    <<: *nodemanager
+    hostname: nodemanager2
+
+  mr-history:
+    <<: *node
+    hostname: mr-history
+    command: mr-history
+    environment:
+      <<: *env
+      MAPRED_HISTORYSERVER_OPTS: -Xmx384m
+    ports:
+      - "127.0.0.1:19888:19888"
+    healthcheck:
+      <<: *health
+      test: ["CMD", "gtdp-healthcheck", "mr-history"]
+    depends_on: *after-hdfs
+
+  spark-history:
+    <<: *node
+    hostname: spark-history
+    user: spark
+    command: spark-history
+    environment:
+      <<: *env
+      SPARK_DAEMON_MEMORY: 512m
+    ports:
+      - "127.0.0.1:18080:18080"
+    healthcheck:
+      <<: *health
+      test: ["CMD", "gtdp-healthcheck", "spark-history"]
+    depends_on: *after-hdfs
+
+networks:
+  default:
+    name: gtdp
+
+volumes:
+  namenode:
+  datanode1:
+  datanode2:
+  datanode3:
