@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tomllib
 import types
 import typing
@@ -24,6 +25,7 @@ CONF_DIR_VAR = "GTDP_CONF_DIR"
 SALT_VAR = "GTDP_PSEUDO_SALT"
 GIT_SHA_VAR = "GTDP_GIT_SHA"
 DEV_SALT = "gtdp-local-dev-salt-not-secret"
+_URI_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 class ConfigError(ValueError):
@@ -85,6 +87,21 @@ class LakePaths:
 
 
 @dataclass(frozen=True)
+class _PathsSection(LakePaths):
+    """``[paths]`` as written: the lake areas, and the filesystem of an absolute cluster path."""
+
+    default_fs: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.default_fs is not None and not re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9+.-]*://[^/]+/?", self.default_fs
+        ):
+            raise ConfigError(
+                f"[paths] default_fs must be scheme://authority, got {self.default_fs!r}"
+            )
+
+
+@dataclass(frozen=True)
 class Pseudonymization:
     salt: Secret
 
@@ -99,7 +116,7 @@ class AppConfig:
     git_sha: str | None
 
 
-_SECTIONS: dict[str, type] = {"app": AppSettings, "spark": SparkSettings, "paths": LakePaths}
+_SECTIONS: dict[str, type] = {"app": AppSettings, "spark": SparkSettings, "paths": _PathsSection}
 
 
 def load_config(
@@ -110,7 +127,9 @@ def load_config(
     """Read the configuration of ``env``; raise ``ConfigError`` on any invalid input.
 
     ``overrides`` maps ``"section.key"`` to a raw string value, typed like an environment
-    variable. Relative paths in ``[paths]`` resolve against the parent of ``conf_dir``.
+    variable. A ``[paths]`` value with a URI scheme is kept as is. On ``cluster``, an absolute
+    path without scheme goes to ``paths.default_fs``. Any other path is a local file, relative to
+    the parent of ``conf_dir``.
     """
     try:
         parsed_env = Env(env)
@@ -128,13 +147,20 @@ def load_config(
         section, _, key = dotted.partition(".")
         _override(raw, section, key, value, label=f"--set {dotted}")
 
-    paths = _section("paths", LakePaths, raw)
+    paths = _section("paths", _PathsSection, raw)
     root = conf_dir.resolve().parent
     return AppConfig(
         env=parsed_env,
         app=_section("app", AppSettings, raw),
         spark=_section("spark", SparkSettings, raw),
-        paths=LakePaths(**{f.name: _to_uri(getattr(paths, f.name), root) for f in fields(paths)}),
+        paths=LakePaths(
+            **{
+                area.name: _to_uri(
+                    area.name, getattr(paths, area.name), root, parsed_env, paths.default_fs
+                )
+                for area in fields(LakePaths)
+            }
+        ),
         pseudonymization=Pseudonymization(_salt(parsed_env)),
         git_sha=os.environ.get(GIT_SHA_VAR) or None,
     )
@@ -229,14 +255,20 @@ def _base_type(hint: object) -> type:
     return typing.cast(type, hint)
 
 
-def _to_uri(value: str, root: Path) -> str:
-    """Keep URIs as is; turn local paths into absolute ``file://`` URIs.
+def _to_uri(area: str, value: str, root: Path, env: Env, default_fs: str | None) -> str:
+    """Keep URIs as is; give every path an explicit filesystem.
 
     A scheme-less path would otherwise resolve against ``fs.defaultFS``, which is HDFS in any
     container where ``HADOOP_CONF_DIR`` is set.
     """
-    if "://" in value:
+    if _URI_SCHEME.match(value):
         return value.rstrip("/")
+    if env is Env.CLUSTER and value.startswith("/"):
+        if default_fs is None:
+            raise ConfigError(
+                f"[paths] {area} = {value!r} names no filesystem: set paths.default_fs"
+            )
+        return default_fs.rstrip("/") + value.rstrip("/")
     return _file_uri(root / value)
 
 
