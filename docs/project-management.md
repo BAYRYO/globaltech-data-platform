@@ -18,14 +18,26 @@ a ses critères d'acceptation, un libellé de rôle et un jalon (version Jira J1
 
 ## Rôles
 
-| Rôle | Responsabilité principale | Lots |
-| --- | --- | --- |
-| Architecte plateforme | Cluster, HDFS, bronze, volet HDFS de la performance | 1, 2, 7 (HDFS) |
-| Data engineer batch | Silver, gold | 3, 4 |
-| Data engineer streaming et performance | Streaming, MapReduce contre Spark, benchmarks | 5, 6, 7 |
-| Responsable qualité et delivery | Cadrage, industrialisation, rendu, suivi | 0, 8, 9 |
+Le projet est réalisé par un pilote et des agents de développement (méthode
+[pstack](https://github.com/cursor/plugins/tree/main/pstack), mode *poteto*) : le pilote conçoit,
+découpe, relit et fusionne ; chaque story est confiée à un agent dans sa propre branche et son
+propre worktree. Les rôles du sujet sont attribués ainsi :
 
-Chaque membre contribue à au moins deux lots et relit les PR d'un autre rôle que le sien.
+| Rôle | Responsabilité principale | Lots | Tenu par |
+| --- | --- | --- | --- |
+| Architecte plateforme | Cluster, HDFS, bronze, volet HDFS de la performance | 1, 2, 7 (HDFS) | agent plateforme, agent bronze |
+| Data engineer batch | Silver, gold | 3, 4 | agent silver, agent gold |
+| Data engineer streaming et performance | Streaming, MapReduce contre Spark, benchmarks | 5, 6, 7 | agent streaming, agent MapReduce, agent performance |
+| Responsable qualité et delivery | Cadrage, industrialisation, rendu, suivi | 0, 8, 9 | pilote, agent socle, agent documentation |
+
+## Revues
+
+Aucune relecture humaine : chaque livrable passe une **revue adverse** par deux relecteurs
+indépendants sur deux modèles différents (méthode *interrogate*), chacun dans la peau d'un rôle
+différent de celui de l'auteur. Un constat n'est retenu que s'il est prouvé par une exécution
+(test qui échoue, script de reproduction, calcul) ; le pilote relance chaque constat avant de le
+retenir. Les constats vérifiés sont publiés sur la PR, corrigés avant fusion, et la revue est
+archivée dans [`docs/reviews/`](reviews/).
 
 ## Jalons
 
@@ -57,7 +69,9 @@ flowchart LR
 
 Une story est terminée quand :
 
-1. le code est sur `main` via une PR revue, au titre `type(scope): sujet` et référencée `KAN-xx` ;
+1. le code est sur `main` via une PR au titre `type(scope): sujet`, référencée `KAN-xx` ;
 2. la CI est verte (lint, tests) ;
-3. les critères d'acceptation de la story sont démontrés sur le cluster (YARN), preuve dans la PR ;
-4. la documentation concernée est à jour.
+3. la revue adverse est passée et ses constats vérifiés sont corrigés ;
+4. les critères d'acceptation de la story sont démontrés sur le cluster (YARN), preuve dans la PR,
+   et cochés dans Jira avec un lien vers cette preuve ;
+5. la documentation concernée est à jour.
