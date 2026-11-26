@@ -3,6 +3,8 @@ import os
 from datetime import date
 
 import pytest
+from pyspark.sql import functions as F
+from pyspark.sql.types import DateType, IntegerType, StringType, StructField, StructType
 
 from gtdp.io import (
     INGESTION_DATE,
@@ -11,6 +13,7 @@ from gtdp.io import (
     latest_partition_after,
     list_partition_values,
     path_exists,
+    read_table,
     replace_table,
     write_partitions,
 )
@@ -18,6 +21,7 @@ from gtdp.io import (
 pytestmark = pytest.mark.slow
 
 SCHEMA = "id int, ingestion_date string"
+TABLE = StructType([StructField("id", IntegerType()), StructField(INGESTION_DATE, DateType())])
 JAN_1, JAN_2, JAN_3 = date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)
 
 
@@ -158,3 +162,95 @@ def test_replaying_the_latest_day_or_forcing_is_allowed(spark, days_1_and_3, cap
         ensure_no_later_partition(spark, days_1_and_3, INGESTION_DATE, JAN_2, force=True)
 
     assert "2026-01-03" in caplog.text
+
+
+def test_a_table_whose_only_day_had_no_row_reads_as_empty(spark, tmp_path):
+    path = str(tmp_path / "rejects")
+    write_partitions(spark.createDataFrame([], SCHEMA), path, {INGESTION_DATE: [JAN_1]})
+    assert read_table(spark, path, TABLE).collect() == []
+
+    one = spark.createDataFrame([(1, "2026-01-01")], SCHEMA)
+    write_partitions(one, path, {INGESTION_DATE: [JAN_1]})
+    write_partitions(spark.createDataFrame([], SCHEMA), path, {INGESTION_DATE: [JAN_1]})
+    assert read_table(spark, path, TABLE).collect() == []
+
+
+def test_a_missing_table_reads_as_empty_with_its_schema(spark, tmp_path):
+    empty = read_table(spark, str(tmp_path / "silver_orders"), TABLE)
+
+    assert empty.collect() == []
+    assert empty.schema == TABLE
+
+
+def test_reading_an_empty_table_without_its_schema_is_an_error(spark, tmp_path):
+    with pytest.raises(FileNotFoundError):
+        read_table(spark, str(tmp_path / "absent"))
+
+
+def test_read_table_merges_the_file_schemas_when_asked(spark, tmp_path):
+    path = str(tmp_path / "bronze")
+    day_1 = spark.createDataFrame([(1, "2026-01-01")], SCHEMA)
+    day_2 = spark.createDataFrame(
+        [(2, 0.1, "2026-01-02")], "id int, discount_pct double, ingestion_date string"
+    )
+    write_partitions(day_1, path, {INGESTION_DATE: [JAN_1]})
+    write_partitions(day_2, path, {INGESTION_DATE: [JAN_2]})
+
+    merged = read_table(spark, path, merge_schema=True)
+
+    assert sorted(merged.columns) == ["discount_pct", "id", INGESTION_DATE]
+
+
+BRONZE = "transaction_id string, amount int, ingestion_date string"
+SILVER = StructType(
+    [
+        StructField("transaction_id", StringType()),
+        StructField("amount", IntegerType()),
+        StructField(INGESTION_DATE, DateType()),
+    ]
+)
+
+
+def make_bronze(spark, path, data):
+    df = spark.createDataFrame(data, BRONZE)
+    write_partitions(df, path, {INGESTION_DATE: sorted({row[2] for row in data})})
+
+
+def silver_day(spark, lake, day, force=False):
+    """ADR-0005 reduced to its shape: validate day D, drop keys known before D, rewrite D."""
+    bronze, silver, rejects = (str(lake / name) for name in ("bronze", "silver", "rejects"))
+    ensure_no_later_partition(spark, silver, INGESTION_DATE, day, force=force)
+    deposit = read_table(spark, bronze, SILVER).where(F.col(INGESTION_DATE) == F.lit(day))
+    known = read_table(spark, silver, SILVER).where(F.col(INGESTION_DATE) < F.lit(day))
+    valid = (
+        deposit.where("amount >= 0")
+        .dropDuplicates(["transaction_id"])
+        .join(known.select("transaction_id"), "transaction_id", "left_anti")
+    )
+    write_partitions(valid, silver, {INGESTION_DATE: [day]})
+    write_partitions(deposit.where("amount < 0"), rejects, {INGESTION_DATE: [day]})
+
+
+def ids(spark, path):
+    return sorted(row.transaction_id for row in read_table(spark, path, SILVER).collect())
+
+
+def test_a_first_day_without_any_valid_row_does_not_break_the_next_day(spark, tmp_path):
+    make_bronze(
+        spark, str(tmp_path / "bronze"), [("t1", -1, "2026-01-01"), ("t2", 3, "2026-01-02")]
+    )
+
+    silver_day(spark, tmp_path, JAN_1)
+    silver_day(spark, tmp_path, JAN_2)
+
+    assert ids(spark, str(tmp_path / "silver")) == ["t2"]
+    assert ids(spark, str(tmp_path / "rejects")) == ["t1"]
+
+
+def test_rejects_stay_readable_after_a_day_without_reject(spark, tmp_path):
+    make_bronze(spark, str(tmp_path / "bronze"), [("t1", 1, "2026-01-01")])
+
+    silver_day(spark, tmp_path, JAN_1)
+
+    assert ids(spark, str(tmp_path / "rejects")) == []
+    assert ids(spark, str(tmp_path / "silver")) == ["t1"]
