@@ -29,7 +29,7 @@ make lint        # ruff
 Développement local sans Docker : Python 3.11, Java 11 ou 17, puis
 `pip install -r requirements-dev.txt && pip install -e .` et `pytest`.
 
-Couverture : `scripts/test.sh --cov` (ou `pytest --cov`) affiche la couverture des lignes et des
+Couverture : `scripts/test.sh --cov --cov-config=pyproject.toml` (ou `pytest --cov --cov-config=pyproject.toml`, l'option transmet la mesure des branches aux sous-processus) affiche la couverture des lignes et des
 branches du paquet `gtdp` ; la CI la publie dans le résumé du job de tests et joint `coverage.xml`.
 
 ## Règles de code
