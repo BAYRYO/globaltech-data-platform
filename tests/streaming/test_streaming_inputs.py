@@ -1,11 +1,13 @@
 """Inputs outside the contract, and the alert a window carries."""
 
 import json
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from stream_helpers import drop_files, event, run_stream
+from pyspark.sql import functions as F
+from stream_helpers import drop_files, event, local_path, run_stream
 
 from gtdp.io import read_table
 from gtdp.streaming.stream import AGGREGATES, ALERTS, REJECTS, SCHEMAS
@@ -137,3 +139,18 @@ def test_the_alert_carries_the_earliest_breach_of_the_micro_batch_where_its_wind
     run_stream(spark, paths, replace(settings, max_files_per_trigger=files_per_trigger))
 
     assert [r.event_id for r in table(spark, paths, ALERTS).collect()] == [alert]
+
+
+def test_a_file_whose_name_is_not_a_contract_name_is_not_read(spark, stream_lake):
+    paths, settings = stream_lake
+    drop_files(paths, [[event("E1", "00:00:05", 60.0)], *CLOSING])
+    incoming = local_path(paths.incoming)
+    (incoming / "sensors_20260101T000000.jsonl.tmp").write_text(event("T1", "00:00:06", 61.0))
+    (incoming / "_MANIFEST.json").write_text("{}")
+
+    metrics = run_stream(spark, paths, settings)
+
+    assert metrics[AGGREGATES]["input_rows"] == 3
+    rejects = Counter(r.reject_reason for r in table(spark, paths, REJECTS).collect())
+    assert rejects == {}
+    assert table(spark, paths, AGGREGATES).where(F.col("event_count") == 1).count() == 1
