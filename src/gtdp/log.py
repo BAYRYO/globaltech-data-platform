@@ -2,6 +2,10 @@
 
 Modules log through ``logging.getLogger(__name__)``. Fields passed with ``extra=`` and fields
 bound with ``bind()`` become keys of the JSON object.
+
+Under spark-submit, the JVM starts the Python driver and copies the driver's stderr to its own
+stdout. The JSON lines are then on the stdout of spark-submit, and Spark's log4j lines on its
+stderr.
 """
 
 from __future__ import annotations
