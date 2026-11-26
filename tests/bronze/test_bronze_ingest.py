@@ -164,9 +164,11 @@ def test_the_report_counts_each_partition_and_finds_only_csv_headers_missing(ing
             runs[day].run_id,
         )
         header = lake.landing_file(day, entry["path"]).read_text().split("\n", 1)[0]
-        assert diff.landing_lines == entry["rows"] + is_csv
+        assert (diff.landing_lines, diff.bronze_rows) == (entry["rows"] + is_csv, entry["rows"])
         assert (diff.landing_not_in_bronze, diff.bronze_not_in_landing) == (int(is_csv), 0)
-        assert (diff.lines_not_in_bronze or []) == ([header] if is_csv else [])
+        expected = [hashlib.sha256(header.encode()).hexdigest()] if is_csv else []
+        assert (diff.landing_not_in_bronze_hashes or []) == expected
+        assert not diff.bronze_not_in_landing_hashes
 
 
 def test_the_report_lists_the_counts_of_each_run_and_file(ingested):
