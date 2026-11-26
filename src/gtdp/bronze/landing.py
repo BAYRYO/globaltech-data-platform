@@ -159,9 +159,12 @@ def read_header(spark: SparkSession, file: LandedFile) -> tuple[str, ...]:
 
 
 def check_headers(files: Sequence[LandedFile], headers: Mapping[str, Sequence[str]]) -> None:
-    """``LandingError`` naming each file whose header lacks a required column of its source."""
+    """``LandingError`` naming each file without a header line, such as a file of no byte, or
+    whose header lacks a required column of its source."""
     problems = [
         f"{file.key}: header lacks {missing}"
+        if headers[file.key]
+        else f"{file.key}: no header line"
         for file in files
         if (missing := [c for c in file.source.required if c not in headers[file.key]])
     ]
