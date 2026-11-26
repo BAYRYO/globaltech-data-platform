@@ -3,7 +3,7 @@
 from pyspark.sql import functions as F
 
 from gtdp.audit import Layer
-from gtdp.io import replace_table
+from gtdp.io import read_table, replace_table
 from gtdp.jobs.registry import JobContext, job
 
 SMOKE_ROWS = 1000
@@ -20,4 +20,4 @@ def smoke(ctx: JobContext) -> None:
     )
     replace_table(buckets, path)
     ctx.run.counters.rows_in = SMOKE_ROWS
-    ctx.run.counters.rows_out = ctx.spark.read.parquet(path).count()
+    ctx.run.counters.rows_out = read_table(ctx.spark, path).count()

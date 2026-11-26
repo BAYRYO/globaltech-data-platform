@@ -9,6 +9,7 @@ from datetime import date
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import StructType
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,28 @@ def replace_table(df: DataFrame, path: str) -> None:
         raise OSError(f"could not rename {staging_uri} to {path}")
 
 
+def read_table(
+    spark: SparkSession,
+    path: str,
+    schema: StructType | None = None,
+    *,
+    merge_schema: bool = False,
+) -> DataFrame:
+    """Read the Parquet table at ``path``; a missing table or one without data reads as empty.
+
+    A table holds no data file before its first write, or when every day written so far produced
+    no row. Its empty DataFrame has ``schema``, partition columns included; without ``schema`` such
+    a table raises ``FileNotFoundError``. ``merge_schema`` reads the union of the schemas of the
+    files (ADR-0007).
+    """
+    fs, hadoop_path = _filesystem(spark, path)
+    if not fs.exists(hadoop_path) or not _has_data_file(fs, hadoop_path):
+        if schema is None:
+            raise FileNotFoundError(f"{path} holds no data file: pass its schema to read it empty")
+        return spark.createDataFrame([], schema)
+    return spark.read.option("mergeSchema", merge_schema).parquet(path)
+
+
 def path_exists(spark: SparkSession, path: str) -> bool:
     fs, hadoop_path = _filesystem(spark, path)
     return bool(fs.exists(hadoop_path))
@@ -117,6 +140,16 @@ def _partition_dir(
     escape = _catalog_utils(spark).escapePathName
     pairs = zip(partitions, values, strict=True)
     return "/".join(f"{column}={escape(str(value))}" for column, value in pairs)
+
+
+def _has_data_file(fs: Any, directory: Any) -> bool:
+    """Whether ``directory`` holds, at any depth, a file that Spark reads (not ``_*`` or ``.*``)."""
+    for status in fs.listStatus(directory):
+        if status.getPath().getName().startswith(("_", ".")):
+            continue
+        if status.isFile() or _has_data_file(fs, status.getPath()):
+            return True
+    return False
 
 
 def _catalog_utils(spark: SparkSession) -> Any:
