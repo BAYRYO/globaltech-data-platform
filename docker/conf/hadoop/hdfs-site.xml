@@ -24,11 +24,6 @@
     <name>dfs.namenode.rpc-bind-host</name>
     <value>0.0.0.0</value>
   </property>
-  <!-- Docker's reverse DNS names containers <project>-<service>-<n>.<network>; skip the check. -->
-  <property>
-    <name>dfs.namenode.datanode.registration.ip-hostname-check</name>
-    <value>false</value>
-  </property>
   <!-- A DataNode is declared dead after 2 * recheck-interval + 10 * heartbeat.interval
        = 2 * 30 s + 10 * 3 s = 90 s (default 2 * 300 s + 10 * 3 s = 630 s). -->
   <property>
