@@ -110,6 +110,18 @@ def drop_partitions(
     return present
 
 
+@contextmanager
+def table_lock(spark: SparkSession, path: str) -> Iterator[None]:
+    """Hold the lock of the table at ``path`` for the block, the lock ``write_partitions`` takes.
+
+    For a job that changes a table in steps of its own. ``TableLockedError`` at once while
+    another run holds it. Taking it also removes the staging directories of dead runs.
+    """
+    fs, target = _filesystem(spark, path)
+    with _locked(spark, fs, target):
+        yield
+
+
 def replace_table(df: DataFrame, path: str) -> None:
     """Replace the whole table at ``path`` with ``df``, which may read ``path`` itself.
 
