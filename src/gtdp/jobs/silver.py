@@ -28,7 +28,7 @@ from gtdp.silver.pipelines import (
     rejects_path,
     table_path,
 )
-from gtdp.silver.pseudonymize import salt_frame
+from gtdp.silver.pseudonymize import check_salt, ensure_fingerprint, salt_frame
 from gtdp.silver.quality import (
     DISPOSITION,
     Disposition,
@@ -95,6 +95,8 @@ def silver(ctx: JobContext) -> None:
     sources = [ctx.run.source] if ctx.run.source else list(PIPELINES)
     if unknown := [source for source in sources if source not in PIPELINES]:
         raise ValueError(f"unknown source {unknown}, expected one of {sorted(PIPELINES)}")
+    salt = ctx.cfg.pseudonymization.salt
+    check_salt(ctx.cfg.env, salt)
     for source in sources:
         ensure_no_later_partition(
             ctx.spark,
@@ -104,11 +106,12 @@ def silver(ctx: JobContext) -> None:
             force=ctx.force,
         )
 
-    salt = salt_frame(ctx.spark, ctx.cfg.pseudonymization.salt)
+    ensure_fingerprint(ctx.spark, ctx.cfg.paths.ops, salt, ctx.run.run_id)
+    salted = salt_frame(ctx.spark, salt)
     reports: dict[str, SourceReport] = {}
     for source in sources:
         try:
-            _publish(ctx, source, day, salt, reports)
+            _publish(ctx, source, day, salted, reports)
         finally:
             _record(ctx.run, reports)
         if problems := reports[source].problems():

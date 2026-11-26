@@ -6,24 +6,26 @@ import io
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 import pytest
 from pyspark.sql import functions as F
 
-from gtdp.config import LakePaths
+from gtdp.config import DEV_SALT, Env, LakePaths, Pseudonymization, Secret
 from gtdp.io import read_table
 from gtdp.schemas import SOURCES, bronze_schema
 from gtdp.silver.pipelines import PIPELINES, classified
-from gtdp.silver.pseudonymize import salt_frame
+from gtdp.silver.pseudonymize import SaltError, salt_frame
 from gtdp.silver.quality import DISPOSITION
 
-from .lakes import DAYS, SALT, local
+from .lakes import DAYS, SALT, Lake, local
+from .test_silver_incremental import silver_state
 
 pytestmark = pytest.mark.slow
 
-J1 = DAYS[0]
+J1, J2 = DAYS[0], DAYS[1]
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 
@@ -168,3 +170,33 @@ def test_the_salt_is_absent_from_the_event_log(fresh_lake, tmp_path):
     assert "email_hash" in "".join(log.read_text(encoding="utf-8") for log in logs)
     assert SALT not in job.stdout + job.stderr
     assert fresh_lake.table("customers").where(F.col("email_hash").isNotNull()).count() > 0
+
+
+def salted_lake(lake, salt: str, env: Env) -> Lake:
+    """``lake`` run with ``salt`` in ``env``."""
+    cfg = replace(lake.cfg, env=env, pseudonymization=Pseudonymization(Secret(salt)))
+    return Lake(lake.spark, cfg, lake.drops)
+
+
+@pytest.mark.parametrize("salt", [DEV_SALT, "salt-of-15-char", " " * 24])
+def test_a_weak_salt_is_refused_on_the_cluster_before_any_write(fresh_lake, salt):
+    lake = salted_lake(fresh_lake, salt, Env.CLUSTER)
+
+    with pytest.raises(SaltError):
+        lake.run("silver", J1)
+
+    assert lake.audit()[-1].status == "FAILED"
+    assert not local(lake.cfg.paths.silver).exists()
+
+
+def test_another_salt_than_silvers_is_refused_before_any_write(fresh_lake):
+    fresh_lake.run("silver", J1)
+    before = silver_state(fresh_lake)
+    lake = salted_lake(fresh_lake, f"another-{SALT}", Env.CLUSTER)
+
+    with pytest.raises(SaltError, match="docs/runbook/silver.md"):
+        lake.run("silver", J2)
+
+    assert silver_state(fresh_lake) == before
+    fingerprint = local(fresh_lake.cfg.paths.ops) / "pseudonymization" / "salt_fingerprint.json"
+    assert SALT not in fingerprint.read_text(encoding="utf-8")
