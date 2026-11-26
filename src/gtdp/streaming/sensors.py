@@ -131,8 +131,8 @@ def events(parsed: DataFrame) -> DataFrame:
     """Valid events, watermarked, each ``event_id`` kept once while the watermark allows.
 
     An event older than the watermark is dropped and counted in ``numRowsDroppedByWatermark``.
-    The late-event filter of a micro-batch uses the watermark of two batches before it, so the
-    first two micro-batches of a new checkpoint drop nothing.
+    Micro-batch ``k`` drops the events older than the watermark computed at the end of batch
+    ``k - 2``, so the first two micro-batches of a new checkpoint drop nothing.
     """
     return (
         parsed.where(F.col("reject_reason").isNull())
