@@ -16,7 +16,8 @@
 #   timeline.csv           one HDFS sample every 5 s (scripts/resilience/hdfs_watch.py poll)
 #   events.csv             time,event of each step
 #   fingerprint-*.json     gold fingerprints after the baseline run and after the replay
-#   dfsadmin-*.txt fsck-*  snapshots before, during, after re-replication and at the end
+#   dfsadmin-*.txt fsck-*  snapshots before, during, after re-replication, during the
+#                          decommission and at the end
 #   ec-*.txt               erasure-coded read and checksums while the victim is dead
 #   gold-*.log             driver logs; gold-replay-yarn.log the replay's container logs
 #   namenode.log           NameNode lines about dead nodes, replication and decommission
