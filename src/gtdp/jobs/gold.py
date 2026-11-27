@@ -24,7 +24,14 @@ from gtdp.gold.tables import (
     ORDER_DATE,
     table_path,
 )
-from gtdp.io import INGESTION_DATE, drop_partitions, read_table, replace_table, write_partitions
+from gtdp.io import (
+    INGESTION_DATE,
+    drop_partitions,
+    read_table,
+    replace_table,
+    table_lock,
+    write_partitions,
+)
 from gtdp.jobs.registry import JobContext, job
 from gtdp.schemas import SILVER_REJECTS
 from gtdp.silver.days import complete_days
@@ -52,7 +59,8 @@ def gold(ctx: JobContext) -> None:
     required column, a fact pointing at no dimension row. Then ``fact_sales`` is published for the
     order dates whose rows differ from the published ones, a published date no order holds any
     more is removed, and the other tables are replaced whole. ``fact_sales`` is read back: it must
-    hold exactly the rows built.
+    hold exactly the rows built. The run holds the lock of the whole gold layer (``_gold.lock``
+    beside the gold directory) from start to end: a second run fails at once, before reading.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -65,10 +73,11 @@ def gold(ctx: JobContext) -> None:
         raise FileNotFoundError(f"silver has not completed {day}: run silver for {day} first")
     ctx.run.metrics["silver_days"] = [str(d) for d in complete]
 
-    try:
-        _publish(ctx, _build(ctx, complete, settings))
-    finally:
-        ctx.spark.catalog.clearCache()
+    with table_lock(ctx.spark, ctx.cfg.paths.gold):
+        try:
+            _publish(ctx, _build(ctx, complete, settings))
+        finally:
+            ctx.spark.catalog.clearCache()
 
 
 def _build(ctx: JobContext, complete: list[date], settings: GoldSettings) -> dict[str, DataFrame]:
@@ -134,6 +143,7 @@ def _publish(ctx: JobContext, tables: dict[str, DataFrame]) -> None:
         }
     )
 
+    _ensure_unlocked(spark, [table_path(gold, name) for name in tables])
     if rewritten:
         changed = sales.where(F.col(ORDER_DATE).isin(rewritten)).repartition(ORDER_DATE)
         write_partitions(changed, path, {ORDER_DATE: rewritten})
@@ -149,6 +159,15 @@ def _publish(ctx: JobContext, tables: dict[str, DataFrame]) -> None:
         day for day in built.keys() | after.keys() if built.get(day) != after.get(day)
     ):
         raise GoldCheckError(f"fact_sales differs from the rows built from silver on {differing}")
+
+
+def _ensure_unlocked(spark: SparkSession, paths: list[str]) -> None:
+    """``TableLockedError`` if another run holds the lock of a table at ``paths``, such as a run
+    that died while writing it: checked before the first write, so a run that cannot write every
+    table writes none."""
+    for path in paths:
+        with table_lock(spark, path):
+            pass
 
 
 def _published_fingerprints(spark: SparkSession, path: str) -> dict[date, object]:
