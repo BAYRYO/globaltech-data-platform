@@ -8,7 +8,8 @@ that state: a DataNode is ``live`` when its container runs, ``dead`` otherwise, 
 datanode1 to datanode3 is stopped and the spare is not live.
 
 Hooks, shell conditions on the state folder ``$S``: ``POLLER_DIES_WHEN`` ends the poller,
-``REPORT_FAILS_WHEN`` makes ``hdfs dfsadmin -report`` fail. ``GOLD_SECONDS`` lists how long each
+``REPORT_FAILS_WHEN`` makes ``hdfs dfsadmin -report`` fail, ``PENDING_WHEN`` reports 3 copies
+asked and not yet confirmed (``pending_reconstruction``). ``GOLD_SECONDS`` lists how long each
 gold run takes, the last value for the runs after it (1 s).
 """
 
@@ -77,7 +78,7 @@ state() {
   echo "$s,$b"
 }
 row() {
-  local live=0 dead=0 under=0 cells="" h st
+  local live=0 dead=0 under=0 pending=0 cells="" h st
   for h in datanode1 datanode2 datanode3 datanode4; do
     st=$(state "$h")
     cells+=",$st"
@@ -86,7 +87,8 @@ row() {
   for h in datanode1 datanode2 datanode3; do
     if ! running "$h" && [[ $(state datanode4) != live,* ]]; then under=5; fi
   done
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$live,$dead,0,$under,0,0,0,0,0,0,0,0$cells,"
+  if [[ -n ${PENDING_WHEN:-} ]] && eval "$PENDING_WHEN"; then pending=3; fi
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$live,$dead,0,$under,0,0,0,0,0,0,$pending,0$cells,"
 }
 case "$1 ${2:-}" in
   "python3 -c") echo /opt/hadoop/etc/hadoop/dfs.exclude ;;
