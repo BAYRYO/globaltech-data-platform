@@ -472,7 +472,7 @@ manifeste du générateur :
 | Compteur | Mesuré | Attendu d'après le manifeste |
 | --- | ---: | --- |
 | Événements lus | 11 772 | 11 772 lignes |
-| Lignes d'agrégats écrites (fenêtre × capteur) | 743 | 720 (fenêtres de 00:00 à 00:11 × 60 capteurs) + 23 (retards de 23:58 et 23:59) |
+| Lignes d'agrégats écrites (fenêtre × capteur) | 743 | 720 (fenêtres de 00:00 à 00:11 × 60 capteurs), plus les fenêtres d'avant minuit des événements en retard ; mesuré : 720 + 23 (23:58 et 23:59) |
 | Alertes | 10 | 5 capteurs en pic × 2 fenêtres (120 événements `SPIKE`) |
 | Rejets (`MALFORMED_JSON` 54, `NULL_VALUE` 54) | 108 | 54 + 54 |
 | Événements écartés par le watermark | 108 | `VERY_LATE_EVENT` 108 (les 540 `LATE_EVENT` sont gardés) |
@@ -574,7 +574,7 @@ complet dans [`mr-vs-spark-campaign.md`](perf-evidence/mr-vs-spark-campaign.md).
   10 054 797, soit 10 054 794 lignes de données et 3 en-têtes. Spark en compte 5 166 de plus : les
   fichiers clients, qu'il lit dans HDFS, alors que chaque mapper les reçoit du cache distribué,
   hors compteurs ([lignes et octets lus](mapreduce-vs-spark.md#ce-que-disent-ces-chiffres)). Le
-  shuffle de MapReduce est minuscule, 1 353 octets sur `full`, parce que le combiner ramène les
+  shuffle de MapReduce ne fait que 1 353 octets sur `full` : le combiner ramène les
   enregistrements à 6 par tâche avant l'envoi au reducer.
 - **Petits volumes.** Sur `ci` (20 110 lignes), les deux variantes MapReduce sont plus rapides que
   Spark (p = 0,008). Sur `dev` (1,0 M), seule la variante à battement court l'est (p = 0,008) ;
