@@ -4,8 +4,8 @@ Le même calcul, le chiffre d'affaires facturé par pays avec un compteur de lig
 motif, est écrit deux fois : en Hadoop Streaming (mapper et reducer Python) et en Spark. Les deux
 programmes lisent les mêmes fichiers bruts du landing et rendent un résultat identique octet pour
 octet, vérifié à chaque exécution par un outil de comparaison. Ce document définit le calcul,
-décrit les deux implémentations, donne les mesures, ce qu'elles prouvent et ce qu'elles ne
-prouvent pas encore, puis le protocole de la campagne de mesure qui tranchera. Stories Jira :
+décrit les deux implémentations, donne les premières mesures et ce qu'elles prouvent, puis le
+protocole et les résultats de la campagne de mesure du lot 7. Stories Jira :
 KAN-41 (MapReduce), KAN-42 (Spark), KAN-43 (comparaison).
 
 **En bref.**
@@ -13,10 +13,11 @@ KAN-41 (MapReduce), KAN-42 (Spark), KAN-43 (comparaison).
 - **Résultats égaux, prouvé.** Même CA au centime et mêmes compteurs sur les données du contrat,
   en local et sur le cluster, et en local sur des octets hors contrat (BOM, fins de ligne CR LF
   ou CR, caractère de contrôle dans une région).
-- **Durée : pas de différence significative.** Médianes de 3 exécutions exclusives : 13,6 s
-  (MapReduce) contre 14,9 s (Spark) sur 1 M de lignes, 19,6 s contre 16,5 s sur 10 M. Le test
-  exact de Mann-Whitney donne p = 0,10 sur 10 M (unilatéral, Spark plus rapide), et 3 exécutions
-  contre 3 ne peuvent pas descendre sous 0,05.
+- **Durée : MapReduce gagne sur les petits volumes, égalité sur 10 M.** Campagne de 45
+  exécutions exclusives, 5 par variante : sur 20 110 lignes, MapReduce met 11,4 s (9,8 s avec un
+  battement d'ApplicationMaster de 100 ms) contre 12,7 s pour Spark ; sur 1 M, 10,8 s pour
+  MapReduce réglé contre 15,5 s pour Spark ; sur 10 M, 21,6 s, 20,7 s et 20,7 s, sans différence
+  significative (test exact de Mann-Whitney, p bilatéral 0,095 et 0,841).
 - **Limiteur de MapReduce dans la configuration par défaut : le démarrage échelonné des
   conteneurs**, environ un map par seconde. Démarrés ensemble, ses gros maps finiraient environ
   4 s plus tôt sur 10 M de lignes (inféré de la chronologie des tâches).
@@ -28,8 +29,8 @@ KAN-41 (MapReduce), KAN-42 (Spark), KAN-43 (comparaison).
   protocole distribué (tri, combiner, format texte, cache distribué) : MapReduce oblige à l'écrire
   à la main, Spark le déduit d'une jointure et d'un `groupBy`.
 
-La [campagne de mesure](#campagne-de-mesure) (3 volumes, 5 exécutions alternées par variante,
-cluster exclusif) dira si l'un des deux moteurs est plus rapide.
+Détail et tests : [résultats de la campagne](#résultats-de-la-campagne) (3 volumes, 5 exécutions
+alternées par variante, cluster exclusif).
 
 ## Le calcul
 
@@ -517,8 +518,8 @@ parallélisme.
 
 ## Campagne de mesure
 
-Protocole de la mesure qui tranchera la question de la durée. Elle se lance avec le lot 7, sur un
-cluster réservé.
+Protocole de la mesure qui tranche la question de la durée, lancée avec le lot 7 sur un cluster
+réservé. Résultats à la fin de la section.
 
 - **Volumes.** Trois profils du générateur, graine 42, J1 à J3 avec leurs manifestes : `ci`
   (20 110 lignes, presque tout en coûts fixes), `dev` (1,0 M, déjà dans le landing) et `full`
@@ -527,7 +528,7 @@ cluster réservé.
   ApplicationMaster ↔ ResourceManager à 100 ms, `--mr-conf`) et `spark` (réglages par défaut,
   2 exécuteurs de 2 cœurs).
 - **Exécutions.** 5 par variante et par volume, en alternance (`mapreduce`, `mapreduce-tuned`,
-  `spark`, puis on recommence), soit 45 exécutions, environ 40 minutes.
+  `spark`, puis on recommence), soit 45 exécutions, 28 minutes mesurées.
 - **Exclusivité.** Chaque exécution attend que le ResourceManager ne liste plus aucune application
   active ; une exécution qu'une autre application a chevauchée est recommencée (3 essais au
   plus) ; le contrôle est noté dans le rapport. Prévenir les autres lots : le streaming ne doit pas
@@ -568,19 +569,58 @@ scripts/mapreduce/compare.sh --date 2026-01-03 --runs 5 \
 scripts/cluster/client.sh hdfs dfs -rm -r -skipTrash /benchmarks/mr-vs-spark
 ```
 
-Résultats, à reporter depuis `build/mr-vs-spark/campaign/report.md` :
+### Résultats de la campagne
+
+La campagne a tourné le 2026-11-27 de 02:14 à 02:42 UTC, au commit `32b18ba`, avec la commande
+ci-dessus : 45 exécutions, `application_1795715756506_0360` à `_0404`. Chacune a démarré quand
+le ResourceManager ne listait aucune application active (contrôle noté dans le rapport, par
+exemple `2026-11-27T02:14:53+00:00 : 0 application(s) NEW/NEW_SAVING/SUBMITTED/ACCEPTED/RUNNING`),
+et aucune n'a été chevauchée par une autre application : aucune n'a donc été recommencée. Sur
+chaque volume, les 15 exécutions rendent la même sortie octet pour octet et les mêmes compteurs,
+et les compteurs `Quality` sont égaux aux anomalies des manifestes. Rapport complet : sortie de
+`compare.sh` dans `build/mr-vs-spark/campaign/report.md`, reproduite dans le commentaire de preuves
+de la PR du lot 7.
 
 | Volume | Variante | n | Durée médiane (s) | Min à max (s) | p bilatéral contre `spark` | Mo·s médian | Cœurs·s médian | CPU par M lignes (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `ci` | `mapreduce` | 5 | à mesurer | | | | | |
-| `ci` | `mapreduce-tuned` | 5 | à mesurer | | | | | |
-| `ci` | `spark` | 5 | à mesurer | | — | | | |
-| `dev` | `mapreduce` | 5 | à mesurer | | | | | |
-| `dev` | `mapreduce-tuned` | 5 | à mesurer | | | | | |
-| `dev` | `spark` | 5 | à mesurer | | — | | | |
-| `full` | `mapreduce` | 5 | à mesurer | | | | | |
-| `full` | `mapreduce-tuned` | 5 | à mesurer | | | | | |
-| `full` | `spark` | 5 | à mesurer | | — | | | |
+| `ci`, 20 110 lignes | `mapreduce` | 5 | 11,4 | 11,2 à 11,9 | 0,008 | 19 581 | 19,2 | non significatif |
+| `ci` | `mapreduce-tuned` | 5 | **9,8** | 9,6 à 11,3 | 0,008 | 17 902 | 20,3 | non significatif |
+| `ci` | `spark` | 5 | 12,7 | 12,4 à 16,8 | — | 43 511 | 46,3 | non significatif |
+| `dev`, 1,0 M lignes | `mapreduce` | 5 | 13,8 | 13,0 à 16,0 | 0,056 | 24 475 | 26,8 | 2,00 |
+| `dev` | `mapreduce-tuned` | 5 | **10,8** | 9,7 à 11,1 | 0,008 | 20 501 | 25,1 | 1,92 |
+| `dev` | `spark` | 5 | 15,5 | 14,5 à 18,7 | — | 53 555 | 54,6 | 2,21 |
+| `full`, 10,1 M lignes | `mapreduce` | 5 | 21,6 | 21,2 à 23,1 | 0,095 | 58 800 | 86,3 | 0,95 |
+| `full` | `mapreduce-tuned` | 5 | 20,7 | 18,8 à 21,7 | 0,841 | 55 245 | 85,8 | 0,90 |
+| `full` | `spark` | 5 | 20,7 | 19,9 à 22,6 | — | 69 741 | 81,9 | 1,92 |
+
+Le CPU par million de lignes vient de la droite des moindres carrés par tâche. Sur `ci`, les
+tâches lisent trop peu de lignes (20 110 en tout) pour que la pente ait un sens : la régression
+donne même des durées négatives par million de lignes. Côté MapReduce, ce CPU ne compte que les
+JVM, pas les processus Python (voir plus haut).
+
+Test de Mann-Whitney exact entre les deux variantes MapReduce : p bilatéral 0,016 sur `ci`,
+0,008 sur `dev` et 0,056 sur `full`.
+
+**Ce que la campagne établit.**
+
+- **Petits volumes : MapReduce est plus rapide que Spark**, avec la différence retenue (p < 0,05)
+  sur `ci` pour les deux variantes MapReduce, et sur `dev` pour la variante à battement court.
+  Spark paie un démarrage fixe (driver, ApplicationMaster, deux exécuteurs) que ces volumes ne
+  compensent pas.
+- **Le battement court de l'ApplicationMaster MapReduce gagne 1,6 s sur `ci` et 3,0 s sur `dev`**
+  (p 0,016 et 0,008) : une part du coût fixe de MapReduce venait de l'attente des conteneurs, comme
+  l'annonçait l'essai unique de la section précédente. Sur `full`, le gain (0,9 s) n'est pas
+  significatif (p 0,056).
+- **Sur 10 M de lignes, aucune différence de durée n'est démontrée** entre Spark et l'une ou
+  l'autre variante MapReduce (p 0,095 et 0,841). Le point de bascule se situe donc au-delà de
+  `dev` et, au mieux, autour de `full` : la campagne ne montre pas de volume où Spark devient plus
+  rapide.
+- **Ressources.** Spark réserve 2,2 fois plus de mémoire·s que MapReduce sur `ci` et `dev`, et
+  1,2 fois plus sur `full`. Ses cœurs·s dépassent ceux de MapReduce de 2,4 fois sur `ci`, 2,0 fois
+  sur `dev`, et sont 5 % plus bas sur `full`.
+
+L'option `rack-locality-full-reset=false` n'a pas été essayée : c'est un changement de la
+plateforme, que le lead n'a pas demandé.
 
 ## Conclusion
 
@@ -588,9 +628,11 @@ Ce que les mesures établissent aujourd'hui :
 
 1. **Même résultat**, au centime et compteur par compteur, vérifié à chaque exécution, égal aux
    manifestes du générateur, et identique sur les octets hors contrat testés.
-2. **Pas de différence de durée démontrée** sur 1 M ni sur 10 M de lignes avec 3 exécutions par
-   moteur. Dans la configuration par défaut, MapReduce est limité par l'arrivée de ses conteneurs,
-   un par seconde, autant que par son calcul.
+2. **MapReduce est plus rapide sur les petits volumes, et aucun moteur ne l'est sur 10 M de
+   lignes** (campagne de 5 exécutions par variante). Spark paie un démarrage fixe que 20 000 et
+   1 M de lignes ne compensent pas. MapReduce est limité par l'arrivée de ses conteneurs autant
+   que par son calcul : un battement d'ApplicationMaster de 100 ms lui fait gagner 1,6 à 3,0 s
+   sur les petits volumes.
 3. **Plus de CPU par ligne pour MapReduce**, environ 2,1 à 2,5 fois (inféré), et un coût fixe par
    tâche que Spark n'a pas ; en contrepartie, MapReduce réserve moins de mémoire.
 4. **Moins de plomberie à écrire et à relire en Spark.** À taille égale, le code Spark décrit le
@@ -601,8 +643,8 @@ Ce que les mesures établissent aujourd'hui :
 Les traitements batch de la plateforme sont écrits en Spark, pour les points 3 et 4 et non pour
 une vitesse que les mesures ne montrent pas. MapReduce garde de vrais atouts : un mapper en Python
 standard qu'on débogue avec un simple tube, sans cluster, et une mémoire réservée au plus juste,
-tâche par tâche. Le job Hadoop Streaming reste dans le dépôt comme référence de la comparaison. La
-campagne de mesure dira si l'un des moteurs est plus rapide, et à partir de quel volume.
+tâche par tâche. Le job Hadoop Streaming reste dans le dépôt comme référence de la comparaison.
+La campagne ne montre aucun volume, jusqu'à 10 M de lignes, où Spark serait plus rapide.
 
 ## Reproduire
 
