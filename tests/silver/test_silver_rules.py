@@ -136,6 +136,8 @@ def reasons(spark, source, base, change, **kwargs):
         ({"event_time": "2024-02-29T10:00:00"}, []),
         ({"event_time": "2026-01-03T00:00:00"}, []),
         ({"event_time": "2026-01-03T00:00:01"}, ["FUTURE_TIMESTAMP"]),
+        ({"event_time": "1899-12-31T23:59:59"}, ["ANCIENT_TIMESTAMP"]),
+        ({"event_time": "1900-01-01T00:00:00"}, []),
         ({"channel": "fax"}, ["BAD_ENUM"]),
         ({"channel": "WEB"}, ["BAD_ENUM"]),
         ({"channel": None}, ["BAD_ENUM"]),
@@ -232,6 +234,12 @@ def test_the_key_survivor_does_not_depend_on_row_order(spark):
         ({"signup_date": "  "}, ["BAD_DATE"]),
         ({"signup_date": "2026-01-03"}, ["FUTURE_SIGNUP"]),
         ({"signup_date": "2026-01-02"}, []),
+        ({"signup_date": "1899-12-31"}, ["ANCIENT_SIGNUP"]),
+        ({"signup_date": "1500-01-01"}, ["ANCIENT_SIGNUP"]),
+        ({"signup_date": "31/12/1899"}, ["BAD_DATE", "ANCIENT_SIGNUP"]),
+        ({"signup_date": "1900-01-01"}, []),
+        ({"updated_at": "1899-12-31T23:59:59"}, ["ANCIENT_UPDATED_AT"]),
+        ({"updated_at": "1900-01-01T00:00:00"}, []),
     ],
 )
 def test_customer_flags_keep_the_record(spark, change, flags):
@@ -331,6 +339,8 @@ def test_a_restated_customer_is_a_key_duplicate(spark):
         ({"updated_at": "2025-02-30T00:00:00"}, ["BAD_TIMESTAMP"]),
         ({"updated_at": None}, ["BAD_TIMESTAMP"]),
         ({"updated_at": "  "}, ["BAD_TIMESTAMP"]),
+        ({"updated_at": "1899-12-31T23:59:59"}, ["ANCIENT_TIMESTAMP"]),
+        ({"updated_at": "1900-01-01T00:00:00"}, []),
     ],
 )
 def test_product_rules(spark, change, expected):
@@ -502,6 +512,23 @@ def test_one_address_has_one_hash_whatever_its_case(spark):
 )
 def test_a_line_outside_the_combined_log_format_is_rejected(spark, line):
     assert reasons(spark, "weblogs", {"value": LOG}, {"value": line}) == ["MALFORMED_LINE"]
+
+
+@pytest.mark.parametrize(
+    ("time", "expected"),
+    [
+        ("31/Dec/1899:23:59:59 +0000", ["ANCIENT_TIMESTAMP"]),
+        ("01/Jan/1900:00:59:59 +0100", ["ANCIENT_TIMESTAMP"]),
+        ("01/Jan/1900:00:00:00 +0000", []),
+        ("03/Jan/2026:00:00:00 +0000", []),
+        ("03/Jan/2026:00:00:01 +0000", ["FUTURE_TIMESTAMP"]),
+        ("02/Jan/2026:23:00:01 -0100", ["FUTURE_TIMESTAMP"]),
+    ],
+)
+def test_a_log_time_before_1900_or_after_the_day_after_the_drop_is_rejected(spark, time, expected):
+    line = LOG.replace("01/Jan/2026:20:21:48 +0000", time)
+
+    assert reasons(spark, "weblogs", {"value": LOG}, {"value": line}) == expected
 
 
 def test_a_log_time_offset_is_converted_to_utc(spark):
