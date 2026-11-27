@@ -7,9 +7,11 @@ file. A column whose rule starts with ``Partition`` is a partition column. A col
 once for a path, and a column table sits under a heading that names its path, except the tables
 of ``UNCHECKED``.
 
-The code side is read from the registries: the declared schemas of bronze, silver, the star and
-the sensor stream, the indicators built on empty inputs, and the ops tables and JSON files written
-by a tiny run in a temporary lake.
+The code side is read from the registries: the declared schemas and partition columns of bronze,
+silver, the star and the sensor stream, the indicators built on empty inputs, and the ops tables
+and JSON files written by a tiny run in a temporary lake. The batch jobs write each registry table
+through ``gtdp.publish.publish``, which refuses rows without the declared columns and takes the
+partition columns from the registry (``tests/core/test_publish.py``).
 """
 
 from __future__ import annotations
@@ -32,14 +34,19 @@ from gtdp.gold.tables import (
     DIM_PRODUCT,
     FACT_SALES,
     FACT_WEB_EVENTS,
-    ORDER_DATE,
     STAR,
 )
 from gtdp.gold.tables import table_path as gold_path
 from gtdp.io import INGESTION_DATE, read_table
 from gtdp.jobs.registry import JobContext
 from gtdp.jobs.smoke import smoke
-from gtdp.schemas import SILVER_ORDERS, SILVER_REJECTS, SOURCES, bronze_schema
+from gtdp.schemas import (
+    REJECTS_PARTITIONS,
+    SILVER_ORDERS,
+    SILVER_REJECTS,
+    SOURCES,
+    bronze_schema,
+)
 from gtdp.silver.days import COMPLETE, days_path, mark_complete, mark_source
 from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
@@ -147,16 +154,14 @@ def _partitions(directory: Path) -> list[str]:
 
 def _declared(spark, paths: LakePaths, settings) -> dict[str, Shape]:
     tables = {
-        f"{paths.bronze}/{source.name}": Shape.of(bronze_schema(source), INGESTION_DATE)
+        f"{paths.bronze}/{source.name}": Shape.of(bronze_schema(source), *source.partitions)
         for source in SOURCES.values()
     }
     for source, pipeline in PIPELINES.items():
-        day = (INGESTION_DATE,) if pipeline.partitioned else ()
-        tables[silver_path(paths.silver, source)] = Shape.of(pipeline.schema, *day)
-        tables[rejects_path(paths.silver, source)] = Shape.of(SILVER_REJECTS, INGESTION_DATE)
+        tables[silver_path(paths.silver, source)] = Shape.of(pipeline.schema, *pipeline.partitions)
+        tables[rejects_path(paths.silver, source)] = Shape.of(SILVER_REJECTS, *REJECTS_PARTITIONS)
     for table in STAR:
-        partitions = (ORDER_DATE,) if table is FACT_SALES else ()
-        tables[gold_path(paths.gold, table.name)] = Shape.of(table.schema, *partitions)
+        tables[gold_path(paths.gold, table.name)] = Shape.of(table.schema, *table.partitions)
     empty = [
         spark.createDataFrame([], schema)
         for schema in (
