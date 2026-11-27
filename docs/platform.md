@@ -74,6 +74,7 @@ Docker `gtdp`.
 | --- | --- | --- | --- |
 | `namenode` | NameNode HDFS | http://localhost:9870 | 8020 (RPC), 9870 |
 | `datanode1` à `datanode3` | DataNodes HDFS | non publiée | 9864, 9866, 9867 |
+| `datanode4` | DataNode HDFS de secours, profil `spare`, démarré à la main pendant une panne | non publiée | 9864, 9866, 9867 |
 | `resourcemanager` | ResourceManager YARN | http://localhost:8088 | 8030 à 8033, 8088 |
 | `nodemanager1`, `nodemanager2` | NodeManagers YARN | non publiée | 8042, 13562 (shuffle) |
 | `spark-history` | Spark History Server | http://localhost:18080 | 18080 |
@@ -92,6 +93,7 @@ deux avant tout démon. Chaque valeur est donc fixée explicitement.
 | --- | --- | --- | --- | --- | --- |
 | `namenode` | 1 | 768 Mio | | 1 024 Mio | 1 024 Mio |
 | `datanode` | 3 | 384 Mio | | 640 Mio | 1 920 Mio |
+| `datanode4` (profil `spare`) | 0, 1 pendant une panne | 384 Mio | | 640 Mio | 0 Mio, 640 Mio quand il tourne |
 | `resourcemanager` | 1 | 768 Mio | | 1 024 Mio | 1 024 Mio |
 | `nodemanager` | 2 | 512 Mio | 2 560 Mio | 3 328 Mio | 6 656 Mio |
 | `mr-history` | 1 | 384 Mio | | 640 Mio | 640 Mio |
@@ -441,9 +443,12 @@ temps de la décommission : 12 672 Mio pour le cluster au lieu de 12 032 Mio, et
 
 On retire `datanode4` par une décommission, jamais par un simple arrêt : un arrêt laisserait
 sous-répliqués les blocs dont il porte une réplique. `dfs.hosts.exclude` désigne
-`/opt/hadoop/etc/hadoop/dfs.exclude`, vide dans l'image. La procédure complète, avec les délais
-mesurés, est dans le [runbook HDFS](runbook/hdfs.md#perte-dun-datanode). `down.sh` et
-`reset.sh` activent le profil `spare` : ils suppriment aussi `datanode4`, et `reset.sh` son volume.
+`/opt/hadoop/etc/hadoop/dfs.exclude`, vide dans l'image. Une fois `datanode4` arrêté et compté
+mort, on supprime son conteneur et son volume, qui garde toutes ses répliques, puis on redémarre
+le NameNode : sans liste d'inclusion, seul ce redémarrage efface `datanode4` de la liste des
+DataNodes morts, et `status.sh` revient à `3 live / 0 dead`. La procédure complète, avec les délais mesurés, est dans
+le [runbook HDFS](runbook/hdfs.md#perte-dun-datanode). `down.sh` et `reset.sh` activent le profil
+`spare` : ils suppriment aussi `datanode4`, et `reset.sh` son volume.
 
 ## Dépannage
 
