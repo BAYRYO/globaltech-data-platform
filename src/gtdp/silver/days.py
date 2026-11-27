@@ -50,7 +50,10 @@ def published_sources(spark: SparkSession, silver: str, day: date) -> dict[str, 
     if not fs.exists(path):
         return {}
     markers = [s.getPath().getName() for s in fs.listStatus(path)]
-    redo = f"run silver --date {day} again to rewrite the markers of the day"
+    redo = (
+        f"run silver --date {day} again, with --force if a later day is complete, then silver for "
+        "each later day in order, to rewrite the markers"
+    )
     return {
         name.removesuffix(".json"): _field(spark, f"{directory}/{name}", "run_id", redo)
         for name in markers
