@@ -140,7 +140,7 @@ Le rapport affiche :
 
 | Tableau | Valeur attendue |
 | --- | --- |
-| `gold/_state.json`, `pending`, `withdrawn` | `PUBLISHED`. `pending` : jours que silver a terminés après la dernière exécution gold (gold est en retard, relancez-le) ; `withdrawn` : jours dont gold est la fonction et que silver ne marque plus terminés (après un `--force`). Ni l'un ni l'autre n'est un écart. |
+| `gold/_state.json`, `pending`, `withdrawn` | `PUBLISHED`. `pending` : jours que silver a terminés après la dernière exécution gold (gold est en retard, relancez-le) ; `withdrawn` : jours dont gold est la fonction et que silver ne marque plus terminés (après un `--force`). Ni l'un ni l'autre n'est un écart en soi. Après un `--force`, le contrôle `revenue_eur (applicable price)` de « Gold contre silver » est aussi en `MISMATCH`, et le rapport sort avec 1, jusqu'au rejeu des jours suivants puis de gold. |
 | Commandes par `order_date` (une colonne par dépôt, `drops`, `silver`, `fact_sales`, `status`) | `ok` partout : `fact_sales` = commandes silver de la date dans les jours de `silver_days`. Affiché pour les 7 dernières dates, les dates reçues dans plusieurs dépôts et toute date en écart, puis un résumé. |
 | Invariants (`check`, `rows`, `status`) | `ok` (0) pour chaque clé, chaque colonne obligatoire et chaque référence obligatoire, `info` pour les clients des logs. |
 | Gold contre silver (`check`, `silver`, `gold`, `status`) | `ok` partout. Silver est recalculé en une passe sur les jours de `silver_days` : nombre de commandes, `revenue_eur` au prix applicable, `invoiced_amount_eur` (formule appliquée directement aux commandes silver), commandes sans version valide ou avec plusieurs (0), couverture de `dim_date` sans trou, chiffre d'affaires `COMPLETED` égal au total de `kpi_revenue_daily`, entonnoir jamais croissant. |
@@ -185,16 +185,28 @@ avec `TableLockedError`, suivez les étapes 1 à 3 avant de la refaire :
    `FINISHED` dont `Final-State` vaut `SUCCEEDED` (constaté sur le cluster). Si elle est
    terminée, le journal de la relance dit `no state from YARN` : le ResourceManager n'a pas
    répondu à trois essais, et sans l'étape 3 les verrous ne seraient repris qu'une fois plus
-   vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut).
+   vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut). Si la commande répond
+   `Application with id '...' doesn't exist in RM or Timeline Server.`, le ResourceManager a
+   redémarré depuis et ne connaît plus l'application : la relance dit aussi `no state from YARN`.
 
 	```bash
 	scripts/cluster/client.sh yarn application -status application_1795715756506_0412
 	```
 
-3. Supprimez les verrous de gold, et eux seuls :
+3. Vérifiez qu'aucune exécution gold ne tourne : aucun conteneur client dont la commande contient
+   `submit.sh gold`, aucune application `gtdp-gold` `RUNNING` ou `ACCEPTED`.
 
 	```bash
-	scripts/cluster/client.sh hdfs dfs -rm -f /datalake/_gold.lock '/datalake/gold/_*.lock'
+	docker ps --filter name=gtdp-client --no-trunc --format '{{.Names}}  {{.Command}}'
+	scripts/cluster/client.sh yarn application -list -appStates RUNNING,ACCEPTED
+	```
+
+	Supprimez ensuite les verrous de gold, et eux seuls : celui de la couche et ceux des tables du
+	modèle en étoile et des indicateurs. Les verrous `gold/_sensor_*.lock` appartiennent au flux
+	capteurs : n'y touchez pas.
+
+	```bash
+	scripts/cluster/client.sh hdfs dfs -rm -f /datalake/_gold.lock '/datalake/gold/_dim_*.lock' '/datalake/gold/_fact_*.lock' '/datalake/gold/_kpi_*.lock'
 	```
 
 4. Relancez gold pour le dernier jour terminé. Il reconstruit tout, réécrit ce que l'exécution

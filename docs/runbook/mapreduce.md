@@ -124,7 +124,7 @@ scripts/test.sh tests/mapreduce
 | --- | --- |
 | `error: no orders landed in …/orders/ingestion_date=<date>` | La date n'a pas de partition `orders`. Lister `hdfs dfs -ls <landing>/orders`, ou déposer le jour avec `land.sh`. |
 | Le job Spark échoue avec `FileNotFoundError: nothing landed in …` | Même cause, côté Spark. |
-| Le job Spark sort avec le code 2 | `--date` manque (`ConfigError: --date is required ...`), ou la configuration est invalide (journal `invalid configuration`). |
+| Le job Spark sort avec le code 2 | `--date` manque : le journal dit `invalid configuration: --date is required: ...`, l'audit `ConfigError: --date is required: ...`. Une autre configuration invalide donne aussi une ligne `invalid configuration`. |
 | `File does not exist: …/customers_….csv` au lancement du job MapReduce | Un chemin `-files` sans schéma désigne un fichier local. `run_mr.sh` préfixe le landing par `fs.defaultFS` ; ne pas retirer ce préfixe. |
 | Tâche map en échec, `PipeMapRed.waitOutputThreads(): subprocess failed with code 1` | Le mapper Python a levé une exception. `yarn logs -applicationId <id> -log_files stderr` montre la trace ; reproduire avec `python3 mapreduce/mapper.py <clients> < <fichier> \| LC_ALL=C sort \| python3 mapreduce/reducer.py`, un fichier de commandes par mapper comme un split par tâche (`cat a b` collerait la dernière ligne d'un fichier sans saut de ligne final à la suivante). |
 | `compare.sh` reste sur l'attente de YARN | Une autre application tourne (streaming, autre lot). `scripts/cluster/client.sh yarn application -list` ; attendre, ou `--no-wait` pour un contrôle sans mesure. |
