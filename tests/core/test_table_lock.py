@@ -64,18 +64,24 @@ def table(tmp_path):
 def resource_manager(spark):
     """The REST API of a ResourceManager on localhost, named by the Hadoop configuration.
 
-    ``states`` maps an application id to the state it reports, or to the raw body it answers.
-    Any other id is unknown (404). ``requests`` lists the paths it was asked for.
+    ``states`` maps an application id to the state it reports, to the ``app`` object it answers,
+    or to the raw body it answers. Any other id is unknown (404). The next ``failures`` requests
+    get 503. ``requests`` lists the paths it was asked for.
     """
-    rm = SimpleNamespace(states={}, requests=[])
+    rm = SimpleNamespace(states={}, requests=[], failures=0)
 
     class Api(BaseHTTPRequestHandler):
         def do_GET(self):
             rm.requests.append(self.path)
             application_id = self.path.rsplit("/", 1)[-1]
             answer = rm.states.get(application_id)
-            if answer is None:
+            if rm.failures:
+                rm.failures -= 1
+                status, answer = 503, b"<html>Service Unavailable</html>"
+            elif answer is None:
                 status, body = 404, {"RemoteException": {"exception": "NotFoundException"}}
+            elif isinstance(answer, dict):
+                status, body = 200, {"app": answer}
             else:
                 status, body = 200, {"app": {"id": application_id, "state": answer}}
             data = answer if isinstance(answer, bytes) else json.dumps(body).encode()
@@ -488,3 +494,22 @@ def test_a_release_that_never_reads_its_lock_keeps_it_and_says_how_to_free_it(
     assert len(errors) == 1
     assert str(lock) in errors[0]
     assert "hdfs dfs -rm" in errors[0]
+
+
+def test_one_failed_request_to_yarn_never_frees_the_old_lock_of_a_running_application(
+    spark, table, resource_manager, monkeypatch
+):
+    """From the review: a RUNNING application holds its lock whatever its age, yet a single
+    failed request to the ResourceManager handed the lock to the next run."""
+    path, lock = table
+    lock.write_text(lock_of(APP))
+    make_old(lock)
+    resource_manager.states[APP] = "RUNNING"
+    resource_manager.failures = 1
+    monkeypatch.setattr(gtdp.io, "_RETRY_PAUSES_S", (0.0, 0.0))
+
+    with pytest.raises(TableLockedError, match=APP), table_lock(spark, path):
+        pass
+
+    assert lock.read_text() == lock_of(APP)
+    assert resource_manager.requests == [f"/ws/v1/cluster/apps/{APP}"] * 2
