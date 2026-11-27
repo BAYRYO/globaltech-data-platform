@@ -187,9 +187,14 @@ class StreamingSettings:
                 raise ConfigError(f"{label}: below must be lower than above")
 
 
+GOLD_BOUNDS = {"top_n": (1, 100), "moving_average_days": (1, 366)}
+"""Inclusive bounds of each ``[gold]`` setting: a top beyond 100 ranks is no top, and a window
+longer than a year is longer than the history the indicators read."""
+
+
 @dataclass(frozen=True)
 class GoldSettings:
-    """``[gold]``: the gold job (docs/runbook/gold.md)."""
+    """``[gold]``: the gold job (docs/runbook/gold.md), bounded by ``GOLD_BOUNDS``."""
 
     top_n: int
     """Ranks kept per country in ``kpi_top_products_country``."""
@@ -197,9 +202,9 @@ class GoldSettings:
     """Days of the window of ``kpi_revenue_moving_avg``, the day included."""
 
     def __post_init__(self) -> None:
-        for key in ("top_n", "moving_average_days"):
-            if getattr(self, key) < 1:
-                raise ConfigError(f"[gold] {key} must be >= 1, got {getattr(self, key)}")
+        for key, (low, high) in GOLD_BOUNDS.items():
+            if not low <= (value := getattr(self, key)) <= high:
+                raise ConfigError(f"[gold] {key} must be in {low}..{high}, got {value}")
 
 
 @dataclass(frozen=True)
