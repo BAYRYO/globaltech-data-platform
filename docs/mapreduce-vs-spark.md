@@ -13,18 +13,19 @@ KAN-41 (MapReduce), KAN-42 (Spark), KAN-43 (comparaison).
 - **Résultats égaux, prouvé.** Même CA au centime et mêmes compteurs sur les données du contrat,
   en local et sur le cluster, et en local sur des octets hors contrat (BOM, fins de ligne CR LF
   ou CR, caractère de contrôle dans une région).
-- **Durée : MapReduce gagne sur les petits volumes, égalité sur 10 M.** Campagne de 45
-  exécutions exclusives, 5 par variante : sur 20 110 lignes, MapReduce met 11,4 s (9,8 s avec un
-  battement d'ApplicationMaster de 100 ms) contre 12,7 s pour Spark ; sur 1 M, 10,8 s pour
-  MapReduce réglé contre 15,5 s pour Spark ; sur 10 M, 21,6 s, 20,7 s et 20,7 s, sans différence
-  significative (test exact de Mann-Whitney, p bilatéral 0,095 et 0,841).
+- **Durée : MapReduce gagne sur les petits volumes, pas de différence détectable sur 10 M.**
+  Campagne de 45 exécutions exclusives, 5 par variante : sur 20 110 lignes, MapReduce met 11,4 s
+  (9,8 s avec un battement d'ApplicationMaster de 100 ms) contre 12,7 s pour Spark ; sur 1 M,
+  10,8 s pour MapReduce réglé contre 15,5 s pour Spark ; sur 10 M, 21,6 s, 20,7 s et 20,7 s, sans
+  différence détectable (test exact de Mann-Whitney, p bilatéral 0,095 et 0,841).
 - **Limiteur de MapReduce dans la configuration par défaut : le démarrage échelonné des
   conteneurs**, environ un map par seconde. Démarrés ensemble, ses gros maps finiraient environ
   4 s plus tôt sur 10 M de lignes (inféré de la chronologie des tâches).
-- **Ressources : pas de gagnant net sur 10 M.** MapReduce réserve 9 % de mémoire·s en moins,
-  Spark 9 % de cœurs·s en moins. Sur 1 M, MapReduce consomme environ la moitié des deux.
-- **CPU : MapReduce dépense environ 2,1 à 2,5 fois plus de CPU par ligne** (inféré : la part
-  Python est mesurée hors cluster).
+- **Ressources : pas de gagnant net sur 10 M.** MapReduce réserve 16 % de mémoire·s en moins,
+  Spark 5 % de cœurs·s en moins (médianes de la campagne). Sur 1 M, MapReduce consomme environ
+  la moitié des deux.
+- **CPU : MapReduce dépense environ 1,7 à 2,0 fois plus de CPU par ligne** sur 10 M de lignes,
+  2,0 à 2,2 fois sur 1 M (inféré : la part Python est mesurée hors cluster).
 - **Code : même taille** (159 et 180 lignes de code). La différence de lisibilité tient au
   protocole distribué (tri, combiner, format texte, cache distribué) : MapReduce oblige à l'écrire
   à la main, Spark le déduit d'une jointure et d'un `groupBy`.
@@ -396,8 +397,10 @@ Par ligne, à méthode égale :
   nouveau, sans différence mesurable). Le combiner consomme 0,26 s par million d'enregistrements,
   soit 0,24 s par million de lignes. Avec 2,1 à 2,7 s pour le mapper (machine calme, médiane du
   nouveau mapper sous charge), MapReduce dépense 0,74 + 2,1 à 2,7 + 0,24 ≈ 3,1 à 3,7 s de CPU par
-  million de lignes, contre 1,47 s pour Spark : **2,1 à 2,5 fois plus** (valeur inférée, la part
-  Python ne venant pas du cluster). Chaque ligne passe de la JVM au mapper en texte, et chaque
+  million de lignes, contre 1,47 s pour Spark : **2,1 à 2,5 fois plus** sur cette série de 3
+  exécutions (valeur inférée, la part Python ne venant pas du cluster). La campagne de 5
+  exécutions donne, avec la même formule, 1,7 à 2,0 fois sur `full` et 2,0 à 2,2 fois sur `dev`
+  ([résultats de la campagne](#résultats-de-la-campagne)). Chaque ligne passe de la JVM au mapper en texte, et chaque
   enregistrement émis revient à la JVM, part au combiner et en revient : quatre passages d'une
   frontière de processus. La JVM trie aussi les 9,25 M enregistrements. Spark lit et classe
   chaque ligne dans du code JVM généré, puis agrège dans une table de hachage.
@@ -410,7 +413,9 @@ Spark. Deux fois plus de tâches, chacune environ deux fois plus lente par ligne
 s'équilibrent, et le démarrage échelonné des maps décide du reste.
 
 **Ressources.** Mémoire réservée (Mo·s), la seule ressource que YARN planifie ici, et cœurs·s
-détenus, en médiane :
+détenus, en médiane des 3 exécutions de cette série. La campagne de 5 exécutions remplace ces
+chiffres sur `full` : MapReduce −16 % de Mo·s, Spark −5 % de cœurs·s
+([résultats de la campagne](#résultats-de-la-campagne)).
 
 | Volume | Mo·s MapReduce | Mo·s Spark | Écart | Cœurs·s MapReduce | Cœurs·s Spark | Écart |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -505,8 +510,8 @@ fait déjà.
   exécution par point, le croisement des deux droites va de −201 M à +40 M de lignes selon les
   exécutions retenues. La campagne ajoute un troisième volume et 5 exécutions par point.
 
-**Ressources.** Sur `full`, aucun moteur n'est plus économe : MapReduce réserve 9 % de mémoire·s en
-moins, Spark détient 9 % de cœurs·s en moins. Sur `dev`, MapReduce consomme la moitié des deux,
+**Ressources.** Sur `full`, aucun moteur n'est plus économe : dans la campagne, MapReduce réserve
+16 % de mémoire·s en moins, Spark détient 5 % de cœurs·s en moins. Sur `dev`, MapReduce consomme la moitié des deux,
 parce que Spark garde ses exécuteurs pendant le démarrage et les écritures. Sur ce cluster, YARN ne
 planifie que la mémoire.
 
@@ -547,19 +552,8 @@ réservé. Résultats à la fin de la section.
 
 ```bash
 export GTDP_PSEUDO_SALT=<valeur hors dépôt>
-scripts/cluster/client.sh bash -c '
-  for p in ci full; do
-    python3 -m gtdp.datagen generate --profile $p --seed 42 --out /tmp/gen &&
-    base=/benchmarks/mr-vs-spark/$p/landing &&
-    for d in 2026-01-01 2026-01-02 2026-01-03; do
-      for s in orders customers; do
-        hdfs dfs -mkdir -p $base/$s/ingestion_date=$d &&
-        hdfs dfs -put -f /tmp/gen/$p/landing/$d/$s/*.csv $base/$s/ingestion_date=$d/
-      done
-      hdfs dfs -mkdir -p $base/_manifests/ingestion_date=$d &&
-      hdfs dfs -put -f /tmp/gen/$p/landing/$d/_MANIFEST.json $base/_manifests/ingestion_date=$d/
-    done
-  done'
+scripts/perf/bench.sh land --profile ci          # orders, customers, products et manifestes de J1 à J3,
+scripts/perf/bench.sh land --profile full        # graine 42, sous /benchmarks/mr-vs-spark/<profil>/landing
 scripts/mapreduce/compare.sh --date 2026-01-03 --runs 5 \
   --volumes ci=hdfs://namenode:8020/benchmarks/mr-vs-spark/ci/landing \
             dev=hdfs://namenode:8020/datalake/landing \
@@ -577,9 +571,10 @@ le ResourceManager ne listait aucune application active (contrôle noté dans le
 exemple `2026-11-27T02:14:53+00:00 : 0 application(s) NEW/NEW_SAVING/SUBMITTED/ACCEPTED/RUNNING`),
 et aucune n'a été chevauchée par une autre application : aucune n'a donc été recommencée. Sur
 chaque volume, les 15 exécutions rendent la même sortie octet pour octet et les mêmes compteurs,
-et les compteurs `Quality` sont égaux aux anomalies des manifestes. Rapport complet : sortie de
-`compare.sh` dans `build/mr-vs-spark/campaign/report.md`, reproduite dans le commentaire de preuves
-de la PR du lot 7.
+et les compteurs `Quality` sont égaux aux anomalies des manifestes. Les entrées `ci` et `full`
+ont été déposées par une boucle `hdfs dfs -put` équivalente à `bench.sh land`, sans les produits,
+que `compare.sh` ne lit pas. Rapport complet : sortie de `compare.sh`, versionnée dans
+[`docs/perf-evidence/mr-vs-spark-campaign.md`](perf-evidence/mr-vs-spark-campaign.md).
 
 | Volume | Variante | n | Durée médiane (s) | Min à max (s) | p bilatéral contre `spark` | Mo·s médian | Cœurs·s médian | CPU par M lignes (s) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -597,6 +592,17 @@ Le CPU par million de lignes vient de la droite des moindres carrés par tâche.
 tâches lisent trop peu de lignes (20 110 en tout) pour que la pente ait un sens : la régression
 donne même des durées négatives par million de lignes. Côté MapReduce, ce CPU ne compte que les
 JVM, pas les processus Python (voir plus haut).
+
+Comparaison des moteurs, variante MapReduce par défaut contre Spark, calculée par
+`scripts/mapreduce/compare.sh --summarize docs/perf-evidence/mr-vs-spark-campaign.md` à partir
+des médianes de la campagne. Le CPU par ligne de MapReduce ajoute à la pente de ses JVM le mapper
+Python (2,1 à 2,7 s par million de lignes) et le combiner (0,24 s), mesurés hors cluster
+([CPU et coût d'une tâche](#ce-que-disent-ces-chiffres)) :
+
+| Volume | Mo·s de MapReduce contre Spark | Cœurs·s de Spark contre MapReduce | CPU par ligne, MapReduce / Spark |
+| --- | ---: | ---: | ---: |
+| `dev` | −54,3 % | +103,7 % | 2,0 à 2,2 |
+| `full` | −15,7 % | −5,1 % | 1,7 à 2,0 |
 
 Test de Mann-Whitney exact entre les deux variantes MapReduce : p bilatéral 0,016 sur `ci`,
 0,008 sur `dev` et 0,056 sur `full`.
@@ -633,8 +639,9 @@ Ce que les mesures établissent aujourd'hui :
    1 M de lignes ne compensent pas. MapReduce est limité par l'arrivée de ses conteneurs autant
    que par son calcul : un battement d'ApplicationMaster de 100 ms lui fait gagner 1,6 à 3,0 s
    sur les petits volumes.
-3. **Plus de CPU par ligne pour MapReduce**, environ 2,1 à 2,5 fois (inféré), et un coût fixe par
-   tâche que Spark n'a pas ; en contrepartie, MapReduce réserve moins de mémoire.
+3. **Plus de CPU par ligne pour MapReduce**, environ 1,7 à 2,0 fois sur 10 M de lignes (inféré,
+   campagne), et un coût fixe par tâche que Spark n'a pas ; en contrepartie, MapReduce réserve
+   moins de mémoire (16 % de moins sur 10 M de lignes).
 4. **Moins de plomberie à écrire et à relire en Spark.** À taille égale, le code Spark décrit le
    calcul, alors que le code MapReduce décrit aussi le protocole distribué (tri, combiner, cache,
    format texte, arithmétique entière, lecture des lignes). Il s'intègre de plus au cadre commun :
