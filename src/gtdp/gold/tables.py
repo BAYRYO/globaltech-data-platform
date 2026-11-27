@@ -25,8 +25,12 @@ from pyspark.sql.types import (
 from gtdp.schemas import AMOUNT, DISCOUNT, QUALITY_FLAGS
 
 ORDER_DATE = "order_date"
-AMOUNT_EUR = DecimalType(12, 2)
-"""A line amount: ``quantity * unit_price * (1 - discount_pct)`` rounded half up to the cent."""
+AMOUNT_EUR = DecimalType(20, 2)
+"""A line amount: ``quantity * unit_price * (1 - discount_pct)`` rounded half up to the cent.
+
+Wide enough for any line the silver types hold: an ``int`` quantity (10 digits) times a
+``decimal(10,2)`` price (8 integer digits) has at most 18 integer digits, and ``discount_pct``
+lies in ``[0, 1)``. Silver accepts at most 9 and 8 digits."""
 
 
 @dataclass(frozen=True)
