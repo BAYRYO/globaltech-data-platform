@@ -172,7 +172,11 @@ def compact_table(
 
 @contextmanager
 def _waiting_lock(spark: SparkSession, table: str, stale_after_s: int) -> Iterator[None]:
-    """``table_lock``, retried while a live run holds it; a dead run's lock turns stale."""
+    """``table_lock``, retried while another run holds it, ``stale_after_s`` and a margin at most.
+
+    A dead run's lock is taken over once YARN reports it ended, or after ``stale_after_s`` without
+    a state from YARN.
+    """
     deadline = time.monotonic() + stale_after_s + _LOCK_MARGIN_S
     while True:
         with ExitStack() as held:
