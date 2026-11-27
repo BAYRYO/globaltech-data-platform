@@ -130,7 +130,10 @@ ApplicationMaster. Deux applications en mode client tournent côte à côte avec
 chacune, ce qui permet de faire tourner le streaming à côté d'un batch
 ([placements mesurés](platform.md#budget-mémoire)).
 
-### Relance par un tiers
+### Relance du cluster
+
+Mesures faites par l'équipe sur la machine de référence, en suivant le guide comme un tiers le
+ferait. Aucune relance chronométrée par une personne extérieure au projet n'est documentée.
 
 | Mesure | Valeur | Source |
 | --- | --- | --- |
@@ -844,7 +847,7 @@ Classées par risque pour les données, puis pour l'exploitation. Le coût est c
 | Critère du sujet (niveau Excellent) | Section |
 | --- | --- |
 | Erasure coding comparé à la réplication avec chiffres, sortie `fsck` analysée | [9](#réplication-3-contre-erasure-coding), [11](#11-résilience) |
-| Relance par un tiers en moins de 10 min | [3](#relance-par-un-tiers) |
+| Relance par un tiers en moins de 10 min | [3](#relance-du-cluster) : mesurée par l'équipe, aucune relance par un tiers documentée |
 | SCD2 correct (prix à la date de commande), changement de schéma, pseudonymisation justifiée | [5](#5-couche-silver), [6](#6-couche-gold) |
 | Propres + rejets + doublons = total, rejeu sans doublon | [4](#4-ingestion-et-couche-bronze), [5](#réconciliation-de-j1-à-j3) |
 | Deux corrections du skew comparées, partitions justifiées par la mesure, trois `explain` | [9](#déséquilibre-de-clé--deux-corrections-et-la-diffusion) |
