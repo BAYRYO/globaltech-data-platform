@@ -18,6 +18,7 @@ from gtdp.bronze.landing import (
     scan,
 )
 from gtdp.bronze.transform import check_counts, to_bronze
+from gtdp.config import ConfigError
 from gtdp.io import INGESTION_DATE, drop_partitions, read_table
 from gtdp.jobs.registry import JobContext, job
 from gtdp.publish import publish
@@ -52,7 +53,7 @@ def bronze(ctx: JobContext) -> None:
     """
     day = ctx.run.ingestion_date
     if day is None:
-        raise ValueError("bronze needs --date")
+        raise ConfigError("bronze needs --date")
     spark, paths = ctx.spark, ctx.cfg.paths
     files = landed_files(spark, paths.landing, day, ctx.run.source)
 

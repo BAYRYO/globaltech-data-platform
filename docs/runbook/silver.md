@@ -94,7 +94,7 @@ antérieur.
 	```
 
 3. Lisez le code de sortie : `0` succès, `1` échec du job (motif dans `error_message` de
-   l'audit), `2` configuration invalide ou sel absent.
+   l'audit), `2` usage ou configuration invalide (`--date` absent, sel absent).
 
 Mesures sur la machine de référence, profil `dev`, un exécuteur, l'application de streaming
 `gtdp-streaming-sensors` tournant à côté (`duration_s` de l'audit) : J1 (1 106 403 lignes
@@ -238,7 +238,8 @@ print(text.count(os.environ["GTDP_PSEUDO_SALT"]), "occurrences du sel")'
 | `SilverCheckError: <source> <D>, nothing published: ...` | Un contrôle a échoué avant l'écriture (comptes, clé, SCD2). | Bug : gardez les journaux, ouvrez un ticket. Les sources précédentes du jour sont publiées, le jour est incomplet. |
 | `SilverCheckError: <source> <D>, publication removed: ...` | La relecture diffère de ce qui a été écrit (écriture concurrente, panne pendant l'échange). | Ce que la source avait publié pour le jour est retiré. Rejouez le jour. |
 | `TableLockedError: ... is being written by another run` | Une autre exécution écrit la table. | Attendez sa fin : le verrou se libère dès que YARN la rapporte terminée. S'il reste alors que l'application est terminée (`no state from YARN` dans le journal), supprimez le verrou nommé. |
-| `ValueError: silver needs --date` ou `unknown source ...` | Argument manquant ou inconnu. | Relancez avec `--date AAAA-MM-JJ`, `--source` parmi `customers`, `products`, `orders`, `weblogs`. |
+| Code de sortie 2, `ConfigError: silver needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
+| `ValueError: unknown source ...` | `--source` inconnue. | Relancez avec `--source` parmi `customers`, `products`, `orders`, `weblogs`. |
 | Code de sortie 2, journal `GTDP_PSEUDO_SALT is required` | Le sel n'est pas défini. | Exportez `GTDP_PSEUDO_SALT` ou ajoutez-le à `.env`. |
 
 Les comptes d'une exécution échouée restent dans `metrics_json` de sa ligne d'audit.

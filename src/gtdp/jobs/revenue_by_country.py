@@ -6,6 +6,7 @@ from datetime import date
 from pyspark.sql import SparkSession
 
 from gtdp.audit import Layer
+from gtdp.config import ConfigError
 from gtdp.io import INGESTION_DATE, list_partition_values
 from gtdp.jobs.registry import JobContext, job
 from gtdp.perf.revenue_by_country import (
@@ -29,7 +30,7 @@ OUTPUT = "mr_vs_spark/spark"
 )
 def revenue_by_country_spark(ctx: JobContext) -> None:
     if ctx.run.ingestion_date is None:
-        raise ValueError("--date is required: orders and customers landed up to it are read")
+        raise ConfigError("--date is required: orders and customers landed up to it are read")
     landing, day = ctx.cfg.paths.landing, ctx.run.ingestion_date
     order_dirs = landed_partitions(ctx.spark, f"{landing}/orders", day, require_day=True)
     customer_dirs = landed_partitions(ctx.spark, f"{landing}/customers", day)
