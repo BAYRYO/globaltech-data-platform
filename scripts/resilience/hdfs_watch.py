@@ -109,8 +109,9 @@ def parse_report(text: str) -> Report:
 
 
 def row(report: Report, metrics: dict[str, int], hosts: Sequence[str]) -> dict[str, object]:
-    """The timeline columns of one sample, ``hosts`` in that order."""
-    nodes = {node.hostname: node for node in report.nodes}
+    """The timeline columns of one sample, ``hosts`` in that order. A host listed live and dead,
+    re-registered under a new address, counts as live."""
+    nodes = {node.hostname: node for node in sorted(report.nodes, key=lambda n: n.live)}
     values: dict[str, object] = {
         "live": sum(node.live for node in report.nodes),
         "dead": sum(not node.live for node in report.nodes),
