@@ -150,9 +150,9 @@ Les trois premières mesures ont été faites par l'équipe sur la machine de r�
 le guide comme un tiers le ferait. Les trois suivantes viennent d'une validation par un tiers, le
 2026-11-27. Un agent qui n'a écrit aucune des pages a suivi le README et le runbook
 d'exploitation depuis un clone neuf. Il a travaillé sur la même machine, avec le code de `main`
-à `28cf5cb` et les pages de la PR #26. Son compte rendu,
-`docs/validation/2026-11-27-validation-tiers.md`, est versé par la PR #26. Le chemin est donné
-en texte tant que cette PR n'est pas fusionnée. Les chiffres sont repris dans les
+à `28cf5cb` et les pages de la PR #26. Son compte rendu est
+[`docs/validation/2026-11-27-validation-tiers.md`](validation/2026-11-27-validation-tiers.md).
+Les chiffres sont repris dans les
 [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486).
 
 | Mesure | Valeur | Source |
