@@ -10,6 +10,7 @@ import re
 import signal
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
@@ -37,8 +38,9 @@ _FILE_EXISTS = "org.apache.hadoop.fs.FileAlreadyExistsException"
 _YARN_APPLICATION = re.compile(r"application_\d+_\d+")
 _YARN_ENDED = frozenset({"FINISHED", "FAILED", "KILLED"})
 _RM_WEBAPP = "yarn.resourcemanager.webapp.address"
-_RM_TIMEOUT_S = 5
-# Pauses before the next tries of the read of a lock its holder releases.
+_RM_TIMEOUT_S = 3
+# Pauses before the next tries of a request to the ResourceManager, or of the read of a lock its
+# holder releases.
 _RETRY_PAUSES_S = (0.5, 1.0)
 
 PartitionValue = str | date
@@ -411,11 +413,28 @@ def _application_id(held: str) -> str | None:
 
 
 def _yarn_state(spark: SparkSession, application_id: str) -> str:
-    """The state of ``application_id`` that the ResourceManager's REST API reports."""
+    """The state of ``application_id`` that the ResourceManager's REST API reports.
+
+    A failed request is tried again after each pause of ``_RETRY_PAUSES_S``, each try lasting
+    ``_RM_TIMEOUT_S`` at most. An application the ResourceManager does not know (404) is not
+    asked again.
+    """
     address = spark.sparkContext._jsc.hadoopConfiguration().get(_RM_WEBAPP)
     if not address:
         raise LookupError(f"{_RM_WEBAPP} is not set")
     url = f"http://{address}/ws/v1/cluster/apps/{application_id}"
+    for pause in _RETRY_PAUSES_S:
+        try:
+            return _requested_state(url)
+        except Exception as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+                raise
+            logger.info("no answer from YARN for %s (%r), asking again", application_id, exc)
+        time.sleep(pause)
+    return _requested_state(url)
+
+
+def _requested_state(url: str) -> str:
     with urllib.request.urlopen(url, timeout=_RM_TIMEOUT_S) as response:
         return str(json.load(response)["app"]["state"])
 
