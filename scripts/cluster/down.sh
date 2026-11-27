@@ -4,4 +4,4 @@
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-compose down --remove-orphans
+compose --profile spare down --remove-orphans

@@ -44,4 +44,10 @@
     <name>dfs.client.block.write.replace-datanode-on-failure.best-effort</name>
     <value>true</value>
   </property>
+  <!-- DataNodes to decommission, one hostname per line. `hdfs dfsadmin -refreshNodes` rereads the
+       file; the NameNode reads this property only when it starts. -->
+  <property>
+    <name>dfs.hosts.exclude</name>
+    <value>/opt/hadoop/etc/hadoop/dfs.exclude</value>
+  </property>
 </configuration>
