@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import logging
@@ -277,8 +278,8 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
 
     The lock is a file created only if absent, which HDFS decides atomically. It holds the run id,
     the application id and the time it was taken. While the run that holds it may be alive:
-    ``TableLockedError`` at once, no wait. A lock left by a run that died (``_stale_reason``) is
-    taken over with a warning.
+    ``TableLockedError`` at once, no wait. A lock left by a run that died is taken over by one
+    run only (``_acquire``).
     """
     lock, stale_after = _lock_path(target), _stale_after_s(spark)
     holder = json.dumps(
@@ -290,23 +291,10 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
         }
     )
     with _stop_signals_deferred():
-        if not _create(fs, lock, holder):
-            held = _read(fs, lock)
-            if held is not None:
-                reason = _stale_reason(spark, fs, lock, held)
-                if reason is None:
-                    raise TableLockedError(_locked_message(fs, target, lock))
-                logger.warning(
-                    "taking over the lock of %s, left by a run that died (%s): %s",
-                    target,
-                    reason,
-                    held,
-                )
-                fs.delete(lock, False)
-            if not _create(fs, lock, holder):
-                raise TableLockedError(_locked_message(fs, target, lock))
+        if not _acquire(spark, fs, lock, holder):
+            raise TableLockedError(_locked_message(fs, target, lock))
     try:
-        _remove_stale_staging(fs, target, stale_after)
+        _remove_leftovers(fs, target, stale_after)
         yield
     finally:
         with _stop_signals_deferred():
@@ -320,6 +308,38 @@ def _locked_message(fs: Any, target: Any, lock: Any) -> str:
         "Wait for that run to end: the lock frees itself once YARN reports its application "
         f"ended. Delete {lock} by hand only if no run is active and YARN cannot tell"
     )
+
+
+def _acquire(spark: SparkSession, fs: Any, path: Any, holder: str) -> bool:
+    """Create the lock file ``path`` holding ``holder``; ``False`` while a live run holds it.
+
+    A file left by a run that died (``_stale_reason``) is taken over with a warning. Its takers
+    first create the claim ``<path>.takeover-<digest of what it holds>``, only if absent. The one
+    that does deletes ``path`` if it still holds the same, creates its own, then deletes the
+    claim; the others get ``False``. A claim left by a taker that died is taken over the same way.
+    """
+    if _create(fs, path, holder):
+        return True
+    held = _read(fs, path)
+    if held is None:
+        return _create(fs, path, holder)
+    reason = _stale_reason(spark, fs, path, held)
+    if reason is None:
+        return False
+    claim = path.suffix(f".takeover-{hashlib.sha256(held.encode()).hexdigest()[:16]}")
+    if not _acquire(spark, fs, claim, holder):
+        return False
+    try:
+        if _read(fs, path) != held:
+            return False
+        logger.warning(
+            "taking over the lock %s, left by a run that died (%s): %s", path, reason, held
+        )
+        fs.delete(path, False)
+        return _create(fs, path, holder)
+    finally:
+        if _read(fs, claim) == holder:
+            fs.delete(claim, False)
 
 
 def _stale_reason(spark: SparkSession, fs: Any, path: Any, held: str) -> str | None:
@@ -410,16 +430,17 @@ def _stale_after_s(spark: SparkSession) -> float:
     return float(spark.conf.get(STALE_AFTER_CONF, str(STALE_AFTER_DEFAULT_S)))
 
 
-def _remove_stale_staging(fs: Any, target: Any, stale_after: float) -> None:
-    """Delete the ``_<name>.staging-*`` directories of ``target`` older than ``stale_after``.
+def _remove_leftovers(fs: Any, target: Any, stale_after: float) -> None:
+    """Delete the staging directories and lock claims of ``target`` older than ``stale_after``.
 
-    The holder of the lock calls it: such a directory belongs to a run that was killed outright.
+    The holder of the lock calls it: they belong to runs that were killed outright.
     """
-    prefix = f"_{target.getName()}.staging-"
+    name = target.getName()
+    prefixes = (f"_{name}.staging-", f"_{name}.lock.takeover-")
     for status in fs.listStatus(target.getParent()):
         path = status.getPath()
         age = time.time() - status.getModificationTime() / 1000
-        if path.getName().startswith(prefix) and age >= stale_after:
+        if path.getName().startswith(prefixes) and age >= stale_after:
             logger.warning("removing %s, left %.0f s ago by a run that died", path, age)
             fs.delete(path, True)
 

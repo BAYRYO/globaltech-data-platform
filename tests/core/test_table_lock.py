@@ -317,7 +317,7 @@ def die():
 
 def test_a_taker_killed_at_any_step_never_blocks_the_next_run_for_good(spark, table, monkeypatch):
     path, lock = table
-    blocked = []
+    blocked, most_left = [], 0
     for at in SPLITS:
         lock.write_text(lock_of("local-1795715756506"))
         make_old(lock)
@@ -325,6 +325,8 @@ def test_a_taker_killed_at_any_step_never_blocks_the_next_run_for_good(spark, ta
             hand_out(patch, lambda fs, at=at: Steps(fs, at, die))
             with table_lock(spark, path):
                 pass
+        left = [p for p in lock.parent.iterdir() if not p.name.endswith(".crc")]
+        most_left = max(most_left, len(left))
         for leftover in lock.parent.iterdir():
             make_old(leftover)
 
@@ -339,3 +341,4 @@ def test_a_taker_killed_at_any_step_never_blocks_the_next_run_for_good(spark, ta
                 leftover.unlink()
 
     assert blocked == []
+    assert most_left > 1, "no taker died leaving more than the lock behind"
