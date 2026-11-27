@@ -8,8 +8,8 @@ that state: a DataNode is ``live`` when its container runs, ``dead`` otherwise, 
 datanode1 to datanode3 is stopped and the spare is not live.
 
 Hooks, shell conditions on the state folder ``$S``: ``POLLER_DIES_WHEN`` ends the poller,
-``REPORT_FAILS_WHEN`` makes ``hdfs dfsadmin -report`` fail. ``GOLD_SECONDS`` is how long a gold
-run takes (1 s).
+``REPORT_FAILS_WHEN`` makes ``hdfs dfsadmin -report`` fail. ``GOLD_SECONDS`` lists how long each
+gold run takes, the last value for the runs after it (1 s).
 """
 
 import os
@@ -123,7 +123,10 @@ case "$1 ${2:-}" in
     echo ok ;;
   "bash scripts/cluster/submit.sh")
     if [[ $3 == gold ]]; then
-      echo "Submitted application_1_0001"; sleep "${GOLD_SECONDS:-1}"
+      read -ra seconds <<<"${GOLD_SECONDS:-1}"
+      run=$(cat "$S/gold-runs" 2>/dev/null || echo 0)
+      echo $((run + 1)) >"$S/gold-runs"
+      echo "Submitted application_1_0001"; sleep "${seconds[run]:-${seconds[-1]}}"
     else
       echo '{}' >"$5"
     fi ;;
