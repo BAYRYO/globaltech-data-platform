@@ -242,6 +242,10 @@ wait_for spare_decommissioned 14400 spare_decommissioned
 docker stop "$(container "$spare")" >/dev/null
 event spare_stopped
 wait_for spare_dead 300 spare_dead
+# The NameNode holds the address it resolved for the spare until the next refresh, and Docker gives
+# a freed address to the next container: a DataNode started with it would be decommissioned.
+exclude
+event exclude_cleared
 snapshot after
 if nominal; then event nominal; else event not_nominal; fi
 
