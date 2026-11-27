@@ -9,6 +9,7 @@ from datetime import date
 
 import pytest
 
+from gtdp import publish as publish_module
 from gtdp.io import LaterPartitionError
 from gtdp.jobs import silver as silver_job
 from gtdp.silver import days
@@ -49,14 +50,14 @@ def test_a_failed_check_after_the_write_removes_the_days_publication(
 ):
     lake, silver = fresh_lake, fresh_lake.cfg.paths.silver
     lake.run("silver", J1)
-    write = silver_job.write_partitions
+    write = publish_module.write_partitions
 
     def losing_one_reject(frame, path, partitions):
         if path == rejects_path(silver, "orders"):
             frame = frame.limit(frame.count() - 1)
         write(frame, path, partitions)
 
-    monkeypatch.setattr(silver_job, "write_partitions", losing_one_reject)
+    monkeypatch.setattr(publish_module, "write_partitions", losing_one_reject)
     with pytest.raises(silver_job.SilverCheckError, match="publication removed"):
         lake.run("silver", J2)
     monkeypatch.undo()
@@ -77,7 +78,7 @@ def test_a_failed_dimension_check_puts_back_the_previous_days_table(fresh_lake, 
     lake.run("silver", J1)
     before = lake.table("products").collect()
     replace, products, writes = (
-        silver_job.replace_table,
+        publish_module.replace_table,
         table_path(lake.cfg.paths.silver, "products"),
         [],
     )
@@ -88,7 +89,7 @@ def test_a_failed_dimension_check_puts_back_the_previous_days_table(fresh_lake, 
             frame = frame.limit(frame.count() - 1)
         replace(frame, path)
 
-    monkeypatch.setattr(silver_job, "replace_table", losing_one_version)
+    monkeypatch.setattr(publish_module, "replace_table", losing_one_version)
     with pytest.raises(silver_job.SilverCheckError, match="products"):
         lake.run("silver", J2)
     monkeypatch.undo()
@@ -103,14 +104,14 @@ def test_a_killed_run_leaves_the_day_incomplete_until_it_is_replayed(
 ):
     lake, silver = fresh_lake, fresh_lake.cfg.paths.silver
     lake.run("silver", J1)
-    write = silver_job.write_partitions
+    write = publish_module.write_partitions
 
     def killed_on_weblogs(frame, path, partitions):
         if path == table_path(silver, "weblogs"):
             raise Killed
         write(frame, path, partitions)
 
-    monkeypatch.setattr(silver_job, "write_partitions", killed_on_weblogs)
+    monkeypatch.setattr(publish_module, "write_partitions", killed_on_weblogs)
     with pytest.raises(Killed):
         lake.run("silver", J2)
     monkeypatch.undo()

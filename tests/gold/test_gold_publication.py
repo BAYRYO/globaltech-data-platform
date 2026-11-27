@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from gtdp import publish as publish_module
 from gtdp.audit import Run
 from gtdp.gold.state import State, Status, read_state
 from gtdp.io import TableLockedError, replace_table
-from gtdp.jobs import gold as gold_job
 from gtdp.jobs.gold import GoldCheckError
 
 from .silver_lake import J1, J2, SilverLake, customer, order, versions
@@ -66,7 +66,7 @@ def test_a_run_that_dies_while_writing_leaves_publishing_and_the_next_run_conver
             raise RuntimeError("killed")
         replace_table(frame, path)
 
-    monkeypatch.setattr(gold_job, "replace_table", dies_on_the_third_table)
+    monkeypatch.setattr(publish_module, "replace_table", dies_on_the_third_table)
     with pytest.raises(RuntimeError, match="killed"):
         silver_lake.run_gold(J2)
     monkeypatch.undo()
