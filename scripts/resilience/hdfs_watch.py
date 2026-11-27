@@ -36,7 +36,10 @@ from pathlib import Path
 
 NAMENODE_HTTP = "http://namenode:9870"
 FSNAMESYSTEM = "Hadoop:service=NameNode,name=FSNamesystem"
-SECTION = re.compile(r"(?P<kind>Live|Dead) datanodes \(\d+\):")
+SECTION = re.compile(r"(?P<kind>\w[\w ]*) datanodes \(\d+\):")
+LISTED = {"Live": True, "Dead": False}
+"""Sections whose nodes count; ``Decommissioning`` and the maintenance sections list a live
+node a second time."""
 GROUPS = {"Replicated Blocks:": "replicated", "Erasure Coded Block Groups:": "erasure_coded"}
 ADMIN_STATES = {
     "Normal": "",
@@ -86,21 +89,23 @@ def parse_report(text: str) -> Report:
     """The block counters and the DataNodes of ``hdfs dfsadmin -report``."""
     counters: dict[str, dict[str, int]] = {group: {} for group in GROUPS.values()}
     fields: list[tuple[bool, dict[str, str]]] = []
-    group = live = None
+    group = live = node = None
     for raw in text.splitlines():
         line = raw.strip()
         if line in GROUPS:
             group = GROUPS[line]
         elif section := SECTION.fullmatch(line):
-            group, live = None, section["kind"] == "Live"
+            group, live, node = None, LISTED.get(section["kind"]), None
         elif ":" in line:
             key, _, value = (part.strip() for part in line.partition(":"))
             if group and raw.startswith("\t"):
                 counters[group][key] = int(value)
-            elif key == "Name" and live is not None:
-                fields.append((live, {}))
-            elif fields:
-                fields[-1][1][key] = value
+            elif key == "Name":
+                node = None if live is None else {}
+                if node is not None:
+                    fields.append((live, node))
+            elif node is not None:
+                node[key] = value
     nodes = tuple(
         Node(f["Hostname"], is_live, f["Decommission Status"], int(f["Num of Blocks"]))
         for is_live, f in fields
