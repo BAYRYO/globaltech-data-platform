@@ -1,0 +1,4 @@
+2026-11-27 11:44:00,244 ERROR datanode.DataNode: RECEIVED SIGNAL 15: SIGTERM
+SHUTDOWN_MSG: Shutting down DataNode at datanode1/172.22.0.12
+STARTUP_MSG: Starting DataNode
+2026-11-27 11:46:08,901 INFO datanode.DataNode: Block pool BP-1884475711-172.22.0.2-1795715752320 (Datanode Uuid ff3864a7-206c-456d-8c1c-0e6d57597b94) service to namenode/172.22.0.2:8020 successfully registered with NN
