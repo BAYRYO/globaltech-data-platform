@@ -279,7 +279,9 @@ Les attributs du client (pays, segment) sont des valeurs actuelles (SCD 1) : ils
 `customer_id`. Les attributs du produit sont versionnés par `product_sk`.
 
 **Rafraîchissement** : gold est une fonction des jours silver terminés (marqués par
-`silver/_days/ingestion_date=D/_SUCCESS`). Chaque exécution recalcule toutes les tables depuis ces
+`silver/_days/ingestion_date=D/_SUCCESS`). Il ne lit `customers` et `products_scd2` que si chaque
+ligne lue porte un `ingestion_date` terminé et que leur `_built_for.json`, écrit dans la table
+avant son échange, nomme un jour terminé ; il refuse sinon, avant toute écriture. Chaque exécution recalcule toutes les tables depuis ces
 jours et vérifie les invariants (grain, clés, colonnes obligatoires, références) avant toute
 écriture. `fact_sales` (partitionné par `order_date`) n'est réécrit que pour les dates dont
 l'empreinte (nombre de lignes, somme des 60 premiers bits du SHA-256 de chaque ligne) diffère de

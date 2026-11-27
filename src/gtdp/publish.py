@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StructType
@@ -23,6 +23,7 @@ def publish(
     values: Sequence[PartitionValue] = (),
     *,
     ordered: bool = True,
+    files: Mapping[str, str] | None = None,
 ) -> None:
     """Write ``df`` at ``path`` with the columns ``schema`` declares and the registry's partition
     column, ``partitions`` (at most one).
@@ -30,9 +31,9 @@ def publish(
     ``df`` must have the columns of ``schema`` with their ``simpleString`` types, in the same
     order unless ``ordered`` is false; otherwise ``SchemaMismatchError`` names the difference and
     nothing is written. With a partition column, the partitions ``values`` of that column are
-    replaced (``write_partitions``). Without one, the table is replaced whole (``replace_table``)
-    and ``values`` must be empty: a run that names partitions of an unpartitioned table would
-    replace all of it with some of its rows.
+    replaced (``write_partitions``). Without one, the table is replaced whole (``replace_table``),
+    with the small ``files`` it carries, and ``values`` must be empty: a run that names partitions
+    of an unpartitioned table would replace all of it with some of its rows.
     """
     if differences := _differences(df.schema, schema, ordered=ordered):
         raise SchemaMismatchError(
@@ -43,7 +44,7 @@ def publish(
             raise ValueError(
                 f"{path} has no partition column, but partitions {list(values)} were named"
             )
-        replace_table(df, path)
+        replace_table(df, path, files)
         return
     (column,) = partitions
     write_partitions(df, path, {column: values})

@@ -26,11 +26,11 @@ est en cours, échoué, ou rendu incomplet par le rejeu d'un jour antérieur ou 
 dépend. Les doublons inter-jours ne regardent que les jours complets ; un lecteur qui doit voir
 des jours entiers ne lit des tables partitionnées que les partitions de
 `complete_days(spark, silver)`. `customers` et `products_scd2`, reconstruites en entier, n'ont
-pas de partition à écarter : elles tiennent les lignes du jour pour lequel silver les a écrites en
-dernier, que `silver/_days/rebuilt/<source>.json` nomme dès avant l'écriture. Un tel lecteur ne
-les lit que si ce jour est complet : gold refuse sinon ([dictionnaire gold](gold.md)). Rejouer un
-jour réécrit ses marqueurs et retire ceux des jours suivants
-([ADR-0005](../adr/0005-silver-incremental.md)).
+pas de partition à écarter : chaque ligne porte le jour où elle est arrivée (`ingestion_date`), et
+le fichier `_built_for.json` de la table nomme le jour pour lequel silver l'a reconstruite. Un tel
+lecteur ne les lit que si leurs lignes et ce fichier ne nomment que des jours complets : gold
+refuse sinon ([dictionnaire gold](gold.md)). Rejouer un jour réécrit ses marqueurs et retire ceux
+des jours suivants ([ADR-0005](../adr/0005-silver-incremental.md)).
 
 Chaque fichier de `_days` est écrit en entier sous un nom temporaire, `<fichier>.tmp-<id>`, puis
 renommé à sa place en remplaçant l'ancien, dans le même appel au NameNode
@@ -54,25 +54,33 @@ l'exécution J3 des rejets plus bas ; les heures ont le format écrit, pas la va
 
 Écrit par `mark_complete` quand chacune des quatre sources a son marqueur pour le jour. Gold ne
 lit des commandes, des logs et des rejets que les jours qui ont ce fichier, et ne s'exécute que si
-le jour de `rebuilt/customers.json` et celui de `rebuilt/products.json` l'ont aussi.
+les lignes de `customers` et de `products_scd2`, et leurs `_built_for.json`, ne nomment que de tels
+jours.
 
 | Champ | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `run_id` | string | Exécution silver qui a complété le jour. | `20261126T195836Z-d3d2ae34` |
 | `sources` | map<string,string> | Chaque source publiée pour le jour, avec le `run_id` de l'exécution qui l'a publiée. | `{"customers": "20261126T195836Z-d3d2ae34", "orders": "20261126T195836Z-d3d2ae34", …}` |
 
-### `silver/_days/rebuilt/<source>.json`
+### `silver/customers/_built_for.json`, `silver/products_scd2/_built_for.json`
 
-Écrit par `mark_rebuilt` pour `customers` et `products`, juste avant chaque échange de leur table,
-puis après la remise en état d'une publication retirée. La table ne tient donc jamais les lignes
-d'un jour que le fichier ne nomme pas, même si l'exécution s'arrête ou échoue après l'échange.
+Écrit par silver dans la table reconstruite avant son échange (`files` de `publish`), puis échangé
+avec elle, remise en état d'une publication retirée comprise : il nomme le jour de la table en
+place, même si l'exécution échoue ou s'arrête avant, pendant ou après l'échange. Spark ne le lit
+pas comme une donnée (nom en `_`). Une table écrite par une version antérieure de silver n'en a
+pas : gold s'en tient alors à ses lignes, et silver à ses marqueurs, jusqu'à sa prochaine
+reconstruction.
+
+Les lignes ne suffisent pas toujours. Une reconstruction pour `D` qui n'ajoute aucune ligne de `D`
+à `customers` la laisse telle que le jour d'avant l'a laissée : chaque client garde sa fiche, qui
+l'emporte aussi sur ses fiches de `D`. À `products_scd2`, une version renvoyée un jour `D` avec
+les attributs de la version précédente retire une version sans ajouter de ligne de `D` : seul ce
+fichier dit alors que la table a changé pour `D`.
 
 | Champ | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `source` | string | Source de la table reconstruite. | `customers` |
-| `day` | string | Jour dont la table tient les lignes, reconstruites depuis bronze jusqu'à lui ; nul quand la remise en état a vidé la table. | `2026-01-03` |
-| `run_id` | string | Exécution silver qui écrit la table. | `20261126T195836Z-d3d2ae34` |
-| `written_at` | string | Heure d'écriture du fichier, avant l'échange, ISO 8601 en UTC à la seconde. | `2026-11-26T19:58:51+00:00` |
+| `day` | string | Jour pour lequel la table a été reconstruite, depuis bronze jusqu'à lui ; nul quand la remise en état a vidé la table. | `2026-01-03` |
+| `run_id` | string | Exécution silver qui a écrit la table. | `20261126T195836Z-d3d2ae34` |
 
 ## Disposition d'une ligne bronze
 

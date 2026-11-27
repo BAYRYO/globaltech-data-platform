@@ -40,6 +40,7 @@ from gtdp.gold.tables import table_path as gold_path
 from gtdp.io import INGESTION_DATE, read_table
 from gtdp.jobs.registry import JobContext
 from gtdp.jobs.smoke import smoke
+from gtdp.publish import publish
 from gtdp.schemas import (
     REJECTS_PARTITIONS,
     SILVER_ORDERS,
@@ -47,7 +48,7 @@ from gtdp.schemas import (
     SOURCES,
     bronze_schema,
 )
-from gtdp.silver.days import COMPLETE, REBUILT, days_path, mark_complete, mark_rebuilt, mark_source
+from gtdp.silver.days import BUILT_FOR, COMPLETE, built_for, days_path, mark_complete, mark_source
 from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
 from gtdp.silver.pseudonymize import ensure_fingerprint, fingerprint_path
@@ -189,7 +190,10 @@ def _written(spark, cfg, lake: Path) -> dict[str, Shape]:
     write_state(spark, paths.gold, State(Status.PUBLISHED, run.run_id, (DAY,)))
     mark_source(spark, paths.silver, DAY, "orders", run.run_id)
     mark_complete(spark, paths.silver, DAY, ["orders"], run.run_id)
-    mark_rebuilt(spark, paths.silver, "customers", DAY, run.run_id)
+    whole = [source for source, pipeline in PIPELINES.items() if not pipeline.partitioned]
+    for source in whole:
+        table, schema = silver_path(paths.silver, source), PIPELINES[source].schema
+        publish(spark.createDataFrame([], schema), table, schema, files=built_for(DAY, run.run_id))
     ensure_fingerprint(spark, paths.ops, Secret("a-test-salt-of-16+chars"), run.run_id)
 
     shapes = {}
@@ -197,8 +201,8 @@ def _written(spark, cfg, lake: Path) -> dict[str, Shape]:
         local = lake / _relative(table)
         shapes[table] = Shape.of(read_table(spark, table).schema, *_partitions(local))
     day = f"{days_path(paths.silver)}/{INGESTION_DATE}={DAY}"
-    rebuilt = f"{days_path(paths.silver)}/{REBUILT}/customers.json"
-    files = (f"{paths.gold}/{STATE}", f"{day}/orders.json", f"{day}/{COMPLETE}", rebuilt)
+    rebuilt = [f"{silver_path(paths.silver, source)}/{BUILT_FOR}" for source in whole]
+    files = (f"{paths.gold}/{STATE}", f"{day}/orders.json", f"{day}/{COMPLETE}", *rebuilt)
     for path in (*files, fingerprint_path(paths.ops)):
         record = json.loads((lake / _relative(path)).read_text(encoding="utf-8"))
         shapes[path] = Shape({key: _json_type(value) for key, value in record.items()})

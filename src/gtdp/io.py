@@ -134,13 +134,15 @@ def table_lock(spark: SparkSession, path: str) -> Iterator[None]:
         yield
 
 
-def replace_table(df: DataFrame, path: str) -> None:
+def replace_table(df: DataFrame, path: str, files: Mapping[str, str] | None = None) -> None:
     """Replace the whole table at ``path`` with ``df``, which may read ``path`` itself.
 
     The run holds the table's lock throughout, as ``write_partitions`` does. ``df`` is written in
-    full to the hidden sibling ``_<name>.tmp``. Then the old table moves aside to ``_<name>.old``,
-    the new one moves into place, and the old one is deleted; stop signals wait for the end of the
-    two moves. If a crash left the table missing, ``replace_table``, ``read_table`` and
+    full to the hidden sibling ``_<name>.tmp``, with ``files``: small text files by name, each
+    name starting with ``_`` so that readers of the table skip it. Then the old table moves aside
+    to ``_<name>.old``, the new one moves into place, and the old one is deleted; stop signals
+    wait for the end of the two moves. A file of ``files`` thus belongs to the table that moved in
+    with it. If a crash left the table missing, ``replace_table``, ``read_table`` and
     ``path_exists`` first put back the latest complete table: ``_<name>.tmp`` when it holds
     ``_SUCCESS``, else ``_<name>.old``.
     """
@@ -151,6 +153,8 @@ def replace_table(df: DataFrame, path: str) -> None:
         staging, aside = _siblings(target)
         fs.delete(aside, True)
         df.write.mode("overwrite").parquet(staging.toString())
+        for name, text in (files or {}).items():
+            write_file(spark, staging.suffix(f"/{name}").toString(), text)
         if not fs.exists(staging.suffix("/_SUCCESS")):
             fs.create(staging.suffix("/_SUCCESS")).close()
         with _stop_signals_deferred():

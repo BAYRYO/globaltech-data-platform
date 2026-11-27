@@ -39,7 +39,10 @@ retirer sa publication d'un jour, bronze pour vider la partition d'une source ab
 `silver/customers` et `silver/products_scd2` sont réécrites en entier par
 `replace_table(df, chemin)`. Le DataFrame est écrit complet dans `_<table>.tmp`, marqué
 `_SUCCESS`. L'ancienne table passe en `_<table>.old`, la nouvelle prend sa place, puis
-l'ancienne est supprimée. Le DataFrame peut lire la table qu'il remplace.
+l'ancienne est supprimée. Le DataFrame peut lire la table qu'il remplace. `replace_table(df,
+chemin, files)` écrit aussi dans `_<table>.tmp`, avant l'échange, de petits fichiers dont le nom
+commence par `_`, que Spark ne lit pas : ils entrent avec la table, comme le `_built_for.json` de
+silver ([dictionnaire silver](../data-dictionary/silver.md#jours-complets)).
 
 Si un arrêt brutal laisse la table absente, `replace_table`, `read_table` et `path_exists` la
 remettent d'abord en place : `_<table>.tmp` s'il contient `_SUCCESS`, sinon `_<table>.old`. Un
