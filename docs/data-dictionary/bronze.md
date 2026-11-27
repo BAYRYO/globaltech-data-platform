@@ -14,11 +14,27 @@ CSV doit toutes les nommer, sauf `discount_pct`, apparue en J3. Le schéma de le
 toutes ses colonnes : une colonne absente d'une partition y est nulle, une colonne inconnue est
 écartée.
 
-## Colonnes techniques, communes aux quatre tables
+| Table | Grain | Clé | Partition | Écriture |
+| --- | --- | --- | --- | --- |
+| `bronze/<source>` | une ligne d'un fichier landing, en-tête exclu | aucune : deux lignes identiques d'un fichier donnent deux lignes bronze de même `_record_hash` | `ingestion_date` | partition du jour remplacée (`write_partitions`) |
+
+Bronze ne rejette aucune ligne : les règles de qualité s'appliquent en silver
+([dictionnaire silver](silver.md)). Ses contrôles portent sur le fichier entier, avant toute
+écriture, et un fichier qui en échoue un fait échouer le job sans rien écrire
+(`src/gtdp/bronze/landing.py`) :
+
+| Contrôle | Règle |
+| --- | --- |
+| Manifeste | la partition landing de la source contient exactement les fichiers que liste `_MANIFEST.json`, chacun avec son SHA-256 et son nombre de lignes de données |
+| Encodage | texte en UTF-8 strict, sans octet NUL dans un fichier CSV |
+| En-tête | l'en-tête d'un fichier CSV nomme chaque colonne de `SOURCES` sauf les colonnes optionnelles (`discount_pct`) |
+| Lecture | le lecteur CSV rend autant de lignes que le fichier, et la relecture de la partition écrite redonne les lignes du landing |
+
+## Colonnes techniques de `bronze/<source>`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `ingestion_date` | date | Colonne de partition. Date du dépôt, valeur de `--date` du job. | `2026-01-03` |
+| `ingestion_date` | date | Partition : date du dépôt, valeur de `--date` du job. | `2026-01-03` |
 | `_corrupt_record` | string | Ligne brute, sans fin de ligne, quand son nombre de champs diffère de celui de l'en-tête de son fichier. Nulle sinon. Toujours nulle pour `weblogs`, qui n'est pas découpé en champs. | `T000991575;2026-01-01T03:49:03;C001082;P00105;1;960.26;partner;COMPLETED` |
 | `_source_file` | string | URI du fichier landing lu, telle que la configuration la forme. | `hdfs://namenode:8020/datalake/landing/orders/ingestion_date=2026-01-03/orders_20260103.csv` |
 | `_ingested_at` | timestamp | Début de l'exécution en UTC, égal à `started_at` de sa ligne d'audit. Le même pour toutes les lignes d'une exécution. | `2026-11-26 18:32:15.431725` |
@@ -46,7 +62,7 @@ printf 'T000992700,2026-01-02T00:11:16,C003408,P00390,10,902.08,partner,COMPLETE
 | Autre séparateur dans tout le fichier, en-tête compris | l'en-tête ne nomme pas les colonnes de la source : le job échoue sans rien écrire |
 | Octets hors UTF-8, ou octet NUL dans un fichier CSV | le job échoue sans rien écrire |
 
-## `orders`
+## `bronze/orders`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -60,7 +76,7 @@ printf 'T000992700,2026-01-02T00:11:16,C003408,P00390,10,902.08,partner,COMPLETE
 | `status` | string | Texte brut. | `COMPLETED` |
 | `discount_pct` | string | Présente dans les seules partitions dont le fichier a cette colonne (J3). Nulle pour un doublon inter-jours renvoyé dans J3 avec un champ vide. Lue avec `bronze_schema` ou `mergeSchema`, nulle pour J1 et J2. Seule colonne de `SOURCES` qu'un en-tête peut omettre. | `0.218` |
 
-## `customers`
+## `bronze/customers`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -73,7 +89,7 @@ printf 'T000992700,2026-01-02T00:11:16,C003408,P00390,10,902.08,partner,COMPLETE
 | `signup_date` | string | Texte brut, non converti (`27/02/2024` reste tel quel). | `2026-01-01` |
 | `updated_at` | string | Texte brut. | `2026-01-01T00:39:42` |
 
-## `products`
+## `bronze/products`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -83,7 +99,7 @@ printf 'T000992700,2026-01-02T00:11:16,C003408,P00390,10,902.08,partner,COMPLETE
 | `unit_price_eur` | string | Texte brut, non converti. | `434.52` |
 | `updated_at` | string | Texte brut. | `2026-01-01T09:24:20` |
 
-## `weblogs`
+## `bronze/weblogs`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
