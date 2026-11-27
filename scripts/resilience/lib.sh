@@ -43,7 +43,12 @@ zero() {
   local column
   for column; do [[ $(latest "$column") == 0 ]] || return 1; done
 }
-nominal() { is live 3 && zero under_replicated missing corrupt ec_low_redundancy ec_missing ec_corrupt; }
+# Under replicated blocks leaves out a block whose missing copy is asked and not yet made:
+# pending_reconstruction counts those.
+nominal() {
+  is live 3 &&
+    zero under_replicated pending_reconstruction missing corrupt ec_low_redundancy ec_missing ec_corrupt
+}
 
 # start_poller HOSTS: sample HDFS every 5 s until stop_poller, return once the first row is in.
 start_poller() {
