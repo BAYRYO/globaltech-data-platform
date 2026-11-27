@@ -159,8 +159,10 @@ lignes synthétiques, tombe dans une seule tâche. C'est le cas que le lot perfo
 Une exécution tuée (`kill -9`, panne du conteneur client, perte du pilote) laisse
 `gold/_state.json` à `PUBLISHING`, son verrou `_gold.lock`, souvent le verrou de la table qu'elle
 écrivait (`gold/_<table>.lock`) et un répertoire `gold/_<table>.staging-<id>`, et aucune ligne
-d'audit. Un verrou ne se libère seul qu'après 6 h ; avant, la relance échoue sur
-`TableLockedError`. Procédure :
+d'audit. Ces verrous se libèrent d'eux-mêmes : la relance les reprend dès que YARN rapporte
+terminée l'application qu'ils nomment, moins de 2 s après la mort du driver (`taking over the
+lock` dans le journal). Relancez donc gold directement (étape 4). Si la relance échoue quand même
+avec `TableLockedError`, suivez les étapes 1 à 3 avant de la refaire :
 
 1. Lisez le verrou : il nomme l'application YARN qui le tient.
 
@@ -175,7 +177,10 @@ d'audit. Un verrou ne se libère seul qu'après 6 h ; avant, la relance échoue 
 2. Vérifiez que cette application est terminée : `State` doit valoir `FINISHED`, `FAILED` ou
    `KILLED`, jamais `RUNNING` ni `ACCEPTED`. Si elle tourne encore, attendez sa fin. Lisez
    `State`, pas `Final-State` : un pilote tué en mode client laisse une application
-   `FINISHED` dont `Final-State` vaut `SUCCEEDED` (constaté sur le cluster).
+   `FINISHED` dont `Final-State` vaut `SUCCEEDED` (constaté sur le cluster). Si elle est
+   terminée, le journal de la relance dit `no state from YARN` : le ResourceManager n'a pas
+   répondu à trois essais, et sans l'étape 3 les verrous ne seraient repris qu'une fois plus
+   vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut).
 
 	```bash
 	scripts/cluster/client.sh yarn application -status application_1795715756506_0412
