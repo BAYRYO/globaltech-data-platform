@@ -62,6 +62,14 @@ def test_a_dead_node_counts_dead_and_its_lost_replicas_under_replicated(watch):
     assert (row["ec_low_redundancy"], row["missing"], row["ec_missing"]) == (3, 0, 0)
 
 
+def test_a_decommissioning_node_counts_once_though_the_report_lists_it_twice(watch):
+    row = sample(watch, "report-decommissioning.txt")
+
+    assert (row["live"], row["dead"], row["decommissioning"]) == (4, 0, 1)
+    assert (row["datanode4"], row["datanode4_blocks"]) == ("live/decommissioning", 5574)
+    assert (row["datanode3"], row["datanode3_blocks"]) == ("live", 5575)
+
+
 def test_a_host_listed_live_and_dead_counts_as_live(watch):
     dead_section = (DATA / "report-dead.txt").read_text().split("Dead datanodes")[1]
     text = (DATA / "report-nominal.txt").read_text() + "Dead datanodes" + dead_section
