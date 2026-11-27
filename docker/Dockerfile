@@ -4,12 +4,11 @@ FROM eclipse-temurin:11-jre@sha256:7db5776af2396377c8aae2aa124712da7b72a5b6b014c
 
 FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1 AS hadoop
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ARG APACHE_MIRROR=https://archive.apache.org/dist
 ARG HADOOP_VERSION=3.3.6
 ARG HADOOP_SHA512=de3eaca2e0517e4b569a88b63c89fae19cb8ac6c01ff990f1ff8f0cc0f3128c8e8a23db01577ca562a0e0bb1b4a3889f8c74384e609cd55e537aada3dcaa9f8a
 COPY docker/fetch.py /usr/local/bin/fetch.py
 RUN python /usr/local/bin/fetch.py \
-        "${APACHE_MIRROR}/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" \
+        "hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz" \
         "${HADOOP_SHA512}" /tmp/hadoop.tgz \
     && mkdir -p /opt/hadoop \
     && tar -xzf /tmp/hadoop.tgz -C /opt/hadoop --strip-components=1 \
@@ -21,12 +20,11 @@ RUN python /usr/local/bin/fetch.py \
 
 FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1 AS spark
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-ARG APACHE_MIRROR=https://archive.apache.org/dist
 ARG SPARK_VERSION=3.5.3
 ARG SPARK_SHA512=76d6edc1050629c0be0f82543d7da36f7c27ef2e7978e28c20bb5b9e7677c7c8b485af3c6a34319f402706592a1b381ad8ec96458104b23814c871e2b4870eab
 COPY docker/fetch.py /usr/local/bin/fetch.py
 RUN python /usr/local/bin/fetch.py \
-        "${APACHE_MIRROR}/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-without-hadoop.tgz" \
+        "spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-without-hadoop.tgz" \
         "${SPARK_SHA512}" /tmp/spark.tgz \
     && mkdir -p /opt/spark \
     && tar -xzf /tmp/spark.tgz -C /opt/spark --strip-components=1 \
