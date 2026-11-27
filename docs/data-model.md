@@ -299,8 +299,10 @@ attendu est compris entre 0,90 et 1,00.
 
 | Sortie | Grain | Clé d'idempotence |
 | --- | --- | --- |
-| `gold/sensor_aggregates` | fenêtre de 1 min × machine × métrique (min, max, moyenne, nombre) | `batch_id` |
-| `gold/sensor_alerts` | un événement au-delà du seuil, après déduplication | `batch_id` |
-| `streaming/rejects` | événement illisible ou sans valeur | `batch_id` |
+| `gold/sensor_aggregates` | fenêtre fixe de 1 min × capteur, soit machine × métrique (nombre, moyenne, min, max) | `window_date`, `batch_id` |
+| `gold/sensor_alerts` | une alerte par capteur et fenêtre de 1 min ayant au moins une valeur hors seuil, clé `alert_id` | `window_date`, `batch_id` |
+| `streaming/rejects` | une ligne hors contrat (JSON illisible, champ manquant, valeur nulle ou non finie, événement daté après son émission), avec son motif | `arrival_date`, `batch_id` |
+
+Les colonnes sont décrites dans le [dictionnaire des flux capteurs](data-dictionary/gold-sensors.md).
 
 Sémantique (watermark, mode de sortie, reprise) : [ADR-0008](adr/0008-streaming.md).
