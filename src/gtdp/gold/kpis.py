@@ -25,7 +25,6 @@ FUNNEL = (("view", "product_views"), ("cart", "carts"), ("purchase", "orders"))
 """The steps of the conversion funnel after the visit: the event type a visit must also hold to
 reach the step, and the column counting the visits that reach it."""
 ORDER_BEFORE_SIGNUP = "ORDER_BEFORE_SIGNUP"
-PRICE_RATIO_ACCURACY = 10_000
 
 
 @dataclass(frozen=True)
@@ -118,14 +117,15 @@ def revenue_moving_avg(sales: DataFrame, days: int) -> DataFrame:
 
 def price_deviation(sales: DataFrame, products: DataFrame) -> DataFrame:
     """Median ratio of the invoiced unit price to the applicable catalog price, per month and
-    category of the version applied, over every line whatever its status."""
+    category of the version applied, over every line whatever its status. The median is exact:
+    with an even number of lines it is the mean of the two middle ratios."""
     ratio = (F.col("unit_price_invoiced") / F.col("applicable_unit_price")).cast("double")
     return (
         sales.join(products.select("product_sk", "category"), "product_sk")
         .groupBy(F.trunc(ORDER_DATE, "month").alias("month"), "category")
         .agg(
             F.count(F.lit(1)).alias("lines"),
-            F.percentile_approx(ratio, 0.5, PRICE_RATIO_ACCURACY).alias("median_price_ratio"),
+            F.median(ratio).alias("median_price_ratio"),
         )
     )
 
