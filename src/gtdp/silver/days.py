@@ -5,11 +5,12 @@ verified it. ``_SUCCESS`` beside them appears once every source of ``D`` has its
 day is complete. Later days deduplicate against complete days only, and a reader that must see
 whole days reads the partitions of ``complete_days`` alone.
 
-A table rebuilt whole (customers, products) holds no partition to leave out: it holds the day it
-was last written for, which ``silver/_days/rebuilt/<source>.json`` names from before the write.
-A reader that must see complete days only reads it while that day is complete.
+A table rebuilt whole (customers, products) holds no partition to leave out: each row carries the
+day it arrived, and ``<table>/_built_for.json`` names the day the table was rebuilt for, written
+into the new table before the swap so that it moves in with it. A reader that must see complete
+days only reads such a table while both name complete days.
 
-Each file is written whole, then renamed into place (``gtdp.io.write_file``).
+Each file of ``_days`` is written whole, then renamed into place (``gtdp.io.write_file``).
 """
 
 from __future__ import annotations
@@ -26,11 +27,11 @@ from gtdp.io import INGESTION_DATE, list_partition_values, write_file
 
 DAYS = "_days"
 COMPLETE = "_SUCCESS"
-REBUILT = "rebuilt"
+BUILT_FOR = "_built_for.json"
 
 
 class MarkerError(RuntimeError):
-    """A file of ``silver/_days`` cannot be read."""
+    """A file of ``silver/_days``, or the ``_built_for.json`` of a table, cannot be read."""
 
 
 def days_path(silver: str) -> str:
@@ -89,29 +90,19 @@ def mark_complete(
     return True
 
 
-def mark_rebuilt(
-    spark: SparkSession, silver: str, source: str, day: date | None, run_id: str
-) -> None:
-    """Record that the table of ``source``, rebuilt whole, is being written with the rows of
-    ``day``, or emptied (``None``). Written before the table, so that it never holds a day the
-    record does not name."""
-    record = {
-        "source": source,
-        "day": day,
-        "run_id": run_id,
-        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
-    }
-    _write(spark, _rebuilt(silver, source), record)
+def built_for(day: date | None, run_id: str) -> dict[str, str]:
+    """The ``files`` of ``gtdp.publish.publish`` for a table rebuilt whole with the rows of
+    ``day``, or emptied (``None``), by the run ``run_id``."""
+    return {BUILT_FOR: json.dumps({"day": day, "run_id": run_id}, default=str)}
 
 
-def rebuilt_day(spark: SparkSession, silver: str, source: str) -> date | None:
-    """The day the table of ``source``, rebuilt whole, was last written for; ``None`` if it was
-    emptied, or if no record names one (a table no run of this version of silver wrote)."""
-    path = _rebuilt(silver, source)
+def rebuilt_day(spark: SparkSession, table: str) -> date | None:
+    """The day the table at ``table``, rebuilt whole, was rebuilt for; ``None`` if it was
+    emptied, or if it has no ``_built_for.json`` (written before silver wrote one)."""
+    path = f"{table}/{BUILT_FOR}"
     if not _exists(spark, path):
         return None
-    marked = _marked_days(spark, silver)
-    redo = f"run silver --date {marked[-1] if marked else '<day>'} again to rewrite it"
+    redo = "run silver --date <the latest complete day> again to rebuild the table"
     day = _field(spark, path, "day", redo)
     try:
         return None if day is None else date.fromisoformat(day)
@@ -148,10 +139,6 @@ def _day_path(silver: str, day: date) -> str:
 
 def _complete(silver: str, day: date) -> str:
     return f"{_day_path(silver, day)}/{COMPLETE}"
-
-
-def _rebuilt(silver: str, source: str) -> str:
-    return f"{days_path(silver)}/{REBUILT}/{source}.json"
 
 
 def _fs(spark: SparkSession, path: str) -> tuple[Any, Any]:

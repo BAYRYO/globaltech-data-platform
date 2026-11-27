@@ -78,11 +78,17 @@ Une table silver absente se lit comme une table vide (`read_table`), sans erreur
   partitions des jours complets (Parquet colonnaire). Sur le cluster, les deux contrôles
   d'unicité de J2 prennent 8,2 s pour les 965 000 commandes de J1 (mesure du runbook silver).
 - Un lecteur qui doit voir des jours entiers, comme gold, ne lit des tables partitionnées que les
-  partitions de `complete_days(spark, silver)`.
+  partitions de `complete_days(spark, silver)`. `customers` et `products_scd2` n'ont pas de
+  partition : gold refuse de s'exécuter, avant toute écriture, si une ligne qu'il en a lue porte
+  un `ingestion_date` qui n'est pas un jour complet, ou si leur `_built_for.json`, écrit dans la
+  table avant son échange, nomme un tel jour. Le fichier couvre le seul cas que les lignes ne
+  montrent pas : une version produit renvoyée avec les attributs de la précédente retire une
+  version sans ajouter de ligne de son jour.
 - Gold se recalcule en entier depuis les jours complets et ne réécrit que les dates
   `order_date` dont le contenu change (voir ADR-0002).
 - Corriger un jour passé passe par `--force` puis le rejeu des jours suivants. Entre les deux,
-  `customers` et `products_scd2` reflètent l'état du jour forcé.
+  `customers` et `products_scd2` reflètent l'état du jour forcé, et gold se calcule sur les jours
+  complets jusqu'à lui.
 
 ## Alternatives écartées
 

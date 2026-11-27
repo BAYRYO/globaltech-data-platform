@@ -119,9 +119,9 @@ def silver(ctx: JobContext) -> None:
     day makes every later day incomplete, and the sources that reference a replayed source due
     again for the day. Each source is checked before it is written (the records add up, the key
     stays unique, SCD2 holds) and read back after; a failed check after the write removes what
-    the run published for the source. A table rebuilt whole first records the day it is
-    written for. A source gets its marker once verified, the day its ``_SUCCESS`` once every
-    source has one.
+    the run published for the source. A table rebuilt whole carries the day it was rebuilt for
+    (``gtdp.silver.days.built_for``). A source gets its marker once verified, the day its
+    ``_SUCCESS`` once every source has one.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -233,8 +233,7 @@ def _publish(
         if pipeline.partitioned:
             publish(rows, target, pipeline.schema, pipeline.partitions, [day])
         else:
-            days.mark_rebuilt(spark, paths.silver, source, day, ctx.run.run_id)
-            publish(rows, target, pipeline.schema)
+            publish(rows, target, pipeline.schema, files=days.built_for(day, ctx.run.run_id))
     finally:
         records.unpersist()
 
@@ -288,8 +287,7 @@ def _roll_back(ctx: JobContext, source: str, day: date, salt: DataFrame) -> None
     else:
         records = classified(spark, paths, source, previous, salt)
         rows = pipeline.build(records.where(F.col(DISPOSITION) == Disposition.CLEAN.value))
-    publish(rows, target, pipeline.schema)
-    days.mark_rebuilt(spark, paths.silver, source, previous, ctx.run.run_id)
+    publish(rows, target, pipeline.schema, files=days.built_for(previous, ctx.run.run_id))
 
 
 def _record(run: Run, reports: dict[str, SourceReport]) -> None:

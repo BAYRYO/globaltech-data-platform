@@ -36,13 +36,13 @@ commandes se lancent depuis la racine du dépôt, cluster démarré et bronze du
    source sans rien écrire (`nothing published`).
 7. **Écriture.** `write_partitions` remplace la partition du jour de `rejects/<source>`, puis
    celle de `orders` ou `weblogs`. `replace_table` échange `customers` ou `products_scd2` en
-   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)), une fois le jour écrit noté dans
-   `_days/rebuilt/<source>.json` : gold ne lit la table que si ce jour est complet.
+   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)), avec le fichier `_built_for.json` qui
+   nomme le jour : gold ne lit la table que si ce jour et ceux de ses lignes sont complets.
 8. **Vérification après écriture.** Rejets et lignes relus égaux aux comptes, clé unique,
    invariants SCD2. En cas d'échec, l'exécution retire ce qu'elle a publié pour la source et le
    jour (`publication removed`) : les partitions du jour, ou la table reconstruite remise dans
-   son état du dernier jour antérieur publié (vide s'il n'y en a pas), que
-   `_days/rebuilt/<source>.json` nomme alors.
+   son état du dernier jour antérieur publié (vide s'il n'y en a pas), avec un `_built_for.json`
+   qui nomme ce jour.
 9. **Marqueurs.** La source vérifiée reçoit son marqueur ; le jour reçoit `_SUCCESS` quand les
    quatre sources ont le leur.
 
@@ -63,16 +63,17 @@ Chaque exécution écrit une ligne d'audit, même en cas d'échec :
 /datalake/silver/_days/ingestion_date=2026-01-02/orders.json
 /datalake/silver/_days/ingestion_date=2026-01-02/weblogs.json
 /datalake/silver/_days/ingestion_date=2026-01-02/_SUCCESS          {"run_id", "sources": {source: run_id}}
-/datalake/silver/_days/rebuilt/customers.json                       {"source", "day", "run_id", "written_at"}
-/datalake/silver/_days/rebuilt/products.json
+/datalake/silver/customers/_built_for.json                          {"day", "run_id"}
+/datalake/silver/products_scd2/_built_for.json
 ```
 
 Un lecteur qui doit voir des jours entiers (gold) ne lit des tables partitionnées que les
 partitions des jours complets : `gtdp.silver.days.complete_days(spark, silver)`. Un jour sans
 `_SUCCESS` est en cours de traitement, échoué ou rendu incomplet par le rejeu d'un jour
-antérieur. `rebuilt/<source>.json` nomme le jour dont `customers` ou `products_scd2` tient les
-lignes : gold refuse de s'exécuter tant que ce jour n'est pas complet. Chaque fichier est écrit
-sous un nom temporaire puis renommé à sa place : il n'est jamais tronqué.
+antérieur. Le `_built_for.json` de `customers` ou de `products_scd2` nomme le jour pour lequel
+la table a été reconstruite, et entre avec elle à l'échange : gold refuse de s'exécuter tant que
+ce jour, ou celui d'une ligne de la table, n'est pas complet. Chaque fichier est écrit sous un nom
+temporaire puis renommé à sa place : il n'est jamais tronqué.
 
 ## Traiter un jour
 
@@ -145,7 +146,9 @@ d'écriture), un arrêt (`SIGTERM`, code 143), un `kill -9`, ou le rejeu forcé 
 son `_SUCCESS` manque, le jour suivant est refusé avec
 `DayOrderError: <D> is not complete in silver`, le rapport le liste et sort en 1. Si
 `customers` ou `products_scd2` a été échangée pour le jour, gold refuse aussi de s'exécuter
-(`IncompleteSilverError`) jusqu'à ce que le jour soit complet. Les refus d'avant écriture (sel,
+(`IncompleteSilverError`) jusqu'à ce que le jour soit complet ; si le jour ne peut pas l'être,
+`silver --date <dernier jour complet>` reconstruit les deux tables pour ce jour. Une écriture qui
+échoue avant l'échange laisse la table d'avant, que gold lit. Les refus d'avant écriture (sel,
 ordre, dépendances, bronze absent) ne changent rien.
 
 1. Repérez les sources publiées et manquantes : tableau des jours du rapport, ou

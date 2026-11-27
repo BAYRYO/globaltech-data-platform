@@ -8,20 +8,25 @@ est décrite dans le [runbook gold](../runbook/gold.md), les choix de modèle da
 
 Chaque exécution recalcule toutes les tables, contrôle tout, puis publie. Elle lit les commandes,
 les logs et les rejets des jours silver terminés. Elle lit `silver/customers` et
-`silver/products_scd2`, que silver reconstruit en entier, seulement si le jour pour lequel silver
-les a écrites en dernier est terminé (`silver/_days/rebuilt/<source>.json`, voir le
-[dictionnaire silver](silver.md#jours-complets)). Gold est ainsi une fonction des jours silver
-terminés : deux exécutions sur les mêmes jours terminés publient les mêmes tables.
+`silver/products_scd2`, que silver reconstruit en entier, et refuse de s'exécuter si une ligne lue
+porte un `ingestion_date` qui n'est pas un jour terminé, ou si le `_built_for.json` de la table
+nomme un tel jour (voir le [dictionnaire silver](silver.md#jours-complets)). Le contrôle porte sur
+les lignes mêmes dont gold se sert : Spark liste les fichiers d'une table quand gold la lit, et un
+échange de la table par silver après le contrôle fait échouer la lecture sur un fichier disparu au
+lieu d'y glisser d'autres lignes. Gold est ainsi une fonction des jours silver terminés : deux
+exécutions sur les mêmes jours terminés publient les mêmes tables.
 `_state.json`, à la racine de `/datalake/gold`, dit si les tables forment un tout publié (voir
 [`gold/_state.json`](#gold_statejson)) : ne lisez gold que s'il vaut `PUBLISHED`.
 
-Quand ce jour n'est pas terminé (jour lancé source par source, exécution silver arrêtée ou
-échouée après l'échange de la table, rejeu d'un jour antérieur qui a retiré ses marqueurs),
-l'exécution échoue avant toute écriture, `_state.json` compris : `IncompleteSilverError`, audit
-`FAILED`, code de sortie 1. Le message nomme le jour, les sources publiées et manquantes pour ce
-jour, et la commande qui le termine, `scripts/cluster/submit.sh silver --date <D>`. Un jour
-incomplet où seules `orders` ou `weblogs` sont publiées ne bloque pas : gold n'en lit aucune
-partition.
+Quand l'une de ces tables tient ainsi un jour non terminé (jour lancé source par source,
+exécution silver arrêtée ou échouée après l'échange de la table, rejeu d'un jour antérieur qui a
+retiré ses marqueurs, jour postérieur forcé par-dessus lui), l'exécution échoue avant toute
+écriture, verrou de gold et `_state.json` compris : `IncompleteSilverError`, audit `FAILED`, code
+de sortie 1. Le message nomme chaque jour en cause, les sources publiées et manquantes pour lui,
+et la commande qui le termine, `scripts/cluster/submit.sh silver --date <D>`. Une écriture silver
+qui échoue ou s'arrête avant l'échange laisse la table et son `_built_for.json` d'avant : gold
+reste exécutable. Un jour incomplet où seules `orders` ou `weblogs` sont publiées ne bloque pas :
+gold n'en lit aucune partition.
 
 Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, les indicateurs dans
 `src/gtdp/gold/kpis.py` (une fonction pure par table). Les exemples sont des lignes du profil

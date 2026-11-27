@@ -168,6 +168,7 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 ├── landing/sensors/incoming/                     fichiers capteurs surveillés par le streaming
 ├── bronze/<source>/ingestion_date=YYYY-MM-DD/    Parquet, colonnes brutes en string + métadonnées
 ├── silver/<entité>/                              données typées et fiables
+├── silver/<entité>/_built_for.json               customers et products_scd2 : jour de leur reconstruction
 ├── silver/rejects/<source>/ingestion_date=…/     lignes rejetées + motifs
 ├── silver/_days/ingestion_date=…/                <source>.json par source publiée, _SUCCESS si le jour est complet
 ├── gold/<table>/                                 modèle en étoile et indicateurs

@@ -16,12 +16,15 @@ rejeux ou les corrections de silver, les mêmes jours silver terminés donnent l
    `silver/_days/ingestion_date=<jour>/_SUCCESS` (toutes les sources publiées et vérifiées,
    `gtdp.silver.days`). `D` doit en faire partie, sinon l'exécution échoue avant toute écriture.
    `D` déclenche l'exécution et sert de clé d'audit ; le contenu dépend de tous les jours
-   terminés, pas de `D`. `silver/customers` et `silver/products_scd2`, reconstruites en entier,
-   doivent avoir été écrites pour un jour terminé (`silver/_days/rebuilt/<source>.json`), sinon
+   terminés, pas de `D`. Gold lit alors les tables silver, puis contrôle `silver/customers` et
+   `silver/products_scd2`, reconstruites en entier : leurs lignes ne doivent porter que des jours
+   terminés (`ingestion_date`), et leur `_built_for.json` nommer un jour terminé, sinon
    l'exécution échoue aussi avant toute écriture (`IncompleteSilverError`, voir « Dépanner »).
+   Le contrôle porte sur les fichiers que gold a listés en lisant : si silver échange une table
+   ensuite, gold échoue sur un fichier disparu, sans rien écrire.
 2. **Verrou.** L'exécution prend le verrou de toute la couche, `_gold.lock` à côté du répertoire
    gold (`/datalake/_gold.lock`), et le garde jusqu'à la fin. Une seconde exécution échoue
-   aussitôt (`TableLockedError`), avant de lire quoi que ce soit.
+   aussitôt (`TableLockedError`), avant tout calcul.
 3. **Calcul complet.** Les dimensions, `fact_sales` (toutes les commandes de tous les jours
    terminés, chacune au prix de la version `dim_product` telle que
    `valid_from <= event_time < valid_to`), `fact_web_events` et les neuf indicateurs sont
@@ -207,8 +210,9 @@ ligne d'audit `STOPPED` ; l'état reste `PUBLISHING` si elle avait commencé à 
 | Message dans `error_message` | Cause | Action |
 | --- | --- | --- |
 | `FileNotFoundError: silver has not completed <D>: run silver for <D> first` | Silver n'a pas terminé ce jour (pas de `_SUCCESS` sous `silver/_days/ingestion_date=<D>`). | Lancez ou rejouez `silver --date <D>`, puis gold. Rien n'a été écrit. |
-| `IncompleteSilverError: silver/<table> holds the rows of <D>, a day silver has not completed (published: ...; missing: ...). Complete the day with scripts/cluster/submit.sh silver --date <D>, then run gold again` | `customers` ou `products_scd2` tient les lignes de `<D>`, que silver n'a pas terminé : jour lancé source par source, exécution silver échouée ou arrêtée après l'échange de la table, rejeu d'un jour antérieur qui a retiré les marqueurs de `<D>`. Gold lirait ces lignes avec celles des jours terminés. | Terminez `<D>` : la commande du message, ou les sources de `missing` dans l'ordre `customers`, `products`, `orders`, `weblogs` ([runbook silver](silver.md#réparer-un-jour-incomplet)). Puis relancez gold. Rien n'a été écrit. |
-| `MarkerError: .../silver/_days/... is unreadable (...): run silver --date <D> again ...` | Un fichier de `silver/_days` est illisible : abîmé, ou tronqué par une version antérieure de silver. | Lancez la commande silver du message, le jour entier : elle réécrit les marqueurs du jour. Puis relancez gold. Rien n'a été écrit. |
+| `IncompleteSilverError: gold reads complete silver days only, but <D> is not complete (published: ...; missing: ...) and silver/<table> holds rows of it ... Run scripts/cluster/submit.sh silver --date <D>, then gold again` | `customers` ou `products_scd2` tient des lignes de `<D>`, ou a été reconstruite pour `<D>` (`was rebuilt for it`), jour que silver n'a pas terminé : jour lancé source par source, exécution silver échouée ou arrêtée après l'échange de la table, rejeu d'un jour antérieur qui a retiré les marqueurs de `<D>`, jour postérieur forcé par-dessus `<D>`. Gold lirait ces lignes avec celles des jours terminés. | Terminez `<D>` : la commande du message, ou les sources de `missing` dans l'ordre `customers`, `products`, `orders`, `weblogs` ([runbook silver](silver.md#réparer-un-jour-incomplet)). Si un jour postérieur est terminé, le message ajoute `--force` et les jours à rejouer ensuite, dans l'ordre. Si `<D>` ne peut pas être terminé, `silver --date <dernier jour terminé>` reconstruit les deux tables pour ce jour. Puis relancez gold. Rien n'a été écrit. |
+| `SparkFileNotFoundException: File .../silver/<table>/part-... does not exist` | Silver a échangé la table pendant que gold la lisait. | Relancez gold une fois silver terminé. Rien n'a été écrit. |
+| `MarkerError: .../silver/... is unreadable (...): run silver --date <D> again ...` | Un marqueur de `silver/_days` ou le `_built_for.json` d'une table est illisible : abîmé, ou tronqué par une version antérieure de silver. | Lancez la commande silver du message, le jour entier : elle réécrit les marqueurs du jour, avec `--force` puis les jours suivants si un jour postérieur est terminé ([runbook silver](silver.md#dépanner)). Puis relancez gold. Rien n'a été écrit. |
 | `GoldCheckError: the gold built from silver breaks its invariants: {'no_version': N}` | Une commande tombe avant la première version de son produit ou dans un trou de l'historique. Silver vérifie seulement que le produit existe. | Vérifiez `products_scd2` avec le rapport silver (invariants SCD2). Rien n'a été écrit. |
 | `GoldCheckError: ... {'several_versions': N, 'duplicate_key.fact_sales': N}` | Deux versions d'un produit se chevauchent. | Idem : historique SCD2 incohérent en silver. |
 | `GoldCheckError: ... {'duplicate_key.fact_sales': N}` seul | Une transaction figure dans deux jours silver terminés avec deux dates. | Examinez la déduplication silver de ces jours ; rejouez silver puis gold. Rien n'a été écrit. |
