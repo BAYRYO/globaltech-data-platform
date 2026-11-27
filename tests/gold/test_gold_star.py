@@ -96,6 +96,15 @@ def test_an_order_without_exactly_one_version_and_one_customer_fails_before_publ
     assert silver_lake.gold("fact_sales", FACT_SALES.schema).count() == 0
 
 
+def test_an_order_with_a_null_required_column_fails_the_run(silver_lake):
+    silver_lake.customers(customer("C1"))
+    silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
+    silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00", channel=None))
+
+    with pytest.raises(GoldCheckError, match="null_required.fact_sales"):
+        silver_lake.run_gold(J1)
+
+
 def test_a_late_order_refreshes_its_date_without_dropping_the_published_orders(silver_lake):
     silver_lake.customers(customer("C1"))
     silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
