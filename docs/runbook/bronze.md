@@ -48,12 +48,16 @@ Le verrou disparaît à la fin de l'écriture, aussi en cas d'échec ou d'arrêt
 Le verrou d'une exécution morte se libère de lui-même : l'exécution suivante le reprend dès que
 YARN rapporte terminée l'application qu'il nomme (`FINISHED`, `FAILED` ou `KILLED`), quel que
 soit son âge, et l'écrit dans un avertissement du journal (`taking over the lock`). Tant que
-l'application est `RUNNING` ou `ACCEPTED`, le verrou est tenu. Si le ResourceManager ne répond
-pas (`no state from YARN` dans le journal), la règle d'âge s'applique : le verrou est repris une
-fois plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut). Le détenteur du verrou
-supprime aussi les répertoires de transit `/datalake/bronze/_<source>.staging-<id>` plus vieux que
-ce délai, et les fichiers `_<source>.lock.takeover-<empreinte>` : chacun est la réclamation d'une
-reprise de verrou, qui n'existe que le temps de la reprise sauf si son exécution a été tuée.
+l'application est dans un autre état (`RUNNING`, `ACCEPTED`…), le verrou est tenu. Si le
+ResourceManager ne répond pas après trois essais (`no state from YARN` dans le journal), la règle
+d'âge s'applique : le verrou est repris une fois plus vieux que `spark.gtdp.io.staleAfterSeconds`
+(6 h par défaut). Le détenteur du verrou supprime aussi les répertoires de transit
+`/datalake/bronze/_<source>.staging-<id>` plus vieux que ce délai, et les fichiers
+`_<source>.lock.*` : la copie du verrou en cours d'écriture (`.tmp-<id>`) et la réclamation d'une
+prise ou d'une libération (`.takeover-<empreinte>`). Ils n'existent que le temps de l'opération,
+sauf si son exécution a été tuée. Une libération qui ne peut pas lire son verrou le garde et
+l'écrit dans le journal (`could not read the lock`) : suivez alors
+[Après une exécution tuée](#après-une-exécution-tuée) une fois l'application terminée.
 
 Un SIGTERM ou un SIGINT reçu pendant l'échange des partitions prend effet à la fin de
 l'échange : chaque partition est soit l'ancienne, soit la nouvelle.
@@ -204,8 +208,8 @@ rejeu reprend le verrou de lui-même, avec dans son journal
 Vérifiez ensuite le jour avec le rapport.
 
 Si le rejeu échoue avec `TableLockedError` alors qu'aucune exécution ne tourne, le
-ResourceManager n'a pas répondu (`no state from YARN` dans le journal). Supprimez alors le verrou
-à la main :
+ResourceManager n'a pas répondu à trois essais (`no state from YARN` dans le journal). Supprimez
+alors le verrou à la main :
 
 1. Vérifiez qu'aucune exécution bronze ne tourne :
 

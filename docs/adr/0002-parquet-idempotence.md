@@ -49,23 +49,34 @@ vivante, jugée comme ci-dessous : c'est un échange en cours.
 ### Verrou de table
 
 Chaque écriture prend le verrou `_<table>.lock`, frère caché de la table, pour toute sa durée. Le
-verrou est un fichier créé seulement s'il n'existe pas, ce que le NameNode décide de façon
-atomique. Il contient l'identifiant de l'exécution, celui de l'application YARN, l'heure de prise
-et un jeton.
+verrou contient l'identifiant de l'exécution, celui de l'application YARN, l'heure de prise et un
+jeton tiré au hasard : deux prises n'écrivent jamais le même contenu. Le contenu est d'abord écrit
+dans `_<table>.lock.tmp-<id>`, puis renommé en `_<table>.lock` sans écrasement : le NameNode
+refuse le renommage, de façon atomique, si le verrou existe. Un verrou visible nomme donc
+toujours son application, même si son exécution meurt pendant l'écriture.
 
 Quand le verrou existe déjà, l'écriture juge l'exécution qui le tient d'après son application :
 
 | Application du verrou | Verrou |
 | --- | --- |
 | YARN la rapporte terminée : `FINISHED`, `FAILED` ou `KILLED` | repris aussitôt, quel que soit son âge, avec un avertissement |
-| YARN la rapporte dans un autre état (`RUNNING`, `ACCEPTED`…) | tenu : `TableLockedError` aussitôt, sans attente, quel que soit son âge |
-| pas d'état de YARN : identifiant `local-…`, application inconnue, réponse illisible, ResourceManager injoignable | règle d'âge : repris s'il est plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut), tenu sinon ; le journal dit pourquoi |
+| YARN la rapporte dans un autre état (`NEW`, `SUBMITTED`, `ACCEPTED`, `RUNNING`…) | tenu : `TableLockedError` aussitôt, sans attente, quel que soit son âge |
+| pas d'état de YARN après trois essais : identifiant `local-…`, application inconnue, réponse illisible, ResourceManager injoignable | règle d'âge : repris s'il est plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut), tenu sinon ; le journal dit pourquoi |
 
 L'état vient de l'API REST du ResourceManager, `GET http://<adresse>/ws/v1/cluster/apps/<id>`,
-l'adresse de la configuration Hadoop (`yarn.resourcemanager.webapp.address`). Une erreur ne
-libère jamais un verrou : elle ramène à la règle d'âge. Une application `RUNNING` garde ses
-verrous même pris plusieurs fois de suite (une table après l'autre, un micro-batch après
-l'autre), y compris contre une autre exécution du même job.
+l'adresse de la configuration Hadoop (`yarn.resourcemanager.webapp.address`). Une requête qui
+échoue (refus, délai de 3 s dépassé, réponse 5xx ou illisible) est répétée après 0,5 s puis 1 s,
+soit 10,5 s au plus. Un 404 est une réponse, l'application est inconnue de YARN : il n'est pas
+répété. Après le dernier essai, la règle d'âge s'applique. Une erreur ne libère donc jamais un
+verrou plus jeune que `staleAfterSeconds`, mais le verrou plus vieux d'une application `RUNNING`
+est repris si le ResourceManager reste injoignable. Une application `RUNNING` garde ses verrous
+même pris plusieurs fois de suite (une table après l'autre, un micro-batch après l'autre), y
+compris contre une autre exécution du même job.
+
+`docker/conf/hadoop/yarn-site.xml` ne pose pas cette adresse : le driver prend la valeur par
+défaut de Hadoop, `${yarn.resourcemanager.hostname}:8088` (`yarn-default.xml`), soit
+`resourcemanager:8088`, vérifié sur le cluster depuis un driver en mode client. Sans adresse,
+chaque verrou suit la règle d'âge et le journal le dit (`… is not set`).
 
 Sur ce cluster, YARN rapporte terminée une application en mode client dès que son driver meurt :
 l'ApplicationMaster voit la connexion du driver se fermer et se désinscrit (`FINISHED`,
@@ -77,21 +88,73 @@ tentative (`yarn.resourcemanager.am.max-attempts` = 2) et l'application reste vi
 cluster, tuer `spark-submit` laisse le driver tourner dans l'ApplicationMaster : l'application
 reste `RUNNING` et garde son verrou.
 
-Deux exécutions peuvent juger le même verrou mort. Chacune crée d'abord la réclamation
-`_<table>.lock.takeover-<empreinte du contenu jugé mort>`, seulement si elle n'existe pas. Seule
-celle qui la crée supprime le verrou, à condition qu'il contienne encore ce qu'elle a jugé mort,
-crée le sien, puis supprime la réclamation. Les autres échouent avec `TableLockedError`. Une
-réclamation laissée par un preneur tué est un verrou comme un autre, repris de la même façon une
-fois mort. `tests/core/test_table_lock.py` fait passer deux preneurs par les 196 entrelacements
-de leurs étapes, et tue un preneur à chacune de ses étapes.
+#### Suppression d'un verrou
 
-Le détenteur du verrou supprime les répertoires `_<table>.staging-*` et les réclamations plus
-vieux que `spark.gtdp.io.staleAfterSeconds`, laissés par une exécution tuée.
+Libération et reprise suppriment le verrou par la même voie. L'exécution qui va supprimer un
+verrou dont elle a lu le contenu C crée d'abord la réclamation
+`_<table>.lock.takeover-<empreinte de C>`, seulement si elle n'existe pas, comme un verrou. Puis
+elle relit le verrou, le supprime s'il contient encore C, et supprime la réclamation si elle est
+encore la sienne. Seule la détentrice de cette réclamation supprime un fichier qui contient C, et
+aucun contenu ne revient : le verrou ne peut pas changer entre la relecture et la suppression.
+
+- À la libération, C est le contenu de l'exécution. Si la réclamation existe déjà, un preneur
+  reprend son verrou parce que la règle d'âge l'a jugée morte : elle le lui laisse, avec un
+  avertissement (`leaving the lock … to the run that took it over`).
+- À la reprise d'un verrou jugé mort, l'exécution qui crée la réclamation supprime le verrou puis
+  crée le sien, comme une prise ordinaire. Les autres échouent avec `TableLockedError`.
+- Une réclamation laissée par un preneur tué est un verrou comme un autre : elle est reprise de
+  la même façon une fois morte.
+
+Une libération qui ne peut pas lire son verrou le relit après 0,5 s puis 1 s. Si la lecture
+échoue encore, le verrou reste. Une erreur du journal (`could not read the lock … to release
+it`) donne alors l'application que YARN doit rapporter terminée, et la commande qui supprime le
+verrou une fois qu'aucune exécution n'écrit la table.
+
+Le détenteur du verrou supprime les répertoires `_<table>.staging-*`, les réclamations et les
+copies `_<table>.lock.tmp-*` plus vieux que `spark.gtdp.io.staleAfterSeconds`, laissés par une
+exécution tuée.
+
+#### Garantie
+
+Deux exécutions ne tiennent jamais le verrou d'une table en même temps, et aucune ne supprime le
+verrou ou la réclamation d'une autre exécution vivante, tant que le jugement de mort est juste :
+une application que YARN rapporte terminée n'écrit plus, et sans état de YARN aucune exécution
+vivante ne garde un verrou ou une réclamation plus de `staleAfterSeconds`. La garantie ne tombe
+que si le ResourceManager reste injoignable pendant qu'une exécution vivante garde un verrou ou
+une réclamation plus de `staleAfterSeconds`. Le cas réaliste est un verrou, celui d'une exécution
+plus longue que ce délai : elle et celle qui reprend son verrou écrivent alors la table en même
+temps, aucune troisième n'entre, et la libération de la première laisse le verrou à la seconde.
+Une réclamation suppose une exécution bloquée plus de `staleAfterSeconds` entre deux appels au
+NameNode d'une même reprise : deux autres exécutions peuvent alors tenir le verrou ensemble.
+
+Hors de cette garantie :
+
+- un driver en mode client qui écrit encore après que YARN a rapporté son application `KILLED`
+  ou `FAILED` (`yarn application -kill`, ApplicationMaster en échec) : les renommages de
+  `write_partitions` et `replace_table` ne passent pas par Spark ;
+- la seconde tentative d'une application en mode cluster : elle trouve son propre verrou sous le
+  même identifiant, le juge tenu et échoue avec `TableLockedError` ; la soumission suivante le
+  reprend une fois l'application terminée.
+
+`tests/core/lock_model.py` explore tous les entrelacements des étapes (appel au NameNode,
+fermeture d'un flux, renommage) de deux à quatre exécutions, en pilotant le vrai `_locked` sur
+un système de fichiers en mémoire. Ses scénarios couvrent les deux régimes, YARN et règle d'âge :
+preneurs d'un verrou mort, détenteur vivant qui dépasse `staleAfterSeconds` puis libère pendant
+que d'autres prennent, réclamations mortes, exécution tuée à n'importe quelle étape. Dans chaque
+état, il vérifie que deux exécutions ne sont pas dans le verrou ensemble, hors le détenteur que
+la règle d'âge juge mort, et qu'aucune ne supprime le fichier d'une exécution vivante sans l'avoir
+jugé mort. Une fois toutes finies, aucune n'a laissé de fichier, et une exécution lancée après une
+mort a pris le verrou. `pytest` passe les scénarios les plus petits ;
+`python tests/core/lock_model.py` les passe tous et donne le nombre d'états de chacun.
+`tests/core/test_table_lock.py` rejoue sur le système de fichiers local les ordres trouvés par la
+revue, et tue une exécution à chacune de ses étapes : la suivante prend le verrou aussitôt, sans
+rien vieillir.
 
 Le puits du flux capteurs fait exception : au lieu d'échouer, il attend un verrou tenu
 (`_write_waiting` de `gtdp.streaming.stream`). Il réessaie toutes les 2 s, pendant
-`stale_after_s` (300 s, section `[streaming]`) plus 60 s de marge, le temps qu'un housekeeping
-finisse la compaction d'un jour ou que le verrou d'un driver tué soit repris. Le job règle
+`stale_after_s` (300 s, section `[streaming]`) plus 60 s de marge, quel que soit le détenteur,
+puis la requête échoue avec `TableLockedError`. Ce délai couvre la reprise du verrou d'un driver
+tué ; une étape de housekeeping doit rester plus courte. Le job règle
 `spark.gtdp.io.staleAfterSeconds` sur la même valeur ([ADR-0008](0008-streaming.md)).
 
 ### Renommages et signaux d'arrêt
@@ -102,7 +165,8 @@ l'intérieur du répertoire existant.
 
 SIGTERM et SIGINT sont différés pendant l'échange, la prise et la libération du verrou. Le signal
 prend effet à la fin du bloc : une exécution arrêtée laisse chaque partition ancienne ou nouvelle,
-jamais absente.
+jamais absente. Reçu pendant la prise, il prend effet une fois le verrou pris, puis le verrou est
+libéré.
 
 ### Lecture : `read_table`
 
@@ -158,8 +222,9 @@ est journalisé et ne remplace jamais l'erreur du job.
   `tests/silver/test_silver_incremental.py`).
 - Une exécution interrompue avant l'échange ne modifie rien. Arrêtée par signal pendant
   l'échange, elle le termine d'abord.
-- Deux exécutions n'écrivent jamais la même table en même temps : la seconde échoue avec
-  `TableLockedError` et doit être relancée après la première. Seul le flux capteurs attend.
+- Deux exécutions n'écrivent jamais la même table en même temps, dans les limites de la
+  [garantie du verrou](#garantie) : la seconde échoue avec `TableLockedError` et doit être
+  relancée après la première. Seul le flux capteurs attend.
 - Limite connue : un `kill -9` entre la suppression et le renommage d'une partition laisse cette
   partition absente jusqu'au rejeu du jour. Le rejeu reprend aussitôt le verrou de l'exécution
   tuée, que YARN rapporte terminée. Sans réponse du ResourceManager, ce verrou bloque la table

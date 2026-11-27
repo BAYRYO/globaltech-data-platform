@@ -145,8 +145,8 @@ d'avant écriture (sel, ordre, dépendances, bronze absent) ne changent rien.
    `kill -9`, le verrou `_<table>.lock` de la table en cours d'écriture reste. Le rejeu le
    reprend de lui-même dès que YARN rapporte terminée l'application qu'il nomme, moins de 2 s
    après la mort du driver (`taking over the lock` dans le journal). S'il échoue quand même avec
-   `TableLockedError`, le ResourceManager n'a pas répondu (`no state from YARN` dans le journal)
-   et le verrou ne serait repris qu'à 6 h : vérifiez que l'application est terminée
+   `TableLockedError`, le ResourceManager n'a pas répondu à trois essais (`no state from YARN`
+   dans le journal) et le verrou ne serait repris qu'à 6 h : vérifiez que l'application est terminée
    (`yarn application -status <application_id>`), puis supprimez le verrou :
 
 	```bash
