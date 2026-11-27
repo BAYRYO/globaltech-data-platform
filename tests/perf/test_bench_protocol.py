@@ -2,7 +2,9 @@
 answers: alternation, warm-up rounds, settings per variant, the exclusivity wait, the stages of
 each run, and prepare's row-count check."""
 
+import socket
 from argparse import Namespace
+from urllib.error import URLError
 
 import pytest
 
@@ -30,7 +32,10 @@ class FakeCluster(Cluster):
     def get(self, url):
         self.asked.append(url)
         answer = self.answers[url.split("?")[0]]
-        return answer.pop(0) if isinstance(answer, Turns) else answer
+        answer = answer.pop(0) if isinstance(answer, Turns) else answer
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
 class FakeConf:
@@ -115,6 +120,18 @@ def test_the_driver_waits_until_yarn_runs_no_other_application(monkeypatch):
     assert ": 0 other application" in check
     assert len(cluster.asked) == 3
     assert sleeps == [15, 15]
+
+
+def test_the_driver_keeps_waiting_while_the_resource_manager_does_not_answer(monkeypatch):
+    """A name-resolution failure of the client container, seen twice in the fix round, must not
+    end a benchmark: the check is only made once the RM answers."""
+    unreachable = URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
+    cluster = FakeCluster({f"{RM}/apps": Turns([unreachable, IDLE])})
+    monkeypatch.setattr(bench.time, "sleep", lambda _: None)
+    assert ": 0 other application" in bench.yarn_idle(cluster, OWN)
+    assert len(cluster.asked) == 2
+    with pytest.raises(TimeoutError, match="did not answer"):
+        bench.yarn_idle(FakeCluster({f"{RM}/apps": Turns([unreachable] * 2)}), OWN, -1)
 
 
 def test_the_wait_gives_up_after_its_limit(monkeypatch):
