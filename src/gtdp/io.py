@@ -38,6 +38,8 @@ _YARN_APPLICATION = re.compile(r"application_\d+_\d+")
 _YARN_ENDED = frozenset({"FINISHED", "FAILED", "KILLED"})
 _RM_WEBAPP = "yarn.resourcemanager.webapp.address"
 _RM_TIMEOUT_S = 5
+# Pauses before the next tries of the read of a lock its holder releases.
+_RETRY_PAUSES_S = (0.5, 1.0)
 
 PartitionValue = str | date
 
@@ -334,12 +336,20 @@ def _acquire(spark: SparkSession, fs: Any, path: Any, holder: str) -> bool:
 def _release(spark: SparkSession, fs: Any, lock: Any, holder: str) -> None:
     """Delete the lock file ``lock`` if it still holds ``holder`` (``_delete_if_holds``).
 
-    A lock that another run took over, the age rule having taken this run for dead, is left to it.
+    A lock this run cannot read, even after the pauses of ``_RETRY_PAUSES_S``, stays: the error
+    says how to free it. A lock that another run took over, the age rule having taken this run
+    for dead, is left to it.
     """
-    held = _read(fs, lock)
+    held = _read_retried(fs, lock)
     if held is None:
-        return
-    if held != holder or not _delete_if_holds(spark, fs, lock, holder, holder):
+        logger.error(
+            "could not read the lock %s to release it: it stays until YARN reports %s ended, or "
+            "for staleAfterSeconds without YARN. Once no run writes the table: hdfs dfs -rm %s",
+            lock,
+            spark.sparkContext.applicationId,
+            lock,
+        )
+    elif held != holder or not _delete_if_holds(spark, fs, lock, holder, holder):
         logger.warning("leaving the lock %s to the run that took it over from this one", lock)
 
 
@@ -441,6 +451,15 @@ def _read(fs: Any, path: Any) -> str | None:
         return bytes(stream.readAllBytes()).decode("utf-8", "replace")
     finally:
         stream.close()
+
+
+def _read_retried(fs: Any, path: Any) -> str | None:
+    """``_read``, tried again after each pause of ``_RETRY_PAUSES_S`` while it gives ``None``."""
+    for pause in _RETRY_PAUSES_S:
+        if (text := _read(fs, path)) is not None:
+            return text
+        time.sleep(pause)
+    return _read(fs, path)
 
 
 def _age_s(fs: Any, path: Any) -> float | None:
