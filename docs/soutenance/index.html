@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GlobalTech Data Platform : soutenance</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --ink: #0f172a;
+  --muted: #475569;
+  --faint: #94a3b8;
+  --line: #e2e8f0;
+  --panel: #f8fafc;
+  --accent: #1e40af;
+  --ap: #2a78d6;
+  --deb: #eb6834;
+  --desp: #6250d6;
+  --rqd: #008300;
+  --gain: #2a78d6;
+  --loss: #e34948;
+  --neutral: #9ca3af;
+  --bronze-fill: #fed7aa; --bronze: #9a3412;
+  --silver-fill: #cbd5e1; --silver: #334155;
+  --gold-fill: #fde68a; --gold: #a16207;
+  --rejects-fill: #fecaca; --rejects: #b91c1c;
+  --stream-fill: #e9d5ff; --stream: #7e22ce;
+  --ops-fill: #bbf7d0; --ops: #15803d;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #e2e8f0; color: var(--ink);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+#deck { position: fixed; left: 50%; top: 50%; width: 1280px; height: 720px;
+  transform: translate(-50%, -50%) scale(var(--k, 1)); transform-origin: center; }
+.slide { position: absolute; inset: 0; width: 1280px; height: 720px; padding: 34px 56px 30px;
+  background: var(--bg); display: none; flex-direction: column; overflow: hidden; }
+.slide.active { display: flex; }
+.slide > header { display: flex; justify-content: space-between; align-items: baseline; gap: 24px;
+  border-bottom: 2px solid var(--line); padding-bottom: 10px; margin-bottom: 18px; }
+h1 { font-size: 60px; margin: 0; line-height: 1.1; }
+h2 { font-size: 38px; margin: 0; line-height: 1.15; }
+h3 { font-size: 24px; margin: 0 0 8px; }
+p, li { font-size: 22px; line-height: 1.35; margin: 0; }
+ul { margin: 0; padding-left: 26px; }
+li + li { margin-top: 6px; }
+.role { font-size: 17px; color: var(--muted); white-space: nowrap; }
+.role::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  margin-right: 8px; background: var(--c); vertical-align: 0; }
+.ap { --c: var(--ap); } .deb { --c: var(--deb); } .desp { --c: var(--desp); } .rqd { --c: var(--rqd); }
+.slide > footer { margin-top: auto; display: flex; justify-content: space-between; font-size: 15px;
+  color: var(--muted); padding-top: 8px; }
+.body { flex: 1; display: flex; gap: 32px; min-height: 0; }
+.col { flex: 1; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.col.narrow { flex: 0 0 380px; }
+table { border-collapse: collapse; font-size: 20px; }
+th, td { padding: 5px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+th { font-size: 17px; color: var(--muted); font-weight: 600; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.big { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+.tile p { font-size: 18px; color: var(--muted); margin-top: 6px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+.box p, .box li { font-size: 20px; }
+.key { font-size: 20px; color: var(--muted); }
+.ok { color: #166534; font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-size: 17px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; background: var(--panel); }
+.flow { display: flex; align-items: center; gap: 10px; }
+.flow .box { flex: 1; text-align: center; padding: 10px; }
+.flow .arrow { font-size: 26px; color: var(--muted); }
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.9em; }
+svg text { font-family: "Segoe UI", Arial, sans-serif; fill: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 15px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 14px; border: 1.5px solid; border-radius: 3px; display: inline-block; }
+.ln { width: 26px; height: 0; border-top: 3px solid; display: inline-block; }
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.card { border: 1px solid var(--line); border-top: 5px solid var(--c); border-radius: 8px; padding: 12px 14px; }
+.card h3 { font-size: 20px; }
+.card p { font-size: 17px; color: var(--muted); }
+.steps { counter-reset: s; display: flex; flex-direction: column; gap: 9px; }
+.step { display: grid; grid-template-columns: 34px 1fr 210px; gap: 12px; align-items: baseline; }
+.step::before { counter-increment: s; content: counter(s); font-weight: 700; font-size: 22px; color: var(--accent); }
+.step p { font-size: 20px; }
+.step .tag { font-size: 16px; color: var(--muted); }
+.timeline { list-style: none; padding: 0; margin: 0; border-left: 3px solid var(--line); }
+.timeline li { position: relative; padding-left: 18px; font-size: 18px; }
+.timeline li::before { content: ""; position: absolute; left: -9px; top: 6px; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--c, var(--faint)); border: 2px solid #fff; }
+.timeline b { font-variant-numeric: tabular-nums; }
+.notes { display: none; }
+#ui { position: fixed; right: 12px; bottom: 8px; font: 13px "Segoe UI", sans-serif; color: #475569; opacity: 0; transition: opacity .4s; }
+#ui.on { opacity: 1; }
+body.notes-view #deck { left: 0; top: 0; transform: scale(var(--kn, 0.5)); transform-origin: top left; }
+#panel { display: none; }
+body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bottom: 0; width: var(--pw, 40%);
+  overflow: auto; background: #fff; padding: 20px 24px; font-size: 20px; line-height: 1.4; border-left: 1px solid #cbd5e1; }
+#panel .who, .who { font-weight: 600; color: var(--accent); }
+#panel .src, .src { font-size: 15px; color: var(--muted); }
+#panel .clock { font: 600 28px Consolas, monospace; }
+@page { size: 1280px 720px; margin: 0; }
+@media print {
+  html, body { background: #fff; height: auto; }
+  #deck { position: static; transform: none; width: 1280px; height: auto; }
+  .slide { display: flex !important; position: relative; break-after: page; page-break-after: always;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .slide:last-child { break-after: auto; page-break-after: auto; }
+  #ui, #panel { display: none !important; }
+}
+</style>
+</head>
+<body>
+<main id="deck">
+
+<section class="slide" id="s1">
+  <div style="margin-top: 40px">
+    <p class="key">Projet Big Data et traitement massif · 3IL · 2026-2027</p>
+    <h1 style="margin-top: 12px">GlobalTech Data Platform</h1>
+    <p style="font-size: 28px; margin-top: 14px; color: var(--muted)">Prototype de plateforme Big Data sur Hadoop et Spark : un lac HDFS en trois couches, des pipelines Spark sur YARN, un flux capteurs</p>
+  </div>
+  <div class="cards" style="margin-top: 56px">
+    <div class="card ap"><h3>Architecte plateforme</h3><p>Lots 1, 2 et volet HDFS du 7 : cluster, HDFS, bronze, réplication contre erasure coding, panne d'un DataNode</p></div>
+    <div class="card deb"><h3>Data engineer batch</h3><p>Lots 3 et 4 : silver, gold, SCD type 2, pseudonymisation, indicateurs</p></div>
+    <div class="card desp"><h3>Data engineer streaming et performance</h3><p>Lots 5, 6 et 7 : flux capteurs, MapReduce contre Spark, benchmarks</p></div>
+    <div class="card rqd"><h3>Responsable qualité et delivery</h3><p>Lots 0, 8 et 9 : cadrage, tests, CI, revues, suivi Jira, rendu</p></div>
+  </div>
+  <p class="key" style="margin-top: 28px">Contexte · architecture · bronze · silver · gold · streaming · MapReduce contre Spark · performance · stockage et panne · qualité · démonstration · limites · retour d'expérience</p>
+  <footer><span>Rôles et lots : pilotage du projet</span><span>1 / 15</span></footer>
+<!-- notes 1 -->
+<aside class="notes">
+<p class="who">responsable qualité et delivery · 30 s</p>
+<p>Bonjour. Nous présentons GlobalTech Data Platform, un prototype de plateforme Big Data sur Hadoop et Spark. Nous sommes quatre, un par rôle du sujet. L'architecte plateforme présente le cluster, HDFS et la couche bronze. Le data engineer batch présente silver et gold. Le data engineer streaming et performance présente le flux capteurs, MapReduce contre Spark et les mesures de performance. Je suis responsable qualité et delivery. Après les quatre parties, nous ferons une démonstration sur le cluster.</p>
+<p class="src">Sources : docs/project-management.md (rôles et lots)</p>
+</aside>
+<!-- /notes 1 -->
+</section>
+
+<section class="slide" id="s2">
+  <header><h2>Contexte : trois dépôts, des anomalies comptées</h2><span class="role rqd">Responsable qualité et delivery</span></header>
+  <div class="body">
+    <div class="col">
+      <ul>
+        <li>Une chaîne logistique pilotée par des fichiers Excel et des exports isolés, sans historique fiable.</li>
+        <li>Le kit fourni est propre. Notre générateur à graine fixe en tire trois dépôts avec des anomalies volontaires.</li>
+        <li>Chaque dépôt porte un manifeste qui compte les anomalies injectées : chaque compte attendu est exact et testable.</li>
+        <li><code>P00042</code> porte 20 % des lignes : le déséquilibre de clé du sujet. Ratio max/médiane par produit : 244,6 sur <code>full</code>.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <table>
+        <tr><th>Dépôt</th><th><code>ingestion_date</code></th><th>Contenu des commandes</th><th class="n">Commandes, <code>dev</code></th></tr>
+        <tr><td>J1</td><td>2026-01-01</td><td>historique 2025</td><td class="n">1 000 000</td></tr>
+        <tr><td>J2</td><td>2026-01-02</td><td>retardataires, renvois de J1</td><td class="n">~2 740</td></tr>
+        <tr><td>J3</td><td>2026-01-03</td><td>nouvelle colonne <code>discount_pct</code></td><td class="n">~2 740</td></tr>
+      </table>
+      <p class="key">Profils : <code>ci</code> 20 000 commandes pour les tests, <code>dev</code> pour la démonstration, <code>full</code> 10 000 000 pour les benchmarks.</p>
+    </div>
+  </div>
+  <div class="box" style="margin-top: 14px">
+    <p style="font-size: 18px; color: var(--muted); margin-bottom: 8px">Neuf questions métier, neuf indicateurs gold, plus les capteurs</p>
+    <div class="chips">
+      <span class="chip">CA par jour et pays</span><span class="chip">top 5 produits par pays</span><span class="chip">moyenne mobile 7 jours</span><span class="chip">écart au prix catalogue applicable</span><span class="chip">annulations et retours</span><span class="chip">panier moyen par segment</span><span class="chip">erreurs HTTP par heure</span><span class="chip">entonnoir de conversion</span><span class="chip">qualité des données</span><span class="chip">agrégats et alertes capteurs</span>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 2 ; contrat de données</span><span>2 / 15</span></footer>
+<!-- notes 2 -->
+<aside class="notes">
+<p class="who">responsable qualité et delivery · 45 s</p>
+<p>GlobalTech pilote sa chaîne logistique avec des fichiers Excel et des exports isolés, sans historique fiable. Le sujet demande une plateforme qui collecte, nettoie, historise et expose des indicateurs fiables. Le kit fourni est propre. Notre générateur à graine fixe en tire trois dépôts, J1, J2 et J3, avec des anomalies volontaires et un manifeste qui les compte. Chaque compte attendu est donc exact et testable. J2 apporte des retardataires et des renvois de J1, J3 une nouvelle colonne. Le produit P00042 porte vingt pour cent des lignes : c'est le déséquilibre de clé du sujet. La plateforme répond à neuf questions métier et surveille les capteurs.</p>
+<p class="src">Sources : docs/rapport-technique.md section 2 ; docs/data-contract.md (profils de volume, commandes)</p>
+</aside>
+<!-- /notes 2 -->
+</section>
+
+<section class="slide" id="s3">
+  <header><h2>Architecture : trois couches HDFS, Spark sur YARN</h2><span class="role ap">Architecte plateforme</span></header>
+  <svg viewBox="0 0 1152 486" width="1168" height="440" role="img" aria-label="Schéma d'architecture légendé : poste client, YARN, HDFS et les zones du lac">
+    <defs>
+      <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="ah-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9333ea"/></marker>
+      <marker id="ah-pink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#db2777"/></marker>
+      <marker id="ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <g fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5">
+      <rect x="0" y="36" width="220" height="430" rx="8"/>
+      <rect x="250" y="36" width="300" height="430" rx="8"/>
+      <rect x="265" y="200" width="270" height="252" rx="6" fill="#ffffff"/>
+      <rect x="580" y="36" width="572" height="430" rx="8"/>
+      <rect x="595" y="138" width="544" height="232" rx="6" fill="#ffffff"/>
+    </g>
+    <g font-size="15" font-weight="600">
+      <text x="12" y="58">Poste client, à la demande</text>
+      <text x="262" y="58">YARN</text>
+      <text x="277" y="222">Conteneurs des applications</text>
+      <text x="592" y="58">HDFS</text>
+      <text x="607" y="160">/datalake, en blocs sur les DataNodes</text>
+    </g>
+    <g stroke-width="1.5" font-size="15" text-anchor="middle">
+      <rect x="25" y="76" width="180" height="56" rx="6" fill="#ffffff" stroke="#6b7280"/>
+      <text x="115" y="100">Générateur</text><text x="115" y="120" font-size="13">dépôts J1, J2, J3</text>
+      <rect x="25" y="152" width="180" height="56" rx="6" fill="#ffffff" stroke="#6b7280"/>
+      <text x="115" y="176">Simulateur capteurs</text><text x="115" y="196" font-size="13">1 fichier toutes les 5 s</text>
+      <rect x="25" y="228" width="180" height="70" rx="6" fill="#fce7f3" stroke="#9d174d"/>
+      <text x="115" y="256">land.sh, submit.sh</text><text x="115" y="278" font-size="13">spark-submit, hdfs, yarn</text>
+      <text x="115" y="330" font-size="13" fill="#475569">driver Spark en mode client</text>
+      <rect x="265" y="70" width="270" height="44" rx="6" fill="#dbeafe" stroke="#1e40af"/>
+      <text x="400" y="97">ResourceManager</text>
+      <rect x="265" y="132" width="130" height="50" rx="6" fill="#dbeafe" stroke="#1e40af"/>
+      <text x="330" y="153">NodeManager 1</text><text x="330" y="172" font-size="13">2 560 Mio</text>
+      <rect x="405" y="132" width="130" height="50" rx="6" fill="#dbeafe" stroke="#1e40af"/>
+      <text x="470" y="153">NodeManager 2</text><text x="470" y="172" font-size="13">2 560 Mio</text>
+      <g fill="#cffafe" stroke="#0e7490">
+        <rect x="280" y="232" width="240" height="34" rx="17"/><rect x="280" y="274" width="240" height="34" rx="17"/>
+        <rect x="280" y="316" width="240" height="34" rx="17"/><rect x="280" y="358" width="240" height="34" rx="17"/>
+        <rect x="280" y="400" width="240" height="34" rx="17"/>
+      </g>
+      <text x="400" y="254">job bronze</text><text x="400" y="296">job silver</text><text x="400" y="338">job gold</text>
+      <text x="400" y="380">streaming-sensors, housekeeping</text><text x="400" y="422">Lot 6 : Hadoop Streaming, Spark</text>
+      <rect x="595" y="70" width="120" height="44" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="655" y="97">NameNode</text>
+      <rect x="735" y="70" width="128" height="44" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="799" y="97">DataNode 1</text>
+      <rect x="873" y="70" width="128" height="44" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="937" y="97">DataNode 2</text>
+      <rect x="1011" y="70" width="128" height="44" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="1075" y="97">DataNode 3</text>
+      <rect x="610" y="172" width="110" height="46" rx="6" fill="#ffffff" stroke="#6b7280" stroke-dasharray="5 3"/><text x="665" y="200">landing</text>
+      <rect x="745" y="172" width="110" height="46" rx="6" fill="#fed7aa" stroke="#9a3412"/><text x="800" y="200">bronze</text>
+      <rect x="880" y="172" width="110" height="46" rx="6" fill="#cbd5e1" stroke="#334155"/><text x="935" y="200">silver</text>
+      <rect x="1015" y="172" width="110" height="46" rx="6" fill="#fde68a" stroke="#a16207"/><text x="1070" y="200">gold</text>
+      <rect x="880" y="238" width="110" height="40" rx="6" fill="#fecaca" stroke="#b91c1c"/><text x="935" y="263">silver/rejects</text>
+      <rect x="1015" y="316" width="110" height="40" rx="6" fill="#e9d5ff" stroke="#7e22ce"/><text x="1070" y="341">streaming</text>
+      <rect x="610" y="316" width="110" height="40" rx="6" fill="#bbf7d0" stroke="#15803d"/><text x="665" y="341">ops/audit</text>
+      <rect x="595" y="388" width="190" height="40" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="690" y="413">Spark History Server</text>
+      <rect x="800" y="388" width="175" height="40" rx="6" fill="#dbeafe" stroke="#1e40af"/><text x="887" y="413">JobHistory MapReduce</text>
+      <rect x="990" y="388" width="149" height="40" rx="6" fill="#f3f4f6" stroke="#6b7280"/><text x="1064" y="413" font-size="13">/spark-logs, /mr-history</text>
+    </g>
+    <g fill="none" stroke="#2563eb" stroke-width="3" marker-end="url(#ah-blue)">
+      <path d="M25,104 H12 V263 H23"/>
+      <path d="M205,236 H232 V24 H588 V195 H608"/>
+      <path d="M720,195 H743"/><path d="M855,195 H878"/><path d="M990,195 H1013"/>
+      <path d="M935,218 V236"/>
+      <path d="M537,262 H593" marker-start="url(#ah-blue)"/>
+    </g>
+    <g fill="none" stroke="#9333ea" stroke-width="3" marker-end="url(#ah-purple)">
+      <path d="M115,208 V226"/>
+      <path d="M665,218 V300 H1070 V220"/>
+      <path d="M1070,300 V314"/>
+    </g>
+    <g fill="none" stroke="#db2777" stroke-width="1.5" marker-end="url(#ah-pink)">
+      <path d="M205,256 H244 V92 H263"/>
+      <path d="M330,114 V130"/><path d="M470,114 V130"/>
+    </g>
+    <path d="M655,114 V124 H1075 M799,124 V114 M937,124 V114 M1075,124 V114" fill="none" stroke="#0284c7" stroke-width="1.5"/>
+    <g fill="none" stroke="#6b7280" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah-gray)">
+      <path d="M537,336 H608"/>
+      <path d="M400,452 V478 H1064 V430"/>
+      <path d="M990,408 H977"/>
+      <path d="M1064,388 V378 H690 V386"/>
+    </g>
+    <text x="410" y="18" font-size="13" fill="#1e3a8a">land.sh et hdfs dfs -put : dépôts J1 à J3, fichiers capteurs</text>
+    <text x="760" y="294" font-size="13" fill="#581c87">streaming-sensors : agrégats et alertes</text>
+  </svg>
+  <div class="legend" style="margin-top: 4px">
+    <span><i class="ln" style="border-color:#2563eb"></i>flux de données batch</span>
+    <span><i class="ln" style="border-color:#9333ea"></i>flux capteurs</span>
+    <span><i class="ln" style="border-color:#db2777; border-top-width: 1.5px"></i>soumission et allocation</span>
+    <span><i class="ln" style="border-color:#0284c7; border-top-width: 1.5px"></i>NameNode et DataNodes</span>
+    <span><i class="ln" style="border-color:#6b7280; border-top-style: dashed"></i>audit et journaux</span>
+    <span><i class="sw" style="background:#dbeafe;border-color:#1e40af"></i>service</span>
+    <span><i class="sw" style="background:#cffafe;border-color:#0e7490"></i>job</span>
+    <span><i class="sw" style="background:#fed7aa;border-color:#9a3412"></i>bronze</span>
+    <span><i class="sw" style="background:#cbd5e1;border-color:#334155"></i>silver</span>
+    <span><i class="sw" style="background:#fecaca;border-color:#b91c1c"></i>rejets</span>
+    <span><i class="sw" style="background:#fde68a;border-color:#a16207"></i>gold</span>
+  </div>
+  <div class="legend" style="margin-top: 6px; font-size: 17px; color: var(--ink)">
+    <span>Une image : Hadoop 3.3.6, Spark 3.5.3, Python 3.11</span>
+    <span>Mémoire au pire cas : 13 824 Mio sur 15 444</span>
+    <span>DataNode mort déclaré en 90 s</span>
+  </div>
+  <footer><span>Source : architecture (vue d'ensemble) ; rapport technique, section 3 ; ADR-0001, ADR-0006, ADR-0011</span><span>3 / 15</span></footer>
+<!-- notes 3 -->
+<aside class="notes">
+<p class="who">architecte plateforme · 50 s</p>
+<p>Le cluster tourne sous Docker Compose, à partir d'une seule image construite par le projet : Hadoop 3.3.6, Spark 3.5.3 et Python 3.11. HDFS a un NameNode et trois DataNodes, le minimum pour la réplication 3 et pour l'erasure coding. YARN a deux NodeManagers de 2 560 Mio, ce qui laisse le streaming tourner à côté d'un batch. Nous avons fixé la mémoire service par service. Au pire cas, avec deux drivers, le cluster demande 13 824 Mio sur les 15 444 dont dispose Docker. Le lac a une racine par couche, pour y poser droits et quotas. Les rejets gardent des données personnelles en clair : ils sont fermés aux analystes.</p>
+<p class="src">Sources : docs/architecture.md (vue d'ensemble) ; docs/rapport-technique.md section 3 ; docs/adr/0001-image-hadoop-spark.md ; docs/adr/0011-exploitation-plateforme.md ; docs/platform.md (budget mémoire)</p>
+</aside>
+<!-- /notes 3 -->
+</section>
+
+<section class="slide" id="s4">
+  <header><h2>Bronze : rien de perdu, rejeu sans doublon</h2><span class="role ap">Architecte plateforme</span></header>
+  <div class="body">
+    <div class="col">
+      <ul>
+        <li><b>Contrôle avant écriture.</b> Chaque fichier contre son manifeste : SHA-256, nombre de lignes, UTF-8 strict, colonnes obligatoires.</li>
+        <li><b>Aucune perte.</b> Chaque fichier lu avec son propre en-tête, tout en <code>string</code>. La colonne ajoutée par J3 ne casse rien.</li>
+        <li><b>Verrou de table</b>, jugé par l'état YARN de l'exécution qui le tient.</li>
+      </ul>
+      <div class="flow" style="margin-top: 10px">
+        <div class="box"><p>1. écrire toutes les partitions dans un répertoire de transit</p></div><span class="arrow">→</span>
+        <div class="box"><p>2. remplacer chaque partition nommée par un renommage</p></div><span class="arrow">→</span>
+        <div class="box"><p>une écriture qui échoue laisse la table intacte</p></div>
+      </div>
+    </div>
+    <div class="col narrow">
+      <table>
+        <tr><th>Jour</th><th class="n">Lignes lues = écrites</th></tr>
+        <tr><td>J1</td><td class="n">1 106 403</td></tr>
+        <tr><td>J2</td><td class="n">3 075</td></tr>
+        <tr><td>J3, <code>discount_pct</code> sur 2 725 lignes</td><td class="n">3 075</td></tr>
+        <tr><td>J2 rejoué</td><td class="n">3 075</td></tr>
+      </table>
+      <p class="key">Rejeu de J2 : les 12 <code>hash_sum</code> identiques au premier tour.</p>
+      <div class="box">
+        <p><b>Preuves du verrou</b></p>
+        <p style="font-size: 18px">419 888 états vérifiés sur 16 scénarios, 0 violation · 17 mutations de <code>io.py</code> sur 17 tuées par les tests</p>
+      </div>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 4 ; ADR-0002, ADR-0007, ADR-0012 ; PR #7, #18</span><span>4 / 15</span></footer>
+<!-- notes 4 -->
+<aside class="notes">
+<p class="who">architecte plateforme · 45 s</p>
+<p>Bronze garde la donnée brute, sans perte. Avant toute écriture, le job vérifie chaque fichier contre son manifeste : empreinte SHA-256, nombre de lignes, UTF-8 strict et colonnes obligatoires. Chaque fichier est lu avec son propre en-tête, tout en texte, donc la colonne ajoutée par J3 ne casse rien. Pour rejouer sans doublon, le job écrit dans un répertoire de transit, puis remplace chaque partition nommée par un renommage. Sur J1, 1 106 403 lignes lues, autant d'écrites. Rejouer J2 redonne les douze mêmes sommes de contrôle. Un verrou de table empêche deux écritures simultanées.</p>
+<p class="src">Sources : docs/rapport-technique.md section 4 ; docs/adr/0012-bronze-controle-manifeste.md ; docs/adr/0002-parquet-idempotence.md ; docs/adr/0007-evolution-schema.md ; PR #7 (tour de correction)</p>
+</aside>
+<!-- /notes 4 -->
+</section>
+
+<section class="slide" id="s5">
+  <header><h2>Silver : propres + rejets + doublons = bronze</h2><span class="role deb">Data engineer batch</span></header>
+  <p style="font-size: 20px; color: var(--muted)">J1 : 1 106 403 lignes bronze = propres + rejets + doublons</p>
+  <svg viewBox="0 0 1168 96" width="1168" height="96" role="img" aria-label="Barre empilée de J1 : 1 070 797 propres, 25 518 rejets, 10 088 doublons">
+    <rect x="0" y="8" width="1066.2" height="40" rx="4" fill="#64748b"><title>propres : 1 070 797</title></rect>
+    <rect x="1068.2" y="8" width="25.4" height="40" fill="#dc2626"><title>rejets : 25 518</title></rect>
+    <rect x="1095.6" y="8" width="10.0" height="40" rx="2" fill="#d97706"><title>doublons : 10 088</title></rect>
+    <text x="16" y="34" font-size="19" fill="#ffffff" style="fill:#ffffff">propres : 1 070 797 (96,8 %)</text>
+    <path d="M1081,50 V66 M1101,50 V80" stroke="#475569" stroke-width="1.5"/>
+    <text x="1074" y="72" font-size="17" text-anchor="end">rejets : 25 518 (2,3 %)</text>
+    <text x="1094" y="92" font-size="17" text-anchor="end">doublons : 10 088 (0,9 %)</text>
+  </svg>
+  <div class="body" style="margin-top: 8px">
+    <div class="col">
+      <table>
+        <tr><th>Jour</th><th class="n">Bronze</th><th class="n">Propres</th><th class="n">Rejets</th><th class="n">Doublons</th><th>Somme</th></tr>
+        <tr><td>J1</td><td class="n">1 106 403</td><td class="n">1 070 797</td><td class="n">25 518</td><td class="n">10 088</td><td class="ok">égale</td></tr>
+        <tr><td>J2</td><td class="n">3 075</td><td class="n">2 958</td><td class="n">73</td><td class="n">44</td><td class="ok">égale</td></tr>
+        <tr><td>J3</td><td class="n">3 075</td><td class="n">2 958</td><td class="n">73</td><td class="n">44</td><td class="ok">égale</td></tr>
+      </table>
+      <p class="key">Rapport silver : 108 mesures comparées au manifeste, à l'audit et aux tables, 0 écart. Retrouvées à l'unité par un tiers sur YARN.</p>
+    </div>
+    <div class="col narrow">
+      <ul>
+        <li>Règles de qualité en une seule passe, codes de rejet tracés.</li>
+        <li>Jour publié quand ses 4 sources le sont : rejeu idempotent.</li>
+        <li><code>discount_pct</code> absent ou vide : <code>0.000</code>.</li>
+        <li>Email, IP, ligne de log : <code>sha2(sel ‖ valeur, 256)</code>. Sans le sel, 0 IP réidentifiée sur 100 046.</li>
+      </ul>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 5 ; modèle de données ; ADR-0004, ADR-0005 ; PR #11</span><span>5 / 15</span></footer>
+<!-- notes 5 -->
+<aside class="notes">
+<p class="who">data engineer batch · 55 s</p>
+<p>Silver applique les règles de qualité en une seule passe, à partir d'un registre de règles par source. Chaque ligne bronze reçoit une seule disposition : propre, rejetée avec ses codes de motif, ou doublon. Avant d'écrire, le job vérifie que bronze égale propres plus rejets plus doublons. Sur J1, 1 106 403 lignes donnent 1 070 797 propres, 25 518 rejets et 10 088 doublons. Le rapport silver compare 108 mesures au manifeste, sans aucun écart. Un jour n'est publié que lorsque ses quatre sources le sont, ce qui rend le rejeu idempotent. Les emails et les adresses IP sont hachés avec un sel gardé hors du dépôt. Sans le sel, nous avons réidentifié zéro adresse IP sur 100 046.</p>
+<p class="src">Sources : docs/rapport-technique.md section 5 ; docs/data-model.md (ordre des opérations et réconciliation) ; docs/adr/0005-silver-incremental.md ; docs/adr/0004-pseudonymisation.md ; PR #11 (preuves, tour de correction, vérification du pilote)</p>
+</aside>
+<!-- /notes 5 -->
+</section>
+
+<section class="slide" id="s6">
+  <header><h2>Gold : le prix applicable à la date de commande</h2><span class="role deb">Data engineer batch</span></header>
+  <div class="body">
+    <div class="col" style="flex: 0 0 520px">
+      <svg viewBox="0 0 520 290" width="520" height="290" role="img" aria-label="Schéma en étoile : fact_sales au centre, dim_date, dim_customer, dim_product et fact_web_events">
+        <g stroke="#94a3b8" stroke-width="2"><path d="M265,150 L90,43 M265,150 L440,43 M265,150 L90,257 M265,150 L440,257"/></g>
+        <g stroke-width="1.5" font-size="16" text-anchor="middle">
+          <rect x="140" y="118" width="250" height="64" rx="6" fill="#fde68a" stroke="#a16207"/>
+          <text x="265" y="145" font-weight="600">fact_sales</text><text x="265" y="166" font-size="13">une ligne par ligne de commande</text>
+          <rect x="15" y="20" width="150" height="46" rx="6" fill="#ffffff" stroke="#a16207"/><text x="90" y="49">dim_date</text>
+          <rect x="365" y="20" width="150" height="46" rx="6" fill="#ffffff" stroke="#a16207"/><text x="440" y="41">dim_customer</text><text x="440" y="59" font-size="13">SCD type 1</text>
+          <rect x="15" y="234" width="150" height="46" rx="6" fill="#ffffff" stroke="#a16207"/><text x="90" y="255">dim_product</text><text x="90" y="273" font-size="13">SCD type 2</text>
+          <rect x="365" y="234" width="150" height="46" rx="6" fill="#ffffff" stroke="#a16207"/><text x="440" y="262">fact_web_events</text>
+        </g>
+      </svg>
+      <div class="chips">
+        <span class="chip">top 5 par pays : <code>dense_rank()</code></span><span class="chip">moyenne mobile 7 jours</span><span class="chip">9 indicateurs</span>
+      </div>
+    </div>
+    <div class="col">
+      <p style="font-size: 20px"><b><code>P00042</code> en SCD type 2</b></p>
+      <table>
+        <tr><th>Version</th><th class="n">Prix</th><th>Valide depuis</th><th>Jusqu'à</th></tr>
+        <tr><td>1</td><td class="n">504,06 €</td><td>1900-01-01</td><td>2025-09-25 08:19:03</td></tr>
+        <tr><td>2</td><td class="n">530,97 €</td><td>2025-09-25 08:19:03</td><td>courante</td></tr>
+      </table>
+      <p class="key">Commande de 08:11:51 : 504,06 €. Commande de 08:19:09 : 530,97 €.</p>
+      <div class="box">
+        <p><b>Recalcul depuis les jours silver complets</b></p>
+        <ul style="margin-top: 6px">
+          <li>Rejeu sur un silver inchangé : 0 date réécrite sur 367, 14 tables au même <code>content_sum</code>.</li>
+          <li>Contrôles fermés avant écriture : clés uniques, 0 orphelin, une version par commande.</li>
+          <li>Silver incomplet : gold refuse avant toute écriture.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 6 ; ADR-0009 ; modèle de données ; PR #11, #15, #22</span><span>6 / 15</span></footer>
+<!-- notes 6 -->
+<aside class="notes">
+<p class="who">data engineer batch · 55 s</p>
+<p>Gold est un schéma en étoile : une table de faits, une ligne par ligne de commande, et les dimensions date, client et produit. La dimension produit est historisée en SCD type 2, et chaque commande prend le prix de la version valide à son heure. Le prix de P00042 passe de 504,06 à 530,97 euros le 25 septembre à 8 h 19. Une commande de 8 h 11 garde l'ancien prix, une de 8 h 19 et 9 secondes prend le nouveau. Gold calcule neuf indicateurs, dont un top 5 par pays et une moyenne mobile sur 7 jours. Chaque exécution recalcule tout depuis les jours silver complets et ne réécrit que les dates qui changent : un rejeu réécrit zéro date sur 367.</p>
+<p class="src">Sources : docs/rapport-technique.md section 6 ; docs/adr/0009-gold-etoile-recalcul.md ; docs/data-model.md (gold, modèle en étoile) ; PR #11 (SCD2 de P00042) ; PR #15 (preuves, tour de correction)</p>
+</aside>
+<!-- /notes 6 -->
+</section>
+
+<section class="slide" id="s7">
+  <header><h2>Streaming : fenêtres, watermark, reprise</h2><span class="role desp">Data engineer streaming et performance</span></header>
+  <div class="body">
+    <div class="col">
+      <ul>
+        <li>Fenêtres d'une minute en mode <code>append</code>, watermark de 2 min : retards de 10 à 90 s gardés, plus de 5 min écartés.</li>
+        <li>Doublons : <code>dropDuplicatesWithinWatermark("event_id")</code>.</li>
+        <li>Une alerte par capteur et par fenêtre, seuils en table de configuration.</li>
+        <li>Écriture <code>foreachBatch</code> dans <code>&lt;jour&gt;/batch_id=&lt;n&gt;</code> : un micro-batch rejoué remplace sa partition.</li>
+        <li>Déclenchement toutes les 30 s, 12 fichiers au plus par micro-batch.</li>
+      </ul>
+    </div>
+    <div class="col narrow" style="flex-basis: 470px">
+      <table>
+        <tr><th>Journée <code>dev</code>, 180 fichiers</th><th class="n">Mesuré</th><th class="n">Manifeste</th></tr>
+        <tr><td>Événements lus</td><td class="n">11 772</td><td class="n">11 772</td></tr>
+        <tr><td>Rejets</td><td class="n">108</td><td class="n">54 + 54</td></tr>
+        <tr><td>Doublons écartés</td><td class="n">324</td><td class="n">324</td></tr>
+        <tr><td>Écartés par le watermark</td><td class="n">108</td><td class="n">108</td></tr>
+        <tr><td>Alertes</td><td class="n">10</td><td class="n">5 × 2</td></tr>
+        <tr><td>Lignes d'agrégats</td><td class="n">743</td><td class="n">720 + 23</td></tr>
+      </table>
+      <div class="box"><p style="font-size: 19px">Driver tué en plein micro-batch, job relancé : <b>IDENTICAL</b> à l'exécution sans arrêt, 0 clé en double.</p></div>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 7 ; ADR-0008 ; runbook streaming ; PR #9</span><span>7 / 15</span></footer>
+<!-- notes 7 -->
+<aside class="notes">
+<p class="who">data engineer streaming et performance · 50 s</p>
+<p>Le flux capteurs dépose un fichier JSON toutes les cinq secondes. Le job Structured Streaming agrège par fenêtre d'une minute, en mode append, avec un watermark de deux minutes. Les retards ordinaires passent, les retards de plus de cinq minutes sont écartés. Les doublons sont supprimés par identifiant d'événement. Chaque micro-batch écrit dans une partition à son numéro, qu'un rejeu remplace : l'écriture est idempotente. Sur la journée de démonstration, chaque compteur égale le manifeste : 11 772 événements lus, 108 rejets, 324 doublons, 108 événements trop en retard et 10 alertes. Driver tué en plein micro-batch puis relancé, le résultat est identique à celui d'une exécution sans arrêt.</p>
+<p class="src">Sources : docs/rapport-technique.md section 7 ; docs/adr/0008-streaming.md ; docs/runbook/streaming.md (vérifier, reprise après arrêt brutal) ; PR #9 (preuves, tour de correction)</p>
+</aside>
+<!-- /notes 7 -->
+</section>
+
+<section class="slide" id="s8">
+  <header><h2>Spark pas plus rapide que MapReduce</h2><span class="role desp">Data engineer streaming et performance</span></header>
+  <div class="body">
+    <div class="col" style="flex: 0 0 660px">
+      <p style="font-size: 18px; color: var(--muted)">Durée médiane sur YARN (s), 5 exécutions exclusives par variante</p>
+      <div class="legend" style="font-size: 16px; color: var(--ink)">
+        <span><i class="sw" style="background:#2a78d6;border-color:#2a78d6"></i>MapReduce</span>
+        <span><i class="sw" style="background:#eb6834;border-color:#eb6834"></i>MapReduce, battement de 100 ms</span>
+        <span><i class="sw" style="background:#1baf7a;border-color:#1baf7a"></i>Spark</span>
+      </div>
+      <svg viewBox="0 0 660 380" width="660" height="380" role="img" aria-label="Durées médianes MapReduce, MapReduce réglé et Spark sur ci, dev et full">
+        <g stroke="#e2e8f0"><path d="M50,290 H650 M50,238 H650 M50,186 H650 M50,134 H650 M50,82 H650 M50,30 H650"/></g>
+        <g font-size="13" fill="#475569" text-anchor="end" style="fill:#475569">
+          <text x="42" y="294">0</text><text x="42" y="242">5</text><text x="42" y="190">10</text><text x="42" y="138">15</text><text x="42" y="86">20</text><text x="42" y="34">25</text>
+        </g>
+        <g>
+          <rect x="83" y="171.4" width="44" height="118.6" rx="4" fill="#2a78d6"><title>ci, MapReduce : 11,4 s</title></rect>
+          <rect x="131" y="188.1" width="44" height="101.9" rx="4" fill="#eb6834"><title>ci, MapReduce réglé : 9,8 s</title></rect>
+          <rect x="179" y="157.9" width="44" height="132.1" rx="4" fill="#1baf7a"><title>ci, Spark : 12,7 s</title></rect>
+          <rect x="283" y="146.5" width="44" height="143.5" rx="4" fill="#2a78d6"><title>dev, MapReduce : 13,8 s</title></rect>
+          <rect x="331" y="177.7" width="44" height="112.3" rx="4" fill="#eb6834"><title>dev, MapReduce réglé : 10,8 s</title></rect>
+          <rect x="379" y="128.8" width="44" height="161.2" rx="4" fill="#1baf7a"><title>dev, Spark : 15,5 s</title></rect>
+          <rect x="483" y="65.4" width="44" height="224.6" rx="4" fill="#2a78d6"><title>full, MapReduce : 21,6 s</title></rect>
+          <rect x="531" y="74.7" width="44" height="215.3" rx="4" fill="#eb6834"><title>full, MapReduce réglé : 20,7 s</title></rect>
+          <rect x="579" y="74.7" width="44" height="215.3" rx="4" fill="#1baf7a"><title>full, Spark : 20,7 s</title></rect>
+        </g>
+        <g font-size="14" text-anchor="middle">
+          <text x="105" y="165">11,4</text><text x="153" y="182">9,8</text><text x="201" y="152">12,7</text>
+          <text x="305" y="140">13,8</text><text x="353" y="171">10,8</text><text x="401" y="123">15,5</text>
+          <text x="505" y="59">21,6</text><text x="553" y="68">20,7</text><text x="601" y="68">20,7</text>
+        </g>
+        <path d="M50,290 H650" stroke="#475569" stroke-width="1.5"/>
+        <g font-size="15" text-anchor="middle">
+          <text x="153" y="312" font-weight="600">ci, 20 110 lignes</text>
+          <text x="353" y="312" font-weight="600">dev, 1,0 M lignes</text>
+          <text x="553" y="312" font-weight="600">full, 10,1 M lignes</text>
+        </g>
+        <g font-size="13" text-anchor="middle" fill="#475569" style="fill:#475569">
+          <text x="153" y="334">MapReduce plus rapide</text><text x="153" y="352">p = 0,008 et 0,008</text>
+          <text x="353" y="334">seule la variante réglée</text><text x="353" y="352">p = 0,008 ; 0,056 sinon</text>
+          <text x="553" y="334">pas de différence détectable</text><text x="553" y="352">p = 0,095 et 0,841</text>
+        </g>
+      </svg>
+    </div>
+    <div class="col">
+      <div class="box">
+        <p><b>Même résultat</b></p>
+        <p style="font-size: 18px">Sortie identique octet pour octet ; compteurs égaux aux manifestes. France sur <code>full</code> : 17 422 094 258,86 € dans les deux moteurs.</p>
+      </div>
+      <table>
+        <tr><th>Sur <code>full</code></th><th class="n">MapReduce</th><th class="n">Spark</th></tr>
+        <tr><td>Lignes lues</td><td class="n">10 054 797</td><td class="n">10 059 963</td></tr>
+        <tr><td>Octets de shuffle</td><td class="n">1 353</td><td class="n">64 276</td></tr>
+        <tr><td>Lignes de code</td><td class="n">159</td><td class="n">181</td></tr>
+      </table>
+      <p class="key">À écrire en MapReduce : tri, combiner, cache distribué, arithmétique entière. Décision : Spark pour la plomberie, pas pour la vitesse.</p>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, section 8 ; MapReduce contre Spark ; ADR-0010</span><span>8 / 15</span></footer>
+<!-- notes 8 -->
+<aside class="notes">
+<p class="who">data engineer streaming et performance · 50 s</p>
+<p>Le Lot 6 calcule le chiffre d'affaires par pays, avec huit compteurs de lignes invalides, en Hadoop Streaming et en Spark. Les deux sorties sont identiques octet pour octet, et les compteurs égalent les manifestes. Nous avons fait 45 exécutions exclusives, cinq par variante et par volume. Sur environ 20 000 lignes, MapReduce est plus rapide : Spark paie un démarrage fixe. Sur 10 millions de lignes, aucune différence de durée n'est détectable. En MapReduce, il faut écrire à la main le tri, le combiner, le cache distribué et l'arithmétique entière. Nous gardons Spark pour cette plomberie, pas pour une vitesse que la mesure ne montre pas.</p>
+<p class="src">Sources : docs/rapport-technique.md section 8 ; docs/mapreduce-vs-spark.md (preuve d'égalité, résultats de la campagne, taille et lisibilité du code) ; docs/perf-evidence/mr-vs-spark-campaign.md ; docs/adr/0010-moteur-et-reglages-spark.md</p>
+</aside>
+<!-- /notes 8 -->
+</section>
+
+<section class="slide" id="s9">
+  <header><h2>Performance : leviers classés par impact</h2><span class="role desp">Data engineer streaming et performance</span></header>
+  <p style="font-size: 18px; color: var(--muted)">Écart de durée médiane contre la référence du levier, 5 exécutions par variante sur YARN, différence retenue si p &lt; 0,05. Chaque gain est mesuré sur sa propre requête : les pourcentages ne s'additionnent pas.</p>
+  <svg viewBox="0 0 1168 392" width="1168" height="392" role="img" aria-label="Barres divergentes des leviers de performance">
+    <g stroke="#e2e8f0"><path d="M370,28 V360 M535,28 V360 M865,28 V360 M1030,28 V360"/></g>
+    <g font-size="13" fill="#475569" text-anchor="middle" style="fill:#475569">
+      <text x="370" y="20">−100 %</text><text x="535" y="20">−50 %</text><text x="700" y="20">0</text><text x="865" y="20">+50 %</text><text x="1030" y="20">+100 %</text>
+      <text x="535" y="382">← plus rapide</text><text x="865" y="382">plus lent →</text>
+    </g>
+    <g font-size="17" text-anchor="end">
+      <text x="355" y="54">Parquet au lieu de CSV</text>
+      <text x="355" y="94">Diffusion de la dimension produit</text>
+      <text x="355" y="134">Élagage par date, table listée</text>
+      <text x="355" y="174">Cache, lignée avec shuffle</text>
+      <text x="355" y="214">16 partitions au lieu de 200</text>
+      <text x="355" y="254">AQE skew join, seuils ajustés</text>
+      <text x="355" y="294">Salage en 16 sous-clés</text>
+      <text x="355" y="334">Élagage, listage par un job Spark</text>
+    </g>
+    <g>
+      <rect x="409.9" y="36" width="290.1" height="24" rx="4" fill="#2a78d6"><title>Parquet : −87,9 %, p = 0,008</title></rect>
+      <rect x="541.6" y="76" width="158.4" height="24" rx="4" fill="#2a78d6"><title>Diffusion : −48,0 %, p = 0,008</title></rect>
+      <rect x="557.8" y="116" width="142.2" height="24" rx="4" fill="#2a78d6"><title>Élagage, table listée : −43,1 %, p = 0,008</title></rect>
+      <rect x="614.2" y="156" width="85.8" height="24" rx="4" fill="#2a78d6"><title>Cache : −26,0 %, p = 0,008</title></rect>
+      <rect x="673.3" y="196" width="26.7" height="24" rx="4" fill="#2a78d6"><title>16 partitions : −8,1 %, p = 0,016</title></rect>
+      <circle cx="700" cy="248" r="7" fill="#9ca3af"><title>AQE : 0 %, p = 0,841</title></circle>
+      <rect x="700" y="276" width="66.0" height="24" rx="4" fill="#e34948"><title>Salage : +20 %, p = 0,016</title></rect>
+      <rect x="700" y="316" width="262.0" height="24" rx="4" fill="#e34948"><title>Listage par un job : +79,4 %, p = 0,008</title></rect>
+    </g>
+    <path d="M700,28 V360" stroke="#475569" stroke-width="1.5"/>
+    <g font-size="16" fill="#334155" style="fill:#334155">
+      <text x="1042" y="54">−87,9 %  p 0,008</text>
+      <text x="1042" y="94">−48,0 %  p 0,008</text>
+      <text x="1042" y="134">−43,1 %  p 0,008</text>
+      <text x="1042" y="174">−26,0 %  p 0,008</text>
+      <text x="1042" y="214">−8,1 %  p 0,016</text>
+      <text x="716" y="254">0 %, p 0,841 : pas de différence détectable</text>
+      <text x="1042" y="294">+20 %  p 0,016</text>
+      <text x="1042" y="334">+79,4 %  p 0,008</text>
+    </g>
+  </svg>
+  <div class="legend" style="font-size: 16px; color: var(--ink)">
+    <span><i class="sw" style="background:#2a78d6;border-color:#2a78d6"></i>gain retenu</span>
+    <span><i class="sw" style="background:#e34948;border-color:#e34948"></i>ralentissement retenu</span>
+    <span><i class="sw" style="background:#9ca3af;border-color:#9ca3af;border-radius:50%"></i>pas de différence détectable</span>
+    <span>Déséquilibre de <code>P00042</code> : max/médiane des tâches 4,16 ; AQE 1,50 ; salage 1,63</span>
+    <span>Aussi sans différence détectable : zstd contre snappy (p 0,841), lecture en erasure coding (p 0,095)</span>
+  </div>
+  <footer><span>Source : rapport technique, section 9 ; performance ; perf-evidence (formats, skew-4slots, cache, partitions)</span><span>9 / 15</span></footer>
+<!-- notes 9 -->
+<aside class="notes">
+<p class="who">data engineer streaming et performance · 55 s</p>
+<p>Chaque levier est mesuré sur YARN, cinq exécutions par variante, en alternance. Une différence n'est retenue que si le test de Mann-Whitney donne p inférieur à 0,05. Parquet au lieu de CSV gagne 88 % sur la même requête. Diffuser la dimension produit gagne 48 % et supprime le shuffle. L'élagage par date gagne 43 % une fois la table listée, mais quand Spark liste ses 396 dossiers par un job, la requête est 79 % plus lente. P00042 donne un rapport de 4,16 entre la tâche la plus longue et la médiane. AQE et le salage ramènent ce rapport vers 1,5, sans gain de durée retenu, et le salage ralentit de 20 %.</p>
+<p class="src">Sources : docs/rapport-technique.md section 9 (leviers classés par impact) ; docs/performance.md (protocole commun, naïf contre optimisé, déséquilibre de clé, cache, partitions) ; docs/perf-evidence/formats/report.md ; docs/perf-evidence/skew-4slots/report.md ; docs/perf-evidence/cache/report.md ; docs/perf-evidence/partitions/report.md</p>
+</aside>
+<!-- /notes 9 -->
+</section>
+
+<section class="slide" id="s10">
+  <header><h2>Stockage et panne d'un DataNode</h2><span class="role ap">Architecte plateforme</span></header>
+  <div class="body">
+    <div class="col">
+      <p style="font-size: 18px; color: var(--muted)">Même fichier, 713 401 398 octets logiques : octets physiques</p>
+      <svg viewBox="0 0 600 150" width="600" height="150" role="img" aria-label="Octets physiques : réplication 3 contre XOR-2-1">
+        <text x="0" y="34" font-size="17">Réplication 3</text>
+        <rect x="140" y="16" width="420" height="28" rx="4" fill="#2a78d6"><title>2 140 204 194 octets</title></rect>
+        <text x="148" y="36" font-size="15" style="fill:#ffffff">2,14 Go · +200 % · 2 pannes tolérées</text>
+        <text x="0" y="90" font-size="17">XOR-2-1</text>
+        <rect x="140" y="72" width="210" height="28" rx="4" fill="#eb6834"><title>1 070 286 956 octets</title></rect>
+        <text x="360" y="92" font-size="15">1,07 Go · +50 % · 1 panne tolérée</text>
+        <path d="M280,8 V108" stroke="#0f172a" stroke-dasharray="4 3"/>
+        <text x="284" y="126" font-size="13" fill="#475569" style="fill:#475569">octets logiques : 0,71 Go</text>
+      </svg>
+      <p class="key">Lecture complète : 1,77 s contre 1,69 s, pas de différence détectable (p 0,095). Le lac reste en réplication 3 : ses blocs font 167 748 octets en moyenne, et un fichier sous 1 Mio paie 100 % en XOR-2-1.</p>
+      <div class="box" style="margin-top: auto">
+        <p style="font-size: 19px"><b>Pendant la panne</b> : <code>fsck /</code> <code>HEALTHY</code>, 5 568 blocs à 2 répliques, 0 bloc manquant. Gold reconstruite en 159,3 s au lieu de 49,1 s, identique à la gold publiée : 14 tables, 367 partitions.</p>
+      </div>
+    </div>
+    <div class="col narrow" style="flex-basis: 430px">
+      <p style="font-size: 20px"><b>Chronologie, arrêt de <code>datanode1</code> pendant l'écriture de gold</b></p>
+      <ul class="timeline">
+        <li style="--c: var(--loss)"><b>0 s</b> arrêt du conteneur</li>
+        <li><b>86 à 91 s</b> après le dernier battement : déclaré mort, 90 s attendues</li>
+        <li><b>91,5 s</b> répliques retirées au contrôle suivant</li>
+        <li><b>3 min 18 s</b> sans cible, jusqu'au démarrage manuel du secours <code>datanode4</code></li>
+        <li><b>69 min 50 s</b> de re-réplication, 1,33 bloc par seconde</li>
+        <li style="--c: var(--ops)"><b>73 min 08 s</b> à 2 répliques au total, puis retour au nominal : 0 bloc sous-répliqué</li>
+      </ul>
+      <p class="key">Limite : avec 3 DataNodes pour une réplication 3, aucune cible sans le secours.</p>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, sections 9 et 11 ; performance ; fiche d'incident du 2026-11-27 ; ADR-0006</span><span>10 / 15</span></footer>
+<!-- notes 10 -->
+<aside class="notes">
+<p class="who">architecte plateforme · 55 s</p>
+<p>Sur le même fichier de 713 Mo, la réplication 3 coûte 200 % de volume en plus, l'erasure coding XOR-2-1 50 %, sans différence de lecture détectable. Mais XOR-2-1 ne tolère qu'une panne par groupe : le lac reste en réplication 3. Nous avons arrêté un DataNode pendant que gold écrivait. Le NameNode l'a déclaré mort entre 86 et 91 secondes après son dernier battement de cœur, pour 90 attendues. Fsck est resté sain : 5 568 blocs à deux répliques, zéro bloc manquant. Gold reconstruite pendant la panne est identique à la gold publiée. La limite est la topologie : avec trois DataNodes, les répliques perdues n'avaient aucune cible avant le démarrage manuel d'un secours.</p>
+<p class="src">Sources : docs/rapport-technique.md sections 9 (réplication 3 contre erasure coding) et 11 ; docs/performance.md (réplication 3 contre erasure coding) ; docs/incidents/2026-11-27-perte-datanode.md ; docs/adr/0006-topologie-hdfs.md</p>
+</aside>
+<!-- /notes 10 -->
+</section>
+
+<section class="slide" id="s11">
+  <header><h2>Industrialisation et qualité</h2><span class="role rqd">Responsable qualité et delivery</span></header>
+  <div class="tiles">
+    <div class="tile"><div class="big">911</div><p>tests pytest, tous verts</p></div>
+    <div class="tile"><div class="big">91,2 %</div><p>couverture du paquet <code>gtdp</code>, lignes et branches</p></div>
+    <div class="tile"><div class="big">295 / 295</div><p>commits au format Conventional Commits, 293 avec leur clé Jira</p></div>
+    <div class="tile"><div class="big">67 s</div><p>relance par un tiers, données gardées ; 122 s depuis zéro</p></div>
+  </div>
+  <div class="body" style="margin-top: 18px">
+    <div class="col">
+      <ul>
+        <li>Transformations pures, jobs minces, configuration TOML, journaux JSON.</li>
+        <li>Table d'audit : une ligne par exécution d'un job Spark qui démarre.</li>
+        <li>CI : ruff, shellcheck, pytest à chaque PR ; cluster neuf et smoke test quand la plateforme change.</li>
+        <li>Jira : une epic par lot, une story par livrable ; une branche et une PR par story, fusion par rebase.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <p style="font-size: 20px"><b>Revues adverses</b> : deux relecteurs, deux modèles, constat retenu s'il est prouvé par une exécution</p>
+      <table>
+        <tr><th>Revue</th><th>Constats</th></tr>
+        <tr><td>Lot 0</td><td>3 bloquants, 10 majeurs, 13 mineurs</td></tr>
+        <tr><td>Silver (#11)</td><td>12 constats ; 30 tests de non-régression</td></tr>
+        <tr><td>Gold (#15)</td><td>1 bloquant : le pays du client figé dans le fait</td></tr>
+        <tr><td>Verrous (#18)</td><td>2 majeurs ; 3 mutations survivaient</td></tr>
+      </table>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, sections 3 et 10 ; <a href="../validation/2026-11-27-validation-tiers.md">validation par un tiers</a> ; pilotage ; revue du Lot 0 ; PR #11, #15, #18, #25</span><span>11 / 15</span></footer>
+<!-- notes 11 -->
+<aside class="notes">
+<p class="who">responsable qualité et delivery · 50 s</p>
+<p>Le code est découpé en transformations pures et en jobs minces, avec une configuration TOML, des journaux JSON et une table d'audit, une ligne par exécution. La suite compte 911 tests pytest, tous verts, pour 91,2 % de couverture. La CI lance lint et tests à chaque PR, et démarre un cluster neuf quand la plateforme change. Chaque story Jira a sa branche et sa PR. Il n'y a pas eu de relecture humaine : chaque livrable passe deux revues adverses, et un constat n'est retenu que s'il est prouvé par une exécution. La revue de gold a trouvé un bloquant, le pays du client figé dans le fait. Enfin, un tiers a suivi le README de bout en bout : la relance avec les données gardées a pris 67 secondes.</p>
+<p class="src">Sources : docs/rapport-technique.md sections 3 (relance du cluster) et 10 ; docs/validation/2026-11-27-validation-tiers.md (relance par un tiers, chronométrages) ; docs/project-management.md (revues, définition de « terminé ») ; docs/reviews/2026-11-26-revue-adverse-lot0.md ; PR #15 (revue) ; PR #25 (preuves sur YARN)</p>
+</aside>
+<!-- /notes 11 -->
+</section>
+
+<section class="slide" id="s12">
+  <header><h2>Démonstration sur le cluster</h2><span class="role">Trois rôles, dans l'ordre des étapes</span></header>
+  <p style="font-size: 20px; color: var(--muted); margin-bottom: 14px"><code>scripts/demo/soutenance.sh live</code> : lit <code>/datalake</code>, n'écrit que sous <code>/user/etl/soutenance</code></p>
+  <div class="steps">
+    <div class="step"><p>Flux capteurs en arrière-plan : 30 fichiers de 5 s de mesures, déclenchement à 10 s, driver tué au micro-batch 2, puis relancé</p><span class="tag role desp">en direct</span></div>
+    <div class="step"><p>Santé du cluster : 9 services sains, 3 DataNodes vivants, 2 NodeManagers</p><span class="tag role ap">en direct</span></div>
+    <div class="step"><p>Gold <code>PUBLISHED</code> pour J1 à J3 ; réconciliation silver tirée de la table d'audit</p><span class="tag role deb">en direct</span></div>
+    <div class="step"><p>Rapport gold : gold contre silver recalculé, prix applicable de <code>P00042</code>, 0 contrôle en échec</p><span class="tag role deb">en direct, 90 s à côté du flux</span></div>
+    <div class="step"><p>Reprise du flux sur checkpoint, comparaison avec l'exécution de référence : <code>IDENTICAL</code></p><span class="tag role desp">référence préparée avant</span></div>
+    <div class="step"><p>Applications YARN : l'application tuée, puis sa relance ; interface <code>http://localhost:8088</code></p><span class="tag role ap">en direct</span></div>
+  </div>
+  <div class="box" style="margin-top: auto">
+    <p style="font-size: 19px">Secours : la vidéo du même enchaînement, enregistrée sur le cluster, <code>docs/soutenance/demo/soutenance-demo.mp4</code>. Les attentes y sont raccourcies et le disent à l'écran.</p>
+  </div>
+  <footer><span>Source : demo.md ; runbook README (interroger l'audit) ; runbook gold ; runbook streaming (test de reprise)</span><span>12 / 15</span></footer>
+<!-- notes 12 -->
+<aside class="notes">
+<p class="who">data engineer streaming et performance, architecte plateforme, data engineer batch, dans l&#x27;ordre des étapes · 3 min 50 s</p>
+<p><strong>Data engineer streaming et performance.</strong> Je lance d'abord le flux capteurs en arrière-plan, sur une racine de test : trente fichiers de cinq secondes de mesures. Le déclenchement passe de trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au deuxième micro-batch, puis relancera le job.</p>
+<p><strong>Architecte plateforme.</strong> Pendant ce temps, l'état du cluster : neuf services sains, trois DataNodes vivants, aucun mort, deux NodeManagers en marche.</p>
+<p><strong>Data engineer batch.</strong> Gold est publiée pour les trois jours silver complets. La table d'audit redonne la réconciliation de chaque jour : pour J1, 1 106 403 lignes bronze égalent propres, rejets et doublons, comme sur la diapositive silver. Le rapport gold recalcule silver et compare : 970 262 commandes, le même chiffre d'affaires des deux côtés, et le prix de P00042 qui change à 8 h 19. Dernière ligne : zéro contrôle en échec.</p>
+<p><strong>Data engineer streaming et performance.</strong> Le journal du flux montre le driver tué au micro-batch 2 : planifié, pas validé. Le job relancé reprend à son checkpoint et rejoue ce micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt, préparée avant la soutenance sur les mêmes fichiers : identique, sans clé en double.</p>
+<p><strong>Architecte plateforme.</strong> Dans YARN, l'application tuée est terminée avec succès : en mode client, YARN ne voit pas la mort du driver. Le rapport la repère donc à l'absence de sa ligne d'audit.</p>
+<p class="src">Sources : docs/soutenance/demo.md ; scripts/demo/soutenance.sh ; docs/runbook/README.md (interroger l'audit) ; docs/runbook/gold.md (vérifier gold) ; docs/runbook/streaming.md (test de reprise)</p>
+</aside>
+<!-- /notes 12 -->
+</section>
+
+<section class="slide" id="s13">
+  <header><h2>Limites, par risque</h2><span class="role deb">Data engineer batch</span></header>
+  <table style="font-size: 19px">
+    <tr><th>Limite</th><th>Conséquence documentée</th><th>Piste</th></tr>
+    <tr><td>3 DataNodes pour une réplication 3</td><td>répliques perdues sans cible jusqu'au secours : 3 min 18 s dans l'exercice</td><td>4ᵉ DataNode, 640 Mio</td></tr>
+    <tr><td>Un NameNode, un ResourceManager, un rack, aucune alerte</td><td>la panne a été détectée par le script de l'exercice</td><td>secours, alertes JMX</td></tr>
+    <tr><td>Gold recalcule tout l'historique</td><td>coût qui croît avec l'historique ; rejeu silver pendant gold non détecté</td><td>revérifier les jours complets avant publication</td></tr>
+    <tr><td>Verrou de table</td><td>deux cas résiduels : ResourceManager injoignable, driver tué qui écrit encore</td><td>format de table transactionnel</td></tr>
+    <tr><td>Dates d'avant 1900 (KAN-59)</td><td>rejet prouvé par des tests locaux seulement</td><td>un dépôt d'essai sur YARN</td></tr>
+    <tr><td>Authentification simple</td><td>un utilisateur qui se déclare <code>etl</code> lit les rejets</td><td>Kerberos</td></tr>
+    <tr><td>Flux capteurs</td><td>2 premiers micro-batches d'un checkpoint neuf sans filtre de retard ; journal plein en ~120 jours</td><td>règle de rejet à la lecture</td></tr>
+    <tr><td>Mesures</td><td>une machine de 16 cœurs, ~10 M de lignes, un tour d'échauffement</td><td>cluster multi-machines</td></tr>
+  </table>
+  <footer><span>Source : rapport technique, sections 1 et 12 ; fiche d'incident (actions préventives) ; ADR-0002</span><span>13 / 15</span></footer>
+<!-- notes 13 -->
+<aside class="notes">
+<p class="who">data engineer batch · 50 s</p>
+<p>Voici nos limites, par risque. Trois DataNodes pour une réplication 3 : après une panne, il faut démarrer un secours à la main. Un seul NameNode, un seul ResourceManager, un seul rack, et aucune alerte : la panne a été détectée par notre script. Gold relit tout l'historique silver à chaque exécution, et un rejeu silver lancé pendant gold n'est pas détecté. Le verrou de table garde deux cas résiduels, si YARN ne répond plus ou si un driver tué écrit encore. Le rejet des dates d'avant 1900 n'est prouvé que par des tests locaux. L'authentification HDFS est simple. Enfin, toutes nos mesures viennent d'une seule machine de 16 cœurs.</p>
+<p class="src">Sources : docs/rapport-technique.md sections 1 et 12 ; docs/incidents/2026-11-27-perte-datanode.md (actions préventives) ; docs/adr/0002-parquet-idempotence.md (garantie)</p>
+</aside>
+<!-- /notes 13 -->
+</section>
+
+<section class="slide" id="s14">
+  <header><h2>Retour d'expérience</h2><span class="role rqd">Responsable qualité et delivery</span></header>
+  <div class="body">
+    <div class="col">
+      <h3>Ce qui a marché</h3>
+      <ul>
+        <li>Des manifestes qui comptent chaque anomalie : chaque compte devient un test exact.</li>
+        <li>Mesurer avant de décider : Spark gardé pour sa plomberie, pas pour sa vitesse ; salage écarté, plus lent.</li>
+        <li>Des revues qui prouvent leurs constats : le pays figé dans le fait, le sel visible dans <code>explain</code>, trouvés avant fusion.</li>
+        <li>Écrire puis échanger, jours complets : chaque rejeu redonne le même contenu.</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h3>Ce que nous ferions autrement</h3>
+      <ul>
+        <li>Quatre DataNodes dès le départ : l'exercice de panne l'a montré.</li>
+        <li>Prouver chaque story sur YARN avant de la fusionner : KAN-58 et KAN-59 l'ont été après.</li>
+        <li>Archiver toutes les revues dans <code>docs/reviews/</code> : seul le Lot 0 y est.</li>
+        <li>Un seuil de couverture en CI, et l'image publiée dans un registre.</li>
+      </ul>
+    </div>
+  </div>
+  <footer><span>Source : rapport technique, sections 5, 8, 10 et 12 ; contrat de données ; pilotage</span><span>14 / 15</span></footer>
+<!-- notes 14 -->
+<aside class="notes">
+<p class="who">responsable qualité et delivery · 45 s</p>
+<p>Ce qui a marché. Des manifestes qui comptent chaque anomalie : chaque compte devient un test exact. Mesurer avant de décider : nous avons gardé Spark pour sa plomberie, et écarté le salage, plus lent. Des revues qui doivent prouver leurs constats : elles ont trouvé le pays figé dans le fait et le sel visible dans un plan d'exécution. Ce que nous ferions autrement. Quatre DataNodes dès le départ. Prouver chaque story sur YARN avant de la fusionner : deux l'ont été après. Archiver toutes les revues dans le dépôt, mettre un seuil de couverture, et publier l'image dans un registre.</p>
+<p class="src">Sources : docs/rapport-technique.md sections 5, 8, 10 et 12 ; docs/data-contract.md ; docs/project-management.md (définition de « terminé »)</p>
+</aside>
+<!-- /notes 14 -->
+</section>
+
+<section class="slide" id="s15">
+  <div style="margin: auto 0">
+    <h1>Merci. Questions ?</h1>
+    <p style="font-size: 26px; margin-top: 18px; color: var(--muted)">Chacun répond sur sa partie.</p>
+  </div>
+  <div class="cards">
+    <div class="card rqd"><h3>Rapport technique</h3><p><code>docs/rapport-technique.md</code> : décisions, mesures, limites</p></div>
+    <div class="card ap"><h3>Exploitation</h3><p><code>README.md</code>, <code>docs/runbook/</code>, <code>docs/platform.md</code></p></div>
+    <div class="card deb"><h3>Décisions</h3><p><code>docs/adr/</code> : douze ADR</p></div>
+    <div class="card desp"><h3>Preuves</h3><p><code>docs/perf-evidence/</code>, fiche d'incident, PR sur GitHub</p></div>
+  </div>
+  <footer><span>github.com/BAYRYO/globaltech-data-platform</span><span>15 / 15</span></footer>
+<!-- notes 15 -->
+<aside class="notes">
+<p class="who">responsable qualité et delivery · 5 s</p>
+<p>Merci. Nous répondons à vos questions, chacun sur sa partie.</p>
+<p class="src">Sources : docs/rapport-technique.md</p>
+</aside>
+<!-- /notes 15 -->
+</section>
+
+</main>
+<div id="ui"></div>
+<div id="panel"></div>
+<script>
+(() => {
+  const slides = [...document.querySelectorAll(".slide")];
+  const ui = document.getElementById("ui");
+  const panel = document.getElementById("panel");
+  let index = 0, started = null, popup = null;
+
+  const fit = () => {
+    const notesView = document.body.classList.contains("notes-view");
+    const width = notesView ? innerWidth * 0.6 : innerWidth;
+    const k = Math.min(width / 1280, innerHeight / 720);
+    document.documentElement.style.setProperty("--k", k);
+    document.documentElement.style.setProperty("--kn", k);
+    document.documentElement.style.setProperty("--pw", (innerWidth - 1280 * k) + "px");
+  };
+  const elapsed = () => {
+    if (!started) return "00:00";
+    const s = Math.floor((Date.now() - started) / 1000);
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  };
+  const notesOf = (i) => {
+    const notes = slides[i].querySelector(".notes");
+    return notes ? notes.innerHTML : "";
+  };
+  const render = () => {
+    const next = slides[index + 1] ? slides[index + 1].querySelector("h2, h1").textContent : "fin";
+    const html = `<p class="clock">${elapsed()}</p><p class="src">Diapositive ${index + 1} / ${slides.length} · suivante : ${next}</p>${notesOf(index)}`;
+    panel.innerHTML = html;
+    if (popup && !popup.closed) popup.document.getElementById("notes").innerHTML = html;
+  };
+  const show = (i) => {
+    index = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((s, j) => s.classList.toggle("active", j === index));
+    history.replaceState(null, "", "#" + (index + 1));
+    render();
+  };
+  const openPresenter = () => {
+    popup = window.open("", "presenter", "width=900,height=700");
+    if (!popup) return;
+    popup.document.write(`<!doctype html><meta charset="utf-8"><title>Notes</title><style>
+      body{font:22px/1.45 "Segoe UI",sans-serif;margin:24px;color:#0f172a}
+      .who{font-weight:600;color:#1e40af}.src{font-size:16px;color:#475569}
+      .clock{font:600 32px Consolas,monospace}</style><div id="notes"></div>`);
+    popup.document.close();
+    popup.addEventListener("keydown", onKey);
+    render();
+  };
+  function onKey(event) {
+    if (!started && ["ArrowRight", "PageDown", " ", "Enter"].includes(event.key)) started = Date.now();
+    switch (event.key) {
+      case "ArrowRight": case "PageDown": case " ": case "Enter": show(index + 1); break;
+      case "ArrowLeft": case "PageUp": case "Backspace": show(index - 1); break;
+      case "Home": show(0); break;
+      case "End": show(slides.length - 1); break;
+      case "n": case "N": document.body.classList.toggle("notes-view"); fit(); render(); break;
+      case "p": case "P": openPresenter(); break;
+      case "f": case "F": document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); break;
+      default: return;
+    }
+    event.preventDefault();
+  }
+  let hint;
+  const showHint = () => { ui.classList.add("on"); clearTimeout(hint); hint = setTimeout(() => ui.classList.remove("on"), 2500); };
+  ui.textContent = "← → diapositives · N notes · P fenêtre de notes · F plein écran";
+  addEventListener("mousemove", showHint);
+  addEventListener("keydown", onKey);
+  addEventListener("resize", fit);
+  document.getElementById("deck").addEventListener("click", () => show(index + 1));
+  setInterval(() => { if (started) render(); }, 1000);
+  fit();
+  show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+})();
+</script>
+</body>
+</html>
