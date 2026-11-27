@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 from gtdp.config import LakePaths
+from gtdp.io import read_table
+from gtdp.jobs import run as run_py
 from gtdp.jobs.run import main
 
 REPO = Path(__file__).resolve().parents[2]
@@ -117,6 +119,22 @@ def test_an_unknown_timezone_or_master_exits_2_before_spark_starts(tmp_path, set
     [error] = [entry for entry in json_lines(result.stderr) if entry["level"] == "ERROR"]
     assert setting.partition("=")[0].partition(".")[2] in error["message"]
     assert not (tmp_path / "lake").exists()
+
+
+@pytest.mark.parametrize("job", ["bronze", "silver", "gold", "revenue-by-country-spark"])
+def test_a_job_that_needs_a_date_exits_2_without_one_and_audits_it(
+    spark, tmp_path, monkeypatch, job
+):
+    monkeypatch.setattr(run_py, "build_spark", lambda cfg, name: spark)
+    monkeypatch.setattr(type(spark), "stop", lambda self: None)
+
+    code = main([job, "--env", "local", *lake_args(tmp_path)])
+
+    assert code == 2
+    [audit] = read_table(spark, str(tmp_path / "lake" / "ops" / "audit")).collect()
+    assert (audit.job_name, audit.status) == (job, "FAILED")
+    assert audit.error_message.startswith("ConfigError: ")
+    assert "--date" in audit.error_message
 
 
 def test_spark_that_cannot_start_exits_2_with_a_json_error(tmp_path):
