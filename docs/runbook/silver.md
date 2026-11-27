@@ -142,9 +142,12 @@ d'avant écriture (sel, ordre, dépendances, bronze absent) ne changent rien.
 1. Repérez les sources publiées et manquantes : tableau des jours du rapport, ou
    `hdfs dfs -ls /datalake/silver/_days/ingestion_date=<D>`.
 2. Corrigez la cause (motif dans `error_message`, journaux de l'application). Après un
-   `kill -9`, le verrou `_<table>.lock` de la table en cours d'écriture reste : le rejeu échoue
-   avec `TableLockedError` tant qu'il a moins de 6 h. Vérifiez que l'application qu'il nomme est
-   terminée (`yarn application -status <application_id>`), puis supprimez-le :
+   `kill -9`, le verrou `_<table>.lock` de la table en cours d'écriture reste. Le rejeu le
+   reprend de lui-même dès que YARN rapporte terminée l'application qu'il nomme, moins de 2 s
+   après la mort du driver (`taking over the lock` dans le journal). S'il échoue quand même avec
+   `TableLockedError`, le ResourceManager n'a pas répondu (`no state from YARN` dans le journal)
+   et le verrou ne serait repris qu'à 6 h : vérifiez que l'application est terminée
+   (`yarn application -status <application_id>`), puis supprimez le verrou :
 
 	```bash
 	scripts/cluster/client.sh hdfs dfs -rm /datalake/silver/_orders.lock
@@ -234,7 +237,7 @@ print(text.count(os.environ["GTDP_PSEUDO_SALT"]), "occurrences du sel")'
 | `FileNotFoundError: .../bronze/<source>/ingestion_date=<D> not found: run bronze for <D> first` | Bronze n'a pas traité ce jour pour cette source. | Lancez `bronze --date <D>`, puis silver. Rien n'a été écrit. |
 | `SilverCheckError: <source> <D>, nothing published: ...` | Un contrôle a échoué avant l'écriture (comptes, clé, SCD2). | Bug : gardez les journaux, ouvrez un ticket. Les sources précédentes du jour sont publiées, le jour est incomplet. |
 | `SilverCheckError: <source> <D>, publication removed: ...` | La relecture diffère de ce qui a été écrit (écriture concurrente, panne pendant l'échange). | Ce que la source avait publié pour le jour est retiré. Rejouez le jour. |
-| `TableLockedError: ... is being written by another run` | Une autre exécution écrit la table. | Attendez sa fin ; si aucune ne tourne, supprimez le verrou nommé. |
+| `TableLockedError: ... is being written by another run` | Une autre exécution écrit la table. | Attendez sa fin : le verrou se libère dès que YARN la rapporte terminée. S'il reste alors que l'application est terminée (`no state from YARN` dans le journal), supprimez le verrou nommé. |
 | `ValueError: silver needs --date` ou `unknown source ...` | Argument manquant ou inconnu. | Relancez avec `--date AAAA-MM-JJ`, `--source` parmi `customers`, `products`, `orders`, `weblogs`. |
 | Code de sortie 2, journal `GTDP_PSEUDO_SALT is required` | Le sel n'est pas défini. | Exportez `GTDP_PSEUDO_SALT` ou ajoutez-le à `.env`. |
 

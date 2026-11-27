@@ -45,10 +45,15 @@ de l'exécution, l'identifiant de l'application YARN et l'heure de sa création.
 exécution qui écrit la même table échoue aussitôt avec `TableLockedError`, au lieu d'attendre.
 Le verrou disparaît à la fin de l'écriture, aussi en cas d'échec ou d'arrêt par signal.
 
-Un verrou plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut) vient d'une
-exécution morte. L'exécution suivante le reprend et l'écrit dans un avertissement du journal.
-Elle supprime aussi les répertoires de transit `/datalake/bronze/_<source>.staging-<id>` plus
-vieux que ce délai.
+Le verrou d'une exécution morte se libère de lui-même : l'exécution suivante le reprend dès que
+YARN rapporte terminée l'application qu'il nomme (`FINISHED`, `FAILED` ou `KILLED`), quel que
+soit son âge, et l'écrit dans un avertissement du journal (`taking over the lock`). Tant que
+l'application est `RUNNING` ou `ACCEPTED`, le verrou est tenu. Si le ResourceManager ne répond
+pas (`no state from YARN` dans le journal), la règle d'âge s'applique : le verrou est repris une
+fois plus vieux que `spark.gtdp.io.staleAfterSeconds` (6 h par défaut). Le détenteur du verrou
+supprime aussi les répertoires de transit `/datalake/bronze/_<source>.staging-<id>` plus vieux que
+ce délai, et les fichiers `_<source>.lock.takeover-<empreinte>` : chacun est la réclamation d'une
+reprise de verrou, qui n'existe que le temps de la reprise sauf si son exécution a été tuée.
 
 Un SIGTERM ou un SIGINT reçu pendant l'échange des partitions prend effet à la fin de
 l'échange : chaque partition est soit l'ancienne, soit la nouvelle.
@@ -193,6 +198,15 @@ Un `kill -9`, ou la perte du conteneur client, tue le driver sans ligne d'audit.
 un échange, la partition en cours peut manquer. Le verrou `_<source>.lock` et un répertoire
 `_<source>.staging-<id>` restent dans `/datalake/bronze`.
 
+YARN rapporte l'application terminée moins de 2 s après la mort du driver. Rejouez le jour : le
+rejeu reprend le verrou de lui-même, avec dans son journal
+`taking over the lock .../_orders.lock, left by a run that died (application_… is FINISHED)`.
+Vérifiez ensuite le jour avec le rapport.
+
+Si le rejeu échoue avec `TableLockedError` alors qu'aucune exécution ne tourne, le
+ResourceManager n'a pas répondu (`no state from YARN` dans le journal). Supprimez alors le verrou
+à la main :
+
 1. Vérifiez qu'aucune exécution bronze ne tourne :
 
 	```bash
@@ -213,9 +227,9 @@ un échange, la partition en cours peut manquer. Le verrou `_<source>.lock` et u
 
 4. Rejouez le jour, puis vérifiez-le avec le rapport.
 
-Sans l'étape 3, l'exécution qui suit de plus de 6 heures la création du verrou le reprend
-elle-même. La première exécution qui écrit la table plus de 6 heures après le dernier
-changement du répertoire de transit le supprime. Pour essayer ces reprises sur une copie,
+Sans l'étape 3 et sans réponse de YARN, l'exécution qui suit de plus de 6 heures la création du
+verrou le reprend elle-même. La première exécution qui écrit la table plus de 6 heures après le
+dernier changement du répertoire de transit le supprime. Pour essayer ces reprises sur une copie,
 réduisez le délai :
 
 ```bash

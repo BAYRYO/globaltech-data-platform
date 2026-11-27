@@ -63,7 +63,7 @@ Section `[streaming]` de `conf/app.toml`, surchargeable comme toute clé
 | `state_partitions` | `4` | Partitions de l'état. Figé par le checkpoint à sa création. |
 | `stop_after_idle_triggers` | `0` | Arrêt après ce nombre de déclenchements sans données ni micro-batch à exécuter. `0` : jamais. |
 | `future_tolerance_s` | `60` | Retard maximal de `emitted_at` sur `event_time` ; au-delà, rejet `FUTURE_EVENT`. |
-| `stale_after_s` | `300` | Âge à partir duquel un verrou ou un dossier de staging d'une table du flux est celui d'une exécution morte (`spark.gtdp.io.staleAfterSeconds` des deux jobs). Voir [Reprise](#reprise-après-arrêt-brutal). |
+| `stale_after_s` | `300` | Âge à partir duquel un dossier de staging d'une table du flux, ou un verrou dont YARN ne donne pas l'état, est celui d'une exécution morte (`spark.gtdp.io.staleAfterSeconds` des deux jobs). Voir [Reprise](#reprise-après-arrêt-brutal). |
 | `archive_retention_days` | `2` | Jours d'arrivée gardés dans l'archive en plus du jour courant. |
 | `thresholds` | voir le dictionnaire | Seuils d'alerte par métrique (`above`, `below`). Une surcharge d'un seuil (`GTDP_STREAMING__THRESHOLDS__PRESSURE__BELOW=3.5`) garde les autres. |
 
@@ -274,12 +274,15 @@ entier. Les fichiers arrivés pendant l'arrêt sont lus ensuite, par paquets de
 `max_files_per_trigger`.
 
 Un driver tué pendant une écriture laisse le verrou de la table (`_<table>.lock`) et son dossier
-de staging (`_<table>.staging-<id>`). Le job relancé attend ce verrou (`table locked, waiting for
-its lock`) jusqu'à ce qu'il ait `stale_after_s` secondes (300), puis le reprend (`taking over the
-lock`). L'écriture suivante qui a lieu après le même âge supprime le staging laissé (`removing …,
-left … s ago by a run that died`), sans arrêter le job. Un `stale_after_s` plus court reprend plus
-vite, mais doit rester au-dessus de l'étape la plus longue du housekeeping (la compaction d'un
-jour), sinon le flux prendrait un verrou encore tenu.
+de staging (`_<table>.staging-<id>`). Le job relancé reprend ce verrou (`taking over the lock`)
+dès que YARN rapporte terminée l'application tuée, moins de 2 s après la mort de son driver,
+conteneur client tué compris. Si le ResourceManager ne répond pas (`no state from YARN`), il
+attend (`table locked, waiting for its lock`) que le verrou ait `stale_after_s` secondes (300).
+L'écriture suivante qui a lieu après le même âge supprime le staging laissé (`removing …, left …
+s ago by a run that died`), sans arrêter le job. Le verrou d'un housekeeping `RUNNING` reste tenu
+quel que soit son âge. Sans réponse de YARN, un `stale_after_s` plus court reprend plus vite, mais
+doit rester au-dessus de l'étape la plus longue du housekeeping (la compaction d'un jour), sinon
+le flux prendrait un verrou encore tenu.
 
 ### Test de reprise
 
@@ -334,7 +337,7 @@ Pour tout effacer et rejouer la journée dans une racine de test,
 | Des événements très en retard sont agrégés au début d'un checkpoint neuf | Les deux premiers micro-batches n'ont pas encore de watermark pour filtrer les retards (ADR-0008). |
 | Des lignes `FUTURE_EVENT` dans les rejets | L'horloge d'un émetteur date ses événements plus de 60 s après leur émission ; à corriger à la source. |
 | Au redémarrage, une erreur de compatibilité d'état (`StateSchemaNotCompatible`, nombre de partitions) | Le plan a changé : nouveau checkpoint, voir ci-dessus. |
-| Le job relancé n'écrit rien pendant quelques minutes, `table locked, waiting for its lock` | Le verrou d'une exécution tuée : il est repris après `stale_after_s` (300 s). Ou le housekeeping compacte la table : l'attente dure une étape. |
+| Le job relancé n'écrit rien pendant quelques minutes, `table locked, waiting for its lock` | Le housekeeping compacte la table : l'attente dure une étape. Ou le verrou d'une exécution tuée alors que le ResourceManager ne répond pas (`no state from YARN`) : il est repris après `stale_after_s` (300 s). |
 | Des dossiers `_sensor_aggregates.staging-…` dans `/datalake/gold` | Écriture interrompue par un arrêt brutal. Spark les ignore (préfixe `_`) ; la première écriture après `stale_after_s` les supprime. |
 | Un dossier `_sensor_aggregates.compaction-…` | Compaction d'un housekeeping tué : le housekeeping suivant la termine ou la supprime. Ne pas l'effacer à la main s'il contient `_journal.json` : il tient les seules copies des lignes en cours d'échange. |
 | `incoming` garde des fichiers anciens | Le housekeeping ne tourne pas, ou une requête n'a pas validé leur micro-batch (job arrêté). |
