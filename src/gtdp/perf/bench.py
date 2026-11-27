@@ -43,7 +43,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -59,6 +59,7 @@ from gtdp.io import read_table
 from gtdp.perf import datasets as ds
 from gtdp.perf.history import (
     QUANTILES,
+    Skew,
     completed_stages,
     group_stage_ids,
     key_stage,
@@ -188,8 +189,6 @@ def measure(app_id: str, runs: list[Run], metrics: Mapping[str, str], cluster: C
         run.key_stage = asdict(found) | {
             "stage": sid,
             "attempt": attempt,
-            "duration_ratio": found.duration_ratio,
-            "read_ratio": found.read_ratio,
             "spilled_bytes": stage.get("diskBytesSpilled", 0),
         }
         run.stage_walls = {
@@ -215,8 +214,6 @@ KEY_STAGE_COLUMNS = (
     "duration_max_ms",
     "read_median_bytes",
     "read_max_bytes",
-    "duration_ratio",
-    "read_ratio",
     "spilled_bytes",
 )
 RUN_COLUMNS = (
@@ -244,14 +241,17 @@ def save_runs(path: Path, header: Mapping, runs: Sequence[Run]) -> None:
         name, _, key = column.partition(".")
         return getattr(run, name).get(key) if key else getattr(run, name)
 
-    lines = [json.dumps([value(r, c) for c in RUN_COLUMNS], default=str) for r in runs]
-    head = json.dumps({**header, "columns": RUN_COLUMNS}, indent=1, default=str)
-    path.write_text(head[:-2] + ',\n "runs": [\n' + ",\n".join(lines) + "\n ]\n}\n")
+    def compact(value: object) -> str:
+        return json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":"))
+
+    lines = [compact([value(r, c) for c in RUN_COLUMNS]) for r in runs]
+    head = compact({**header, "columns": RUN_COLUMNS})
+    path.write_text(head[:-1] + ',"runs":[\n' + ",\n".join(lines) + "\n]}\n", encoding="utf-8")
 
 
 def load_runs(path: Path) -> tuple[dict, list[Run]]:
     """The header and the runs of a ``runs.json`` written by ``save_runs``."""
-    header = json.loads(path.read_text())
+    header = json.loads(path.read_text(encoding="utf-8"))
     columns, rows = header.pop("columns"), header.pop("runs")
     runs = []
     for row in rows:
@@ -271,6 +271,13 @@ def _median(values: Sequence[float]) -> float:
     return statistics.median(values) if values else 0.0
 
 
+def _skew(run: Run) -> Skew | None:
+    """The key-stage quantiles of a run, None before ``measure``."""
+    if not all(f.name in run.key_stage for f in fields(Skew)):
+        return None
+    return Skew(**{f.name: run.key_stage[f.name] for f in fields(Skew)})
+
+
 def kept(runs: Sequence[Run], variant: str, first_run: int = 1) -> list[Run]:
     """The measured runs of ``variant`` from run ``first_run`` on that no other application
     overlapped: the runs the statistics use."""
@@ -287,6 +294,7 @@ def summarize(runs: Sequence[Run]) -> list[dict]:
         own = kept(runs, name)
         walls = [r.wall_s for r in own]
         middle = sorted(own, key=lambda r: r.wall_s)[(len(own) - 1) // 2] if own else None
+        skews = [s for s in map(_skew, own) if s is not None]
         rows.append(
             {
                 "variant": name,
@@ -295,8 +303,8 @@ def summarize(runs: Sequence[Run]) -> list[dict]:
                 "min_s": min(walls, default=0.0),
                 "max_s": max(walls, default=0.0),
                 **{key: _median([r.stages.get(key, 0) for r in own]) for key in STAGE_COLUMNS},
-                "duration_ratio": _median([r.key_stage.get("duration_ratio", 0) for r in own]),
-                "read_ratio": _median([r.key_stage.get("read_ratio", 0) for r in own]),
+                "duration_ratio": _median([s.duration_ratio for s in skews]),
+                "read_ratio": _median([s.read_ratio for s in skews]),
                 **{
                     f"{stage}_s": _median([r.stage_walls[stage] for r in own])
                     if all(stage in r.stage_walls for r in own) and own

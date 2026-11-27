@@ -28,7 +28,15 @@ def run(variant: str, number: int, wall_s: float, check=(1, "ab"), **stages) -> 
         yarn_check="0 other application",
         check=list(check),
         stages={"inputBytes": 100, **stages},
-        key_stage={"stage": 7, "attempt": 0, "duration_ratio": 2.0, "read_ratio": 3.0},
+        key_stage={
+            "stage": 7,
+            "attempt": 0,
+            "tasks": 4,
+            "duration_median_ms": 10.0,
+            "duration_max_ms": 20.0,
+            "read_median_bytes": 5.0,
+            "read_max_bytes": 15.0,
+        },
     )
 
 
