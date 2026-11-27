@@ -7,7 +7,7 @@ import pytest
 
 from gtdp import publish as publish_module
 from gtdp.audit import Run
-from gtdp.gold.state import State, Status, read_state
+from gtdp.gold.state import State, Status, read_state, write_state
 from gtdp.io import TableLockedError, replace_table
 from gtdp.jobs.gold import GoldCheckError
 
@@ -97,3 +97,18 @@ def test_a_run_that_fails_a_check_leaves_the_state_of_the_previous_run(silver_la
     assert read_state(silver_lake.spark, silver_lake.cfg.paths.gold) == State(
         Status.PUBLISHED, run.run_id, (J1,)
     )
+
+
+@pytest.mark.parametrize("checksum", ["kept", "removed"])
+def test_an_unreadable_state_reads_as_absent(spark, tmp_path, checksum):
+    """ADR-0002: an unreadable ``_state.json`` reads as absent, so gold is not taken for
+    published. Damaged on disk, its content no longer matches its checksum (review A, F6); torn
+    by an earlier version, it holds part of a JSON object."""
+    gold = str(tmp_path / "gold")
+    write_state(spark, gold, State(Status.PUBLISHED, "run", (J1,)))
+    state = tmp_path / "gold" / "_state.json"
+    state.write_text('{"status": "PUBLISHING", "run_id": "other", "silver_days": [')
+    if checksum == "removed":
+        state.with_name(f".{state.name}.crc").unlink()
+
+    assert read_state(spark, gold) is None
