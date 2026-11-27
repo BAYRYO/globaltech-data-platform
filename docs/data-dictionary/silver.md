@@ -20,12 +20,33 @@ exemples sont des lignes du profil `dev` (graine 42) publiées sur le cluster.
 
 ## Jours complets
 
-`silver/_days/ingestion_date=D/` tient un marqueur par source publiée et vérifiée pour `D`
-(`<source>.json` : `run_id`, `published_at`), puis `_SUCCESS` quand les quatre sources le sont
-(`gtdp.silver.days`). Un jour sans `_SUCCESS` est en cours, échoué, ou rendu incomplet par le
-rejeu d'un jour antérieur ou d'une source dont il dépend. Les doublons inter-jours ne regardent
-que les jours complets ; un lecteur qui doit voir des jours entiers ne lit des tables
-partitionnées que les partitions de `complete_days(spark, silver)`.
+`silver/_days/ingestion_date=D/` tient un marqueur JSON par source publiée et vérifiée pour `D`,
+puis `_SUCCESS` quand les quatre sources le sont (`gtdp.silver.days`). Un jour sans `_SUCCESS`
+est en cours, échoué, ou rendu incomplet par le rejeu d'un jour antérieur ou d'une source dont il
+dépend. Les doublons inter-jours ne regardent que les jours complets ; un lecteur qui doit voir
+des jours entiers ne lit des tables partitionnées que les partitions de
+`complete_days(spark, silver)`. Rejouer un jour réécrit ses marqueurs et retire ceux des jours
+suivants ([ADR-0005](../adr/0005-silver-incremental.md)).
+
+### `silver/_days/ingestion_date=<d>/<source>.json`
+
+Écrit par `mark_source` une fois la source publiée et relue sans écart.
+
+| Champ | Type | Règle | Exemple |
+| --- | --- | --- | --- |
+| `source` | string | Source publiée, nom du fichier sans `.json`. | `orders` |
+| `run_id` | string | Exécution silver qui a publié la source, clé `run_id` de l'audit. | `20261126T195836Z-d3d2ae34` |
+| `published_at` | string | Heure d'écriture du marqueur, après la publication et sa relecture, ISO 8601 en UTC à la seconde. | `2026-11-26T19:59:41+00:00` |
+
+### `silver/_days/ingestion_date=<d>/_SUCCESS`
+
+Écrit par `mark_complete` quand chacune des quatre sources a son marqueur pour le jour. Gold ne
+lit que les jours qui ont ce fichier.
+
+| Champ | Type | Règle | Exemple |
+| --- | --- | --- | --- |
+| `run_id` | string | Exécution silver qui a complété le jour. | `20261126T195836Z-d3d2ae34` |
+| `sources` | map<string,string> | Chaque source publiée pour le jour, avec le `run_id` de l'exécution qui l'a publiée. | `{"customers": "20261126T195836Z-d3d2ae34", "orders": "20261126T195836Z-d3d2ae34", …}` |
 
 ## Disposition d'une ligne bronze
 
@@ -60,7 +81,7 @@ contrôlé avant la conversion : une conversion seule accepterait `1.5` comme en
 | montant `decimal(10,2)` | `^-?\d{1,8}(\.\d{1,2})?$` | `abc`, `12.345` |
 | remise `decimal(4,3)` | `^\d(\.\d{1,3})?$`, vide = `0.000` | `-0.100`, `abc` |
 
-## `orders`
+## `silver/orders`
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -100,7 +121,7 @@ publiées pour `D`, et rend `orders` à refaire quand l'une d'elles est rejouée
 contrat, les comptes `UNKNOWN_CUSTOMER` et `UNKNOWN_PRODUCT` restent ceux du manifeste : aucun
 client ni produit n'y existe seulement dans des lignes rejetées.
 
-## `customers`
+## `silver/customers`
 
 Type SCD 1 : par `customer_id`, la ligne propre de plus grand `updated_at` parmi tous les jours
 jusqu'à `D`. Une ligne sans `updated_at` lisible ne l'emporte que si le client n'en a pas
@@ -137,7 +158,7 @@ Doublons : `DUPLICATE_EXACT` → `duplicated.exact` ; `DUPLICATE_KEY` → `dupli
 d'espaces, donc identique une fois l'email normalisé. Deux fiches sans `updated_at` lisible ne
 sont jamais doublons de clé l'une de l'autre.
 
-## `products_scd2`
+## `silver/products_scd2`
 
 Type SCD 2, reconstruit à chaque exécution à partir de toutes les lignes produits propres de
 bronze jusqu'à `D`. Une ligne ne crée une version que si `product_name`, `category` ou
@@ -179,7 +200,7 @@ Exemple, historique de `P00042` après J3 : version 1 à 504,06 € (`Security`)
 `T000593481` du `2025-09-25 08:11:51` se valorise à 504,06 € (facturée 463,83 €), la commande
 `T000771975` du `2025-09-25 08:19:09` à 530,97 € (facturée 505,26 €).
 
-## `weblogs`
+## `silver/weblogs`
 
 Lignes au *Combined Log Format* découpées par `regexp_extract` (aucune UDF) avec
 `COMBINED_LOG` de `src/gtdp/silver/weblogs.py`. Sont acceptés un client IPv4 ou IPv6, un
