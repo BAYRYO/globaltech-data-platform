@@ -183,9 +183,11 @@ délai de 300 s (`dfs.namenode.reconstruction.pending.timeout-sec`). La colonne
 
 ### Données
 
-- Aucune donnée perdue. `hdfs fsck /` est resté `HEALTHY` pendant les deux pannes avec
-  `Missing blocks: 0` et `Corrupt blocks: 0` (`fsck-during.txt`, `fsck-datalake-during.txt`,
-  `ecriture-sous-panne/fsck-fact-sales-outage.txt`).
+- Aucune donnée perdue. `hdfs fsck /` est resté `HEALTHY` pendant la première panne, avec
+  `Missing blocks: 0` et `Corrupt blocks: 0` (`fsck-during.txt`, `fsck-datalake-during.txt`).
+  Pendant la seconde, le `fsck` de `fact_sales` dans la zone d'écriture est `HEALTHY`
+  (`ecriture-sous-panne/fsck-fact-sales-outage.txt`) ; le `fsck /` de ce dossier date du retour
+  du nœud (`fsck-after.txt`).
 - **Écritures pendant la panne, second exercice.** Les 14 tables ont été écrites dans une zone
   vide. Sur les 367 fichiers de `fact_sales`, 187 ont été ouverts avant l'arrêt, 20 dans les
   0,2 s où `datanode1` s'arrêtait, 72 entre son arrêt et sa déclaration de mort (bloc redemandé
@@ -329,9 +331,10 @@ l'exercice, alors que gold écrivait.
    environ (`No route to host`). Un conteneur qui reprend l'adresse la refuse en quelques
    millisecondes. Le driver écrit ses verrous l'un après l'autre : ses attentes s'additionnent.
 4. **Re-réplication bridée.** Chaque DataNode source reçoit 2 copies à la fois
-   (`dfs.namenode.replication.max-streams`), et au plus 4 au total
-   (`dfs.namenode.replication.max-streams-hard-limit`), à chaque battement de cœur de 3 s :
-   1,33 bloc par seconde. Les blocs sont petits (453 957 octets en moyenne) : le réseau et les
+   (`dfs.namenode.replication.max-streams`), à chaque battement de cœur de 3 s. Avec 2 sources,
+   cela fait 4 copies par passage : 1,33 bloc par seconde. La limite dure
+   (`dfs.namenode.replication.max-streams-hard-limit`, 4) vaut par source : avec `max-streams` 8
+   et la limite dure à 4, le HDFS jetable donne 8 copies par passage (`minihdfs-rate.txt`). Les blocs sont petits (453 957 octets en moyenne) : le réseau et les
    disques ne limitent pas.
 5. **Les blocs les plus exposés réparés en dernier.** Le NameNode parcourt ses files de blocs
    à réparer avec un signet, 6 blocs par passage de 3 s (3 DataNodes vivants ×

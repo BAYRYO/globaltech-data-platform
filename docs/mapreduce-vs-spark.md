@@ -161,8 +161,8 @@ flowchart LR
 
 ## Preuve d'égalité des résultats
 
-**En local** (`scripts/test.sh tests/mapreduce`, 65 tests), les deux moteurs traitent les mêmes
-fichiers. Le tube MapReduce donne chaque fichier de commandes à son propre mapper,
+**En local** (`scripts/test.sh tests/mapreduce`, 68 tests, dont 26 font tourner les moteurs et 42
+testent l'outil de comparaison), les deux moteurs traitent les mêmes fichiers. Le tube MapReduce donne chaque fichier de commandes à son propre mapper,
 `python3 mapper.py <clients> < <fichier>`, comme Hadoop donne chaque split à sa propre tâche ;
 `cat a b | mapper.py` collerait la dernière ligne d'un fichier sans saut de ligne final à la
 première du suivant.
@@ -431,8 +431,9 @@ exécuteur de 2 cœurs comme pour un map d'un cœur.
 
 ## Taille et lisibilité du code
 
-Compté par `compare.sh` sur le code formaté par `ruff`. Les lignes de code excluent les lignes
-vides, les commentaires et les docstrings.
+Compté par `compare.sh` sur le code formaté par `ruff`, au commit `32b18ba` de la campagne. Les
+lignes de code excluent les lignes vides, les commentaires et les docstrings. Depuis, `62c4144` a
+ajouté une ligne de code au job Spark (code 2 quand `--date` manque) : 181 lignes de code.
 
 | Moteur | Fichier | Lignes | Lignes de code |
 | --- | --- | ---: | ---: |
@@ -635,7 +636,9 @@ Ce que les mesures établissent aujourd'hui :
 1. **Même résultat**, au centime et compteur par compteur, vérifié à chaque exécution, égal aux
    manifestes du générateur, et identique sur les octets hors contrat testés.
 2. **MapReduce est plus rapide sur les petits volumes, et aucun moteur ne l'est sur 10 M de
-   lignes** (campagne de 5 exécutions par variante). Spark paie un démarrage fixe que 20 000 et
+   lignes** (campagne de 5 exécutions par variante). Sur `ci`, les deux variantes MapReduce le
+   sont (p = 0,008) ; sur `dev`, seule la variante à battement court l'est (p = 0,008), l'écart de
+   la variante par défaut n'étant pas retenu (p = 0,056). Spark paie un démarrage fixe que 20 000 et
    1 M de lignes ne compensent pas. MapReduce est limité par l'arrivée de ses conteneurs autant
    que par son calcul : un battement d'ApplicationMaster de 100 ms lui fait gagner 1,6 à 3,0 s
    sur les petits volumes.

@@ -357,10 +357,11 @@ prouver. Quand la lignée contient un shuffle, chaque recalcul coûte 3,1 à 3,5
 dès 3 indicateurs, et supprime en plus 188 Mo de déversement.
 
 **Règle retenue.** Mettre en cache un DataFrame seulement si sa lignée est coûteuse (shuffle,
-lecture CSV) et réutilisée, ou bon marché mais réutilisée plus de 6 fois. La construction de gold
-persiste `fact_sales`, puis le relit pour le comptage des lignes, les violations de grain, les
-invariants, 6 des 9 indicateurs et l'écriture : au moins 10 lectures, au-delà du point où le cache
-paie sur cette mesure.
+lecture CSV) et réutilisée, ou bon marché mais réutilisée plus de 6 fois. Le cas de la lecture CSV
+et le seuil de 6 sont inférés, pas mesurés : aucune variante ne lit du CSV ni ne réutilise le fait
+plus de 6 fois. La construction de gold persiste `fact_sales`, puis le relit pour le comptage des
+lignes, les violations de grain, les invariants, 6 des 9 indicateurs et l'écriture : au moins
+10 lectures, au-delà du seuil inféré. Le gain du cache dans le job gold n'est pas mesuré.
 
 ### Nombre de partitions de shuffle
 
@@ -411,7 +412,8 @@ lente que celle à 16 partitions (p = 0,016), comme à 4 partitions, et sa duré
 (+2,9 %, p = 0,016). Un point reste sans explication : la durée de `sp-200` augmente à chaque
 tour (6,32, 6,79, 6,85, 6,99 puis 7,50 s), alors que celle de `sp-16` ne bouge pas. La valeur de
 la plateforme, 16, est au creux du U et dans la zone plate de la durée totale : elle reste le bon
-choix pour ces volumes. Les octets déversés sont les mêmes pour toutes les variantes : le
+choix pour ces volumes. Le balayage la mesure sans regroupement d'AQE ; la plateforme l'active,
+et 16 partitions avec regroupement n'a pas été mesuré. Les octets déversés sont les mêmes pour toutes les variantes : le
 déversement vient de l'étape de lecture, et aucune étape de réduction ne déverse, même avec
 4 partitions de 26 Mo.
 
@@ -707,7 +709,7 @@ rapportées ont tourné avec un seul tour d'échauffement : ajouter `--warmup 1`
 chronométrée pour refaire le même protocole.
 
 ```bash
-export GTDP_PSEUDO_SALT=<valeur hors dépôt>      # exigé par --env cluster, rien n'est pseudonymisé
+export GTDP_PSEUDO_SALT=<valeur hors dépôt>      # inutile au banc : seuls silver et son rapport lisent le sel
 
 scripts/perf/bench.sh land                       # profil full, graine 42 : orders, customers, products et manifestes sous /benchmarks/mr-vs-spark/full/landing
 scripts/perf/bench.sh prepare                    # tables des 4 dispositions sous /benchmarks/perf/full
