@@ -71,7 +71,7 @@ ailleurs pour la raison donnée.
 | `bronze/<source>` (4 tables) | Parquet | job `bronze` (`src/gtdp/jobs/bronze.py`) | [bronze](bronze.md) |
 | `silver/orders`, `silver/customers`, `silver/products_scd2`, `silver/weblogs` | Parquet | job `silver` (`src/gtdp/jobs/silver.py`) | [silver](silver.md) |
 | `silver/rejects/<source>` (4 tables) | Parquet | job `silver` | [silver](silver.md#rejets-silverrejectssource) |
-| `silver/_days/ingestion_date=<d>/<source>.json`, `_SUCCESS` | JSON | job `silver` (`src/gtdp/silver/days.py`) | [silver](silver.md#jours-complets) |
+| `silver/_days/ingestion_date=<d>/<source>.json`, `_SUCCESS`, `silver/_days/rebuilt/<source>.json` | JSON | job `silver` (`src/gtdp/silver/days.py`) | [silver](silver.md#jours-complets) |
 | `gold/fact_sales`, `gold/fact_web_events`, `gold/dim_date`, `gold/dim_customer`, `gold/dim_product` | Parquet | job `gold` (`src/gtdp/jobs/gold.py`) | [gold](gold.md) |
 | `gold/kpi_*` (9 tables) | Parquet | job `gold` (`src/gtdp/gold/kpis.py`) | [gold](gold.md#indicateurs) |
 | `gold/_state.json` | JSON | job `gold` (`src/gtdp/gold/state.py`) | [gold](gold.md#gold_statejson) |

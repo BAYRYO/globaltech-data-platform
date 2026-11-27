@@ -15,6 +15,8 @@ from typing import Any
 
 from pyspark.sql import SparkSession
 
+from gtdp.io import write_file
+
 STATE = "_state.json"
 
 
@@ -33,21 +35,18 @@ class State:
 
 
 def write_state(spark: SparkSession, gold: str, state: State) -> None:
+    """Replace the state of ``gold`` with ``state``, whole (``gtdp.io.write_file``)."""
     record = {
         "status": state.status.value,
         "run_id": state.run_id,
         "silver_days": [str(day) for day in state.silver_days],
     }
-    fs, path = _filesystem(spark, f"{gold}/{STATE}")
-    stream = fs.create(path, True)
-    try:
-        stream.write(bytearray(json.dumps(record).encode()))
-    finally:
-        stream.close()
+    write_file(spark, f"{gold}/{STATE}", json.dumps(record))
 
 
 def read_state(spark: SparkSession, gold: str) -> State | None:
-    """The state of ``gold``; ``None`` when no run wrote one, or a run died writing it."""
+    """The state of ``gold``; ``None`` when no run wrote one, or when it cannot be read: either
+    way, gold is not known to be published."""
     fs, path = _filesystem(spark, f"{gold}/{STATE}")
     if not fs.exists(path):
         return None

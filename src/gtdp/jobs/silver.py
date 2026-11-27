@@ -119,8 +119,9 @@ def silver(ctx: JobContext) -> None:
     day makes every later day incomplete, and the sources that reference a replayed source due
     again for the day. Each source is checked before it is written (the records add up, the key
     stays unique, SCD2 holds) and read back after; a failed check after the write removes what
-    the run published for the source. A source gets its marker once verified, the day its
-    ``_SUCCESS`` once every source has one.
+    the run published for the source. A table rebuilt whole first records the day it is
+    written for. A source gets its marker once verified, the day its ``_SUCCESS`` once every
+    source has one.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -182,8 +183,10 @@ def _check_order(
         logger.warning("%s; forced", problem)
     for source in sources:
         for dependency in PIPELINES[source].depends_on:
+            if dependency in sources:
+                continue
             built = days.latest_day(spark, paths.silver, dependency)
-            if dependency not in sources and built != day:
+            if built != day:
                 raise DayOrderError(
                     f"{source} of {day} are checked against {dependency} as published for "
                     f"{day}, but {dependency} is published for {built}: run silver --date {day} "
@@ -230,6 +233,7 @@ def _publish(
         if pipeline.partitioned:
             publish(rows, target, pipeline.schema, pipeline.partitions, [day])
         else:
+            days.mark_rebuilt(spark, paths.silver, source, day, ctx.run.run_id)
             publish(rows, target, pipeline.schema)
     finally:
         records.unpersist()
@@ -280,11 +284,12 @@ def _roll_back(ctx: JobContext, source: str, day: date, salt: DataFrame) -> None
         return
     previous = days.latest_day(spark, paths.silver, source, before=day)
     if previous is None:
-        publish(spark.createDataFrame([], pipeline.schema), target, pipeline.schema)
-        return
-    records = classified(spark, paths, source, previous, salt)
-    clean = records.where(F.col(DISPOSITION) == Disposition.CLEAN.value)
-    publish(pipeline.build(clean), target, pipeline.schema)
+        rows = spark.createDataFrame([], pipeline.schema)
+    else:
+        records = classified(spark, paths, source, previous, salt)
+        rows = pipeline.build(records.where(F.col(DISPOSITION) == Disposition.CLEAN.value))
+    publish(rows, target, pipeline.schema)
+    days.mark_rebuilt(spark, paths.silver, source, previous, ctx.run.run_id)
 
 
 def _record(run: Run, reports: dict[str, SourceReport]) -> None:

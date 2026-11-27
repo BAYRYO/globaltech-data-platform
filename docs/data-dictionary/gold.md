@@ -7,15 +7,21 @@ est décrite dans le [runbook gold](../runbook/gold.md), les choix de modèle da
 [modèle de données](../data-model.md#gold--modèle-en-étoile).
 
 Chaque exécution recalcule toutes les tables, contrôle tout, puis publie. Elle lit les commandes,
-les logs et les rejets des jours silver terminés, et les tables `silver/customers` et
-`silver/products_scd2` telles que silver les a publiées en dernier, que leur jour soit terminé ou
-non. `_state.json`, à la racine de `/datalake/gold`, dit si les tables forment un tout publié
-(voir [`gold/_state.json`](#gold_statejson)) : ne lisez gold que s'il vaut `PUBLISHED`.
+les logs et les rejets des jours silver terminés. Elle lit `silver/customers` et
+`silver/products_scd2`, que silver reconstruit en entier, seulement si le jour pour lequel silver
+les a écrites en dernier est terminé (`silver/_days/rebuilt/<source>.json`, voir le
+[dictionnaire silver](silver.md#jours-complets)). Gold est ainsi une fonction des jours silver
+terminés : deux exécutions sur les mêmes jours terminés publient les mêmes tables.
+`_state.json`, à la racine de `/datalake/gold`, dit si les tables forment un tout publié (voir
+[`gold/_state.json`](#gold_statejson)) : ne lisez gold que s'il vaut `PUBLISHED`.
 
-Limite connue (KAN-58) : un jour silver en cours qui a déjà republié `customers` ou
-`products_scd2` change `dim_customer`, `dim_product` et les indicateurs qui les joignent, sans
-changer `silver_days`. Deux exécutions gold sur les mêmes jours terminés peuvent donc publier des
-tables différentes.
+Quand ce jour n'est pas terminé (jour lancé source par source, exécution silver arrêtée ou
+échouée après l'échange de la table, rejeu d'un jour antérieur qui a retiré ses marqueurs),
+l'exécution échoue avant toute écriture, `_state.json` compris : `IncompleteSilverError`, audit
+`FAILED`, code de sortie 1. Le message nomme le jour, les sources publiées et manquantes pour ce
+jour, et la commande qui le termine, `scripts/cluster/submit.sh silver --date <D>`. Un jour
+incomplet où seules `orders` ou `weblogs` sont publiées ne bloque pas : gold n'en lit aucune
+partition.
 
 Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, les indicateurs dans
 `src/gtdp/gold/kpis.py` (une fonction pure par table). Les exemples sont des lignes du profil
@@ -26,8 +32,8 @@ Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, le
 | `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | recalculée depuis toutes les commandes des jours silver terminés ; seules les dates dont le contenu change sont réécrites (`write_partitions`), les dates qui n'ont plus de commande sont supprimées (`drop_partitions`) |
 | `fact_web_events` | une requête valide des logs web | `log_id` | aucune | reconstruite depuis les logs des jours silver terminés (`replace_table`) |
 | `dim_date` | un jour | `date_key` | aucune | reconstruite |
-| `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite depuis `silver/customers` tel que silver l'a publié en dernier (KAN-58) |
-| `dim_product` | une version catalogue (SCD 2) | `product_sk` | aucune | reconstruite depuis `silver/products_scd2` tel que silver l'a publié en dernier (KAN-58) |
+| `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite depuis `silver/customers`, écrite pour un jour silver terminé |
+| `dim_product` | une version catalogue (SCD 2) | `product_sk` | aucune | reconstruite depuis `silver/products_scd2`, écrite pour un jour silver terminé |
 | `kpi_*` | ligne « Grain » de la formule de chaque indicateur | les colonnes du grain, uniques par construction (`groupBy`, ou calendrier croisé avec les pays pour `kpi_revenue_moving_avg`), non vérifiées | aucune | reconstruite |
 | `sensor_aggregates`, `sensor_alerts` | écrites par le job `streaming-sensors`, pas par `gold` | voir le [dictionnaire des capteurs](gold-sensors.md) | `window_date`, `batch_id` | partitions du micro-batch remplacées |
 
@@ -437,4 +443,4 @@ Il couvre les tables du job `gold`, pas `sensor_aggregates` ni `sensor_alerts` d
 | --- | --- | --- | --- |
 | `status` | string | `PUBLISHING` de la première écriture d'une exécution à la relecture de `fact_sales`, puis `PUBLISHED`. Une exécution échouée ou tuée en cours d'écriture laisse `PUBLISHING`. Une exécution qui échoue à un contrôle n'écrit rien et laisse l'état précédent. | `PUBLISHED` |
 | `run_id` | string | Exécution auditée qui a écrit l'état (`run_id` de l'audit). | `20261127T101500Z-1a2b3c4d` |
-| `silver_days` | array<string> | Jours silver terminés dont cette exécution a lu les commandes, les logs et les rejets. `customers` et `products_scd2` sont lus tels que silver les a publiés en dernier (limite connue, KAN-58). | `["2026-01-01", "2026-01-02", "2026-01-03"]` |
+| `silver_days` | array<string> | Jours silver terminés que cette exécution a lus : les commandes, les logs et les rejets de ces jours, `customers` et `products_scd2` écrits pour l'un d'eux. Gold est leur fonction. | `["2026-01-01", "2026-01-02", "2026-01-03"]` |
