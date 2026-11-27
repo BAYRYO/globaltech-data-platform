@@ -37,6 +37,10 @@ ignore = ["PLR0913", "PLR2004"]
 source = ["gtdp"]
 branch = true
 
+[tool.coverage.paths]
+# The tests that run a job from a dist/gtdp.zip copy measure the modules of src/gtdp.
+source = ["src/gtdp", "*/dist/gtdp.zip/gtdp"]
+
 [tool.coverage.report]
 precision = 1
 show_missing = true
