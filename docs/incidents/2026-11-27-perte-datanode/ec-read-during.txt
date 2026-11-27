@@ -1,0 +1,4 @@
+/benchmarks/ec/orders_20260101.csv md5 1d3e3c5f1698eba670ee9d04664db2a5 read in 3.0 s
+/benchmarks/rep3/orders_20260101.csv md5 1d3e3c5f1698eba670ee9d04664db2a5 read in 2.6 s
+/benchmarks/ec/products_20260101.csv md5 60478562ee901ce7c67a9939a70fc507 read in 1.1 s
+/benchmarks/rep3/products_20260101.csv md5 60478562ee901ce7c67a9939a70fc507 read in 1.1 s

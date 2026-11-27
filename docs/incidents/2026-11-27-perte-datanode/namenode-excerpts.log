@@ -1,0 +1,83 @@
+# Lignes du NameNode, 2026-11-27, extraites de docker logs gtdp-namenode-1 (UTC). 172.22.0.4 = datanode1 jusqu'à 07:44:17, puis datanode4 à partir de 07:47:36 ; datanode1 revient en 172.22.0.12.
+## Mort de datanode1, enregistrements, décommission (lignes INFO ; suivi de décommission toutes les 30 s abrégé)
+2026-11-27 07:45:49,352 INFO hdfs.StateChange: BLOCK* removeDeadDatanode: lost heartbeat from 172.22.0.4:9866, removeBlocksFromBlockMap true
+2026-11-27 07:45:49,392 INFO net.NetworkTopology: Removing a node: /default-rack/172.22.0.4:9866
+2026-11-27 07:47:36,747 INFO hdfs.StateChange: BLOCK* registerDatanode: from DatanodeRegistration(172.22.0.4:9866, datanodeUuid=c2f8b8d8-f07b-4f09-8ee1-7ad19e2c8158, infoPort=9864, infoSecurePort=0, ipcPort=9867, storageInfo=lv=-57;cid=gtdp;nsid=155481763;c=1795715752320) storage c2f8b8d8-f07b-4f09-8ee1-7ad19e2c8158
+2026-11-27 07:47:36,747 INFO namenode.NameNode: BLOCK* registerDatanode: 172.22.0.4:9866
+2026-11-27 07:47:36,748 INFO net.NetworkTopology: Removing a node: /default-rack/172.22.0.4:9866
+2026-11-27 08:57:36,678 INFO hdfs.StateChange: BLOCK* registerDatanode: from DatanodeRegistration(172.22.0.12:9866, datanodeUuid=ff3864a7-206c-456d-8c1c-0e6d57597b94, infoPort=9864, infoSecurePort=0, ipcPort=9867, storageInfo=lv=-57;cid=gtdp;nsid=155481763;c=1795715752320) storage ff3864a7-206c-456d-8c1c-0e6d57597b94
+2026-11-27 08:58:12,587 INFO blockmanagement.DatanodeAdminManager: Starting decommission of 172.22.0.4:9866 [DISK]DS-24c6f33e-c8c0-4dad-bfca-77de0640d500:NORMAL:172.22.0.4:9866 with 5574 blocks
+2026-11-27 08:58:34,399 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 5574 blocks to replicate before it is a candidate to finish Decommission In Progress.
+2026-11-27 08:59:04,409 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 5515 blocks to replicate before it is a candidate to finish Decommission In Progress.
+2026-11-27 08:59:34,415 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 5455 blocks to replicate before it is a candidate to finish Decommission In Progress.
+[... une ligne toutes les 30 s, environ 60 blocs de moins à chaque fois ...]
+2026-11-27 09:44:04,568 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 119 blocks to replicate before it is a candidate to finish Decommission In Progress.
+2026-11-27 09:44:34,570 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 63 blocks to replicate before it is a candidate to finish Decommission In Progress.
+2026-11-27 09:45:04,574 INFO blockmanagement.DatanodeAdminDefaultMonitor: Node 172.22.0.4:9866 still has 6 blocks to replicate before it is a candidate to finish Decommission In Progress.
+2026-11-27 09:45:34,579 INFO blockmanagement.DatanodeAdminManager: Decommissioning complete for node 172.22.0.4:9866
+## BLOCK* ask : 11172 demandes de copie au total
+## Avant la détection, copies demandées vers datanode1 arrêté (172.22.0.4), puis la cellule de products
+2026-11-27 07:43:13,359 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794313_53576 to datanode(s) 172.22.0.6:9866
+2026-11-27 07:43:19,360 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794491_53754 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:43:19,360 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794492_53755 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:43:19,360 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794493_53756 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:43:19,360 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794494_53757 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:43:37,363 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794495_53758 to datanode(s) 172.22.0.5:9866
+2026-11-27 07:44:19,368 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794538_53802 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:28,377 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794544_53808 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:28,377 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794550_53814 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:28,377 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794552_53816 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:28,377 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794554_53818 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:31,378 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794566_53830 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:31,378 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794567_53831 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:31,378 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794568_53832 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:31,378 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794573_53837 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:40,379 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794604_53868 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:40,380 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794606_53870 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:40,380 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794613_53877 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:40,380 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794614_53878 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:43,380 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794620_53884 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:46,381 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073794556_53820 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:46,381 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794565_53829 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:46,381 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073794572_53836 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:45:49,393 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_-9223372036854775488_50171 to datanode(s) 172.22.0.6:9866
+## Premières copies vers datanode4
+2026-11-27 07:47:37,407 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073774479_33674 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:37,407 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073774476_33671 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:37,407 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073774383_33577 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:37,407 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073774161_33355 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:40,408 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073774038_33232 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:40,408 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073774037_33231 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:40,408 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073774022_33216 to datanode(s) 172.22.0.4:9866
+2026-11-27 07:47:40,408 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073774018_33212 to datanode(s) 172.22.0.4:9866
+## Reconstruction des 3 groupes en erasure coding de orders
+2026-11-27 08:33:16,896 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775504_50169 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:33:16,896 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866, 172.22.0.6:9866] to replicate blk_-9223372036854775520_50168 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:33:16,896 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775536_50167 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.4:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775536_50167 to datanode(s) 172.22.0.12:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.4:9866, 172.22.0.5:9866, 172.22.0.6:9866] to replicate blk_-9223372036854775520_50168 to datanode(s) 172.22.0.12:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.4:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775504_50169 to datanode(s) 172.22.0.12:9866
+## Dernières copies de la re-réplication
+2026-11-27 08:57:17,118 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073751690_10869 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:57:17,118 DEBUG BlockStateChange: BLOCK* ask [172.22.0.5:9866] to replicate blk_1073751689_10868 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:57:23,119 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073750260_9436 to datanode(s) 172.22.0.4:9866
+2026-11-27 08:57:23,119 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073750259_9435 to datanode(s) 172.22.0.4:9866
+## Décommission de datanode4 : premières et dernières copies
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.4:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775536_50167 to datanode(s) 172.22.0.12:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.4:9866, 172.22.0.5:9866, 172.22.0.6:9866] to replicate blk_-9223372036854775520_50168 to datanode(s) 172.22.0.12:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866, 172.22.0.4:9866, 172.22.0.5:9866] to replicate blk_-9223372036854775504_50169 to datanode(s) 172.22.0.12:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073750260_9436 to datanode(s) 172.22.0.5:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073750259_9435 to datanode(s) 172.22.0.5:9866
+2026-11-27 08:58:35,208 DEBUG BlockStateChange: BLOCK* ask [172.22.0.4:9866] to replicate blk_1073751690_10869 to datanode(s) 172.22.0.5:9866
+[...]
+2026-11-27 09:45:05,731 DEBUG BlockStateChange: BLOCK* ask [172.22.0.4:9866] to replicate blk_1073788759_47983 to datanode(s) 172.22.0.5:9866
+2026-11-27 09:45:05,731 DEBUG BlockStateChange: BLOCK* ask [172.22.0.6:9866] to replicate blk_1073768096_27288 to datanode(s) 172.22.0.5:9866
+2026-11-27 09:45:05,731 DEBUG BlockStateChange: BLOCK* ask [172.22.0.12:9866] to replicate blk_1073769390_28584 to datanode(s) 172.22.0.5:9866
+2026-11-27 09:45:05,731 DEBUG BlockStateChange: BLOCK* ask [172.22.0.4:9866] to replicate blk_1073770201_29395 to datanode(s) 172.22.0.5:9866
+## Fichier d'exclusion relu par -refreshNodes
+2026-11-27 08:58:12,586 INFO util.HostsFileReader: Adding a node "datanode4" to the list of excluded hosts from /opt/hadoop/etc/hadoop/dfs.exclude
+## Répliques en trop choisies au retour de datanode1 (chooseExcessRedundancies), par DataNode
+      4 NORMAL:172.22.0.12:9866
+   5448 NORMAL:172.22.0.5:9866
+2026-11-27 08:57:38,121 DEBUG BlockStateChange: BLOCK* chooseExcessRedundancies: ([DISK]DS-320daac3-b8ba-4591-842d-fdfe8185300d:NORMAL:172.22.0.5:9866, blk_1073790976_50231) is added to invalidated bl
+2026-11-27 08:57:38,121 DEBUG BlockStateChange: BLOCK* chooseExcessRedundancies: ([DISK]DS-320daac3-b8ba-4591-842d-fdfe8185300d:NORMAL:172.22.0.5:9866, blk_1073750016_9192) is added to invalidated blo

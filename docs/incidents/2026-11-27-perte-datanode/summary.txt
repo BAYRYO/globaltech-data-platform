@@ -1,0 +1,11 @@
+victim dead in the report        2026-11-27T07:45:46Z  88 s after victim_stopped (2026-11-27T07:44:18Z)
+victim replicas removed          2026-11-27T07:45:51Z  93 s after victim_stopped (2026-11-27T07:44:18Z)
+spare live                       2026-11-27T07:47:36Z  1 s after spare_started (2026-11-27T07:47:35Z)
+no low-redundancy block left     2026-11-27T08:57:26Z  4191 s after spare_started (2026-11-27T07:47:35Z)
+victim live again                2026-11-27T08:57:36Z  2 s after victim_started (2026-11-27T08:57:34Z)
+excess replicas deleted          2026-11-27T08:58:06Z  32 s after victim_started (2026-11-27T08:57:34Z)
+spare decommissioned             2026-11-27T09:45:36Z  2843 s after decommission_started (2026-11-27T08:58:13Z)
+spare dead                       2026-11-27T09:47:11Z  89 s after spare_stopped (2026-11-27T09:45:42Z)
+peak under_replicated            2026-11-27T08:58:36Z  5566
+peak ec_low_redundancy           2026-11-27T07:45:51Z  3
+peak excess                      2026-11-27T08:57:41Z  5452

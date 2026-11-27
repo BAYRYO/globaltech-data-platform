@@ -1,0 +1,4 @@
+/benchmarks/ec/orders_20260101.csv	COMPOSITE-CRC32C	5056866c
+/benchmarks/rep3/orders_20260101.csv	COMPOSITE-CRC32C	5056866c
+/benchmarks/ec/products_20260101.csv	COMPOSITE-CRC32C	a52f42e8
+/benchmarks/rep3/products_20260101.csv	COMPOSITE-CRC32C	a52f42e8

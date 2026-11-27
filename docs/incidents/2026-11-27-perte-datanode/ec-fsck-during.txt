@@ -1,0 +1,53 @@
+Connecting to namenode via http://namenode:9870/fsck?ugi=hadoop&files=1&blocks=1&locations=1&path=%2Fbenchmarks%2Fec
+FSCK started by hadoop (auth:SIMPLE) from /172.22.0.4 for path /benchmarks/ec at Fri Nov 27 07:46:56 UTC 2026
+
+/benchmarks/ec <dir>
+/benchmarks/ec/orders_20260101.csv 713401398 bytes, erasure-coded: policy=XOR-2-1-1024k, 3 block(s):  Under replicated BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775536_50167. Target Replicas is 3 but found 2 live replica(s), 0 decommissioned replica(s), 0 decommissioning replica(s).
+ Under replicated BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775520_50168. Target Replicas is 3 but found 2 live replica(s), 0 decommissioned replica(s), 0 decommissioning replica(s).
+ Under replicated BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775504_50169. Target Replicas is 3 but found 2 live replica(s), 0 decommissioned replica(s), 0 decommissioning replica(s).
+0. BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775536_50167 len=268435456 Live_repl=2  [blk_-9223372036854775536:DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], blk_-9223372036854775534:DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]]
+1. BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775520_50168 len=268435456 Live_repl=2  [blk_-9223372036854775519:DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], blk_-9223372036854775518:DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]
+2. BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775504_50169 len=176530486 Live_repl=2  [blk_-9223372036854775504:DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], blk_-9223372036854775502:DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]]
+
+/benchmarks/ec/products_20260101.csv 79966 bytes, erasure-coded: policy=XOR-2-1-1024k, 1 block(s):  OK
+0. BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775488_50171 len=79966 Live_repl=2  [blk_-9223372036854775488:DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], blk_-9223372036854775486:DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]]
+
+
+Status: HEALTHY
+ Number of data-nodes:	2
+ Number of racks:		1
+ Total dirs:			1
+ Total symlinks:		0
+
+Replicated Blocks:
+ Total size:	0 B
+ Total files:	0
+ Total blocks (validated):	0
+ Minimally replicated blocks:	0
+ Over-replicated blocks:	0
+ Under-replicated blocks:	0
+ Mis-replicated blocks:		0
+ Default replication factor:	3
+ Average block replication:	0.0
+ Missing blocks:		0
+ Corrupt blocks:		0
+ Missing replicas:		0
+ Blocks queued for replication:	0
+
+Erasure Coded Block Groups:
+ Total size:	713481364 B
+ Total files:	2
+ Total block groups (validated):	4 (avg. block group size 178370341 B)
+ Minimally erasure-coded block groups:	4 (100.0 %)
+ Over-erasure-coded block groups:	0 (0.0 %)
+ Under-erasure-coded block groups:	3 (75.0 %)
+ Unsatisfactory placement block groups:	0 (0.0 %)
+ Average block group size:	2.0
+ Missing block groups:		0
+ Corrupt block groups:		0
+ Missing internal blocks:	3 (27.272728 %)
+ Blocks queued for replication:	0
+FSCK ended at Fri Nov 27 07:46:56 UTC 2026 in 2 milliseconds
+
+
+The filesystem under path '/benchmarks/ec' is HEALTHY
