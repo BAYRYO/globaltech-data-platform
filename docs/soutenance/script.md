@@ -21,7 +21,7 @@ notes` les recopie depuis ce fichier, et un test vérifie que les deux restent i
 
 Les durées cibles des rôles comptent leur texte pendant la démonstration, pas le temps où les
 commandes tournent sans commentaire : la démonstration enregistrée dure 3 min 47 s, son texte
-1 min 45 s.
+1 min 47 s.
 
 Deux diapositives sortent volontairement de cette règle, car la grille demande aussi de répondre
 sur une partie qui n'est pas la sienne, avec du recul sur les limites :
@@ -205,7 +205,7 @@ prend la parole et ne se disent pas.
 > **Data engineer streaming et performance.** Je lance d'abord le flux capteurs en arrière-plan,
 > sur une racine de test : trente fichiers de cinq secondes de mesures. Le déclenchement passe de
 > trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au micro-batch
-> numéro 2, puis relancera le job.
+> numéro 2 de l'agrégation, puis relancera le job.
 >
 > **Architecte plateforme.** Pendant ce temps, l'état du cluster : neuf services sains, trois
 > DataNodes vivants, aucun mort, deux NodeManagers en marche.
@@ -217,10 +217,11 @@ prend la parole et ne se disent pas.
 > échec. Puis le prix de P00042, qui change à 8 h 19, appliqué à chaque commande selon son heure.
 >
 > **Data engineer streaming et performance.** Le journal du flux montre le driver tué au
-> micro-batch 2 : planifié, pas validé. Le job relancé reprend à son checkpoint et rejoue ce
-> micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt, préparée avant la
-> soutenance sur les mêmes fichiers : identique, sans clé en double. L'échantillon est petit,
-> 23 agrégats et 14 rejets : la reprise sur la journée entière est dans le runbook du flux.
+> micro-batch 2 de l'agrégation : planifié, pas validé. Le job relancé reprend à son checkpoint
+> et rejoue ce micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt,
+> préparée avant la soutenance sur les mêmes fichiers : identique, sans clé en double.
+> L'échantillon est petit, 23 agrégats et 14 rejets : la reprise sur la journée entière est dans
+> le runbook du flux.
 >
 > **Architecte plateforme.** Dans YARN, l'application tuée est terminée avec succès : en mode
 > client, YARN ne voit pas la mort du driver. Le rapport la repère donc à l'absence de sa ligne
