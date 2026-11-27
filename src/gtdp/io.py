@@ -5,9 +5,11 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import re
 import signal
 import threading
 import time
+import urllib.request
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -25,11 +27,16 @@ logger = logging.getLogger(__name__)
 INGESTION_DATE = "ingestion_date"
 # Spark local property naming the audited run of the current thread, written into table locks.
 RUN_ID_PROPERTY = "gtdp.run_id"
-# Age in seconds from which a table lock or a staging directory counts as left by a dead run.
+# Age in seconds from which a staging directory counts as left by a dead run, and a table lock
+# too when YARN cannot say whether the run that holds it ended.
 STALE_AFTER_CONF = "spark.gtdp.io.staleAfterSeconds"
 STALE_AFTER_DEFAULT_S = 6 * 3600
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 _FILE_EXISTS = "org.apache.hadoop.fs.FileAlreadyExistsException"
+_YARN_APPLICATION = re.compile(r"application_\d+_\d+")
+_YARN_ENDED = frozenset({"FINISHED", "FAILED", "KILLED"})
+_RM_WEBAPP = "yarn.resourcemanager.webapp.address"
+_RM_TIMEOUT_S = 5
 
 PartitionValue = str | date
 
@@ -218,8 +225,9 @@ def _recovered(spark: SparkSession, path: str) -> tuple[Any, Any]:
     """
     fs, target = _filesystem(spark, path)
     if not fs.exists(target):
-        age = _age_s(fs, _lock_path(target))
-        if age is None or age >= _stale_after_s(spark):
+        lock = _lock_path(target)
+        held = _read(fs, lock)
+        if held is None or _stale_reason(spark, fs, lock, held) is not None:
             _recover(fs, target)
     return fs, target
 
@@ -268,9 +276,9 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
     """Hold the lock of the table ``target`` for the block, then remove dead runs' staging.
 
     The lock is a file created only if absent, which HDFS decides atomically. It holds the run id,
-    the application id and the time it was taken. A lock younger than ``STALE_AFTER_CONF`` seconds
-    belongs to a live run: ``TableLockedError`` at once, no wait. An older one was left by a run
-    that died: it is taken over with a warning.
+    the application id and the time it was taken. While the run that holds it may be alive:
+    ``TableLockedError`` at once, no wait. A lock left by a run that died (``_stale_reason``) is
+    taken over with a warning.
     """
     lock, stale_after = _lock_path(target), _stale_after_s(spark)
     holder = json.dumps(
@@ -283,12 +291,16 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
     )
     with _stop_signals_deferred():
         if not _create(fs, lock, holder):
-            age = _age_s(fs, lock)
-            if age is not None and age < stale_after:
-                raise TableLockedError(_locked_message(fs, target, lock))
-            if age is not None:
+            held = _read(fs, lock)
+            if held is not None:
+                reason = _stale_reason(spark, fs, lock, held)
+                if reason is None:
+                    raise TableLockedError(_locked_message(fs, target, lock))
                 logger.warning(
-                    "taking over the lock of %s, %.0f s old: %s", target, age, _read(fs, lock)
+                    "taking over the lock of %s, left by a run that died (%s): %s",
+                    target,
+                    reason,
+                    held,
                 )
                 fs.delete(lock, False)
             if not _create(fs, lock, holder):
@@ -305,8 +317,53 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
 def _locked_message(fs: Any, target: Any, lock: Any) -> str:
     return (
         f"{target} is being written by another run, which holds {lock}: {_read(fs, lock)}. "
-        f"Wait for that run to end; if no run is active, delete {lock}"
+        "Wait for that run to end: the lock frees itself once YARN reports its application "
+        f"ended. Delete {lock} by hand only if no run is active and YARN cannot tell"
     )
+
+
+def _stale_reason(spark: SparkSession, fs: Any, path: Any, held: str) -> str | None:
+    """Why the lock file ``path``, which holds ``held``, was left by a run that died, or ``None``.
+
+    For a YARN application, the ResourceManager decides: ended (FINISHED, FAILED, KILLED) is dead
+    whatever the age of the lock, any other state alive whatever its age. Without a state from
+    YARN, the lock is dead once older than ``STALE_AFTER_CONF`` seconds.
+    """
+    application_id = _application_id(held)
+    if application_id is None or not _YARN_APPLICATION.fullmatch(application_id):
+        logger.info("%s names no YARN application (%s): judged by its age", path, application_id)
+    else:
+        try:
+            state = _yarn_state(spark, application_id)
+        except Exception as exc:
+            logger.warning(
+                "no state from YARN for %s (%r): %s judged by its age", application_id, exc, path
+            )
+        else:
+            return f"{application_id} is {state}" if state in _YARN_ENDED else None
+    age = _age_s(fs, path)
+    if age is not None and age >= _stale_after_s(spark):
+        return f"{age:.0f} s old"
+    return None
+
+
+def _application_id(held: str) -> str | None:
+    """The ``application_id`` that the lock content ``held`` names, if any."""
+    try:
+        value = json.loads(held).get("application_id")
+    except (ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _yarn_state(spark: SparkSession, application_id: str) -> str:
+    """The state of ``application_id`` that the ResourceManager's REST API reports."""
+    address = spark.sparkContext._jsc.hadoopConfiguration().get(_RM_WEBAPP)
+    if not address:
+        raise LookupError(f"{_RM_WEBAPP} is not set")
+    url = f"http://{address}/ws/v1/cluster/apps/{application_id}"
+    with urllib.request.urlopen(url, timeout=_RM_TIMEOUT_S) as response:
+        return str(json.load(response)["app"]["state"])
 
 
 def _create(fs: Any, path: Any, text: str) -> bool:
