@@ -14,7 +14,7 @@ Le schéma montre les services du cluster, les zones du lake et les flux qui les
 légende sous le schéma explique chaque forme, chaque couleur et chaque trait.
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph SRC["Sources, hors cluster"]
     GEN(["Générateur<br/>dépôts J1, J2, J3"]):::program
     SIM(["Simulateur capteurs<br/>1 fichier toutes les 5 s"]):::program
@@ -93,6 +93,8 @@ flowchart LR
   classDef streaming fill:#e9d5ff,stroke:#7e22ce,color:#111827
   classDef ops fill:#bbf7d0,stroke:#15803d,color:#111827
   classDef logs fill:#f3f4f6,stroke:#6b7280,color:#111827
+  classDef frame fill:#f8fafc,stroke:#94a3b8,color:#111827
+  class SRC,YARN,APPS,HDFS,LAKE,HIST frame
   linkStyle 0,1,2 stroke:#374151,stroke-width:1px
   linkStyle 3,4,5 stroke:#1e40af,stroke-width:1px
   linkStyle 6,7,8,9,10,11,12,13,14 stroke:#2563eb,stroke-width:3px
@@ -104,7 +106,7 @@ flowchart LR
 
 | Élément du schéma | Signification |
 | --- | --- |
-| Cadre | Groupe de composants : sources hors cluster, YARN, HDFS, serveurs d'historique. Un cadre dans un cadre en est une partie : les applications tournent dans les conteneurs des NodeManagers, les zones du lake sont stockées en blocs sur les DataNodes. |
+| Cadre gris clair | Groupe de composants : sources hors cluster, YARN, HDFS, serveurs d'historique. Un cadre dans un cadre en est une partie : les applications tournent dans les conteneurs des NodeManagers, les zones du lake sont stockées en blocs sur les DataNodes. |
 | Rectangle bleu | Service du cluster, un démon par rectangle : NameNode, DataNode, ResourceManager, NodeManager, Spark History Server, MapReduce JobHistory. |
 | Rectangle rose à double bord | Client edge : conteneur lancé à la demande, qui dépose les données (`land.sh`) et soumet les jobs (`submit.sh`). En mode client, le driver Spark y tourne. |
 | Ovale blanc | Programme hors cluster : le générateur des dépôts batch, le simulateur qui rejoue les fichiers capteurs. |
