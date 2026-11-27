@@ -14,9 +14,13 @@ MapReduce JobHistory. Tous les services tournent dans Docker à partir d'une seu
 - Ni Java, ni Hadoop, ni Spark, ni Python sur le poste. Tout s'exécute dans des conteneurs.
 
 Le premier lancement construit l'image `gtdp/hadoop-spark:3.3.6-3.5.3` et télécharge environ
-1,04 Go d'archives Apache depuis archive.apache.org : `hadoop-3.3.6.tar.gz` (730 Mo) et
-`spark-3.5.3-bin-without-hadoop.tgz` (314 Mo). Ce premier build a pris 6 min 52 s sur la machine
-de référence (16 CPU, 15 Gio pour Docker). La durée dépend surtout du débit d'archive.apache.org. Les builds
+1,04 Go d'archives Apache : `hadoop-3.3.6.tar.gz` (730 Mo) et
+`spark-3.5.3-bin-without-hadoop.tgz` (314 Mo). `docker/fetch.py` prend chaque archive au premier
+miroir qui la sert avec la bonne empreinte SHA-512 : dlcdn.apache.org, downloads.apache.org, puis
+archive.apache.org. Le CDN a Hadoop 3.3.6, pas Spark 3.5.3, qui vient donc toujours de
+archive.apache.org. Ce premier build a pris 6 min 52 s sur la machine
+de référence (16 CPU, 15 Gio pour Docker). La durée dépend surtout du débit d'archive.apache.org,
+très variable : 27 min pour Spark seul sur GitHub Actions le 27 novembre 2026. Les builds
 suivants réutilisent le cache Docker. L'image construite occupe 2,10 Go sur disque (810 Mo
 compressés).
 
