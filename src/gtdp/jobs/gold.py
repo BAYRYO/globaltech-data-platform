@@ -79,26 +79,26 @@ def gold(ctx: JobContext) -> None:
     if day not in complete:
         raise FileNotFoundError(f"silver has not completed {day}: run silver for {day} first")
     ctx.run.metrics["silver_days"] = [str(d) for d in complete]
-    silver = {
+    read = {
         source: read_table(ctx.spark, silver_path(ctx.cfg.paths.silver, source), pipeline.schema)
         for source, pipeline in PIPELINES.items()
     }
-    _check_whole_tables(ctx.spark, ctx.cfg.paths.silver, silver, complete)
+    _check_whole_tables(ctx.spark, ctx.cfg.paths.silver, read, complete)
 
     with table_lock(ctx.spark, ctx.cfg.paths.gold):
         try:
-            _publish(ctx, _build(ctx, silver, complete, settings), complete)
+            _publish(ctx, _build(ctx, read, complete, settings), complete)
         finally:
             ctx.spark.catalog.clearCache()
 
 
 def _check_whole_tables(
-    spark: SparkSession, root: str, silver: dict[str, DataFrame], complete: list[date]
+    spark: SparkSession, silver: str, read: dict[str, DataFrame], complete: list[date]
 ) -> None:
-    """``IncompleteSilverError`` if a table of ``silver`` that silver rebuilds whole holds rows
+    """``IncompleteSilverError`` if a table of ``read`` that silver rebuilds whole holds rows
     whose ``ingestion_date`` is not among the ``complete`` days, or was rebuilt for such a day.
 
-    ``silver`` holds the DataFrames gold builds from. Spark listed their files when it read
+    ``read`` holds the DataFrames gold builds from. Spark listed their files when it read
     them: every later action reads those files or fails on a missing one, so a swap after this
     check cannot slip other rows in. The rows tell on their own, on a lake written before
     ``_built_for.json`` too: a day rebuilt into ``customers`` that adds no row of its own leaves
@@ -110,14 +110,14 @@ def _check_whole_tables(
     whole = [source for source, pipeline in PIPELINES.items() if not pipeline.partitioned]
     held = reduce(
         DataFrame.unionByName,
-        [silver[source].select(F.lit(source).alias("source"), INGESTION_DATE) for source in whole],
+        [read[source].select(F.lit(source).alias("source"), INGESTION_DATE) for source in whole],
     )
     found: dict[date, list[str]] = {}
     for row in held.where(~F.col(INGESTION_DATE).isin(complete)).distinct().collect():
         table = PIPELINES[row["source"]].table
         found.setdefault(row[INGESTION_DATE], []).append(f"silver/{table} holds rows of it")
     for source in whole:
-        built = rebuilt_day(spark, silver_path(root, source))
+        built = rebuilt_day(spark, silver_path(silver, source))
         if built is not None and built not in complete:
             table = PIPELINES[source].table
             found.setdefault(built, []).append(f"silver/{table} was rebuilt for it")
@@ -127,8 +127,8 @@ def _check_whole_tables(
     force = " --force" if any(day > first for day in complete) else ""
     later = ", ".join(str(day) for day in sorted({*found, *complete}) if day > first)
     reasons = [
-        f"{day} is not complete (published: {_sources(spark, root, day)}; missing: "
-        f"{_sources(spark, root, day, missing=True)}) and {' and '.join(sorted(found[day]))}"
+        f"{day} is not complete (published: {_sources(spark, silver, day)}; missing: "
+        f"{_sources(spark, silver, day, missing=True)}) and {' and '.join(sorted(found[day]))}"
         for day in sorted(found)
     ]
     raise IncompleteSilverError(
@@ -145,23 +145,23 @@ def _sources(spark: SparkSession, silver: str, day: date, *, missing: bool = Fal
 
 
 def _build(
-    ctx: JobContext, silver: dict[str, DataFrame], complete: list[date], settings: GoldSettings
+    ctx: JobContext, read: dict[str, DataFrame], complete: list[date], settings: GoldSettings
 ) -> dict[str, DataFrame]:
-    """Every gold table built from the ``silver`` tables, by name, persisted and checked: the
+    """Every gold table built from the silver tables ``read``, by name, persisted and checked: the
     ``complete`` days of a partitioned table, a table rebuilt whole as it is. ``GoldCheckError``
     on the first broken invariant."""
-    spark, root = ctx.spark, ctx.cfg.paths.silver
+    spark, silver = ctx.spark, ctx.cfg.paths.silver
 
-    def read(source: str) -> DataFrame:
+    def of_days(source: str) -> DataFrame:
         partitioned = PIPELINES[source].partitioned
-        return _of_days(silver[source], complete) if partitioned else silver[source]
+        return _of_days(read[source], complete) if partitioned else read[source]
 
     def kept(frame: DataFrame) -> DataFrame:
         return frame.persist(StorageLevel.MEMORY_AND_DISK)
 
-    orders, weblogs = read("orders"), read("weblogs")
-    customers = kept(dimensions.customers(read("customers")))
-    products = kept(dimensions.products(read("products")))
+    orders, weblogs = of_days("orders"), of_days("weblogs")
+    customers = kept(dimensions.customers(of_days("customers")))
+    products = kept(dimensions.products(of_days("products")))
     days = orders.select(facts.order_date().alias("date")).unionByName(
         weblogs.select(F.to_date("event_ts").alias("date"))
     )
@@ -184,7 +184,7 @@ def _build(
     rejects = reduce(
         DataFrame.unionByName,
         [
-            _of_days(read_table(spark, rejects_path(root, source), SILVER_REJECTS), complete)
+            _of_days(read_table(spark, rejects_path(silver, source), SILVER_REJECTS), complete)
             for source in PIPELINES
         ],
     )
