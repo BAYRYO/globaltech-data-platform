@@ -70,7 +70,7 @@ antérieur.
 
 ## Traiter un jour
 
-1. Exportez le sel, exigé par tout job `--env cluster` (valeur fournie hors dépôt, jamais
+1. Exportez le sel, exigé par silver sur le cluster (valeur fournie hors dépôt, jamais
    commitée, au moins 16 caractères, toujours la même) :
 
 	```bash
