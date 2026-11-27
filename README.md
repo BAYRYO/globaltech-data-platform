@@ -71,7 +71,7 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 
 3. Démarrez le cluster, créez l'arborescence HDFS et vérifiez le cluster. Le premier `up.sh`
    construit l'image en 6 min 52 s, plus si archive.apache.org est lent. Ensuite, les trois
-   commandes prennent 99 s.
+   commandes prennent 95 s (15 s, 26 s et 54 s).
 
 	```bash
 	scripts/cluster/up.sh
