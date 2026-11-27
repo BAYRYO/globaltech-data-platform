@@ -73,11 +73,13 @@ lignes et la même empreinte de contenu que le calcul ; sinon l'exécution écho
 `_state.json` reste à `PUBLISHING`.
 
 Aucun membre `UNKNOWN` n'est nécessaire. Silver ne publie une commande que si son client a une
-ligne silver et si son produit existe dans `products_scd2`. Silver ne vérifie pas qu'une version
-couvre la date de la commande, mais la version 1 vaut depuis le `1900-01-01` et silver ne sait
-pas encore écrire un horodatage antérieur : une telle commande fait échouer l'exécution silver
-(limite connue, KAN-59, voir le [dictionnaire silver](silver.md#disposition-dune-ligne-bronze)).
-Le contrôle 1 reste la défense de gold et échoue fermé (`no_version`). Le pays `UNKNOWN` de
+ligne silver et si son produit existe dans `products_scd2`. Il rejette une commande antérieure au
+`1900-01-01` (`ANCIENT_TIMESTAMP`, voir le
+[dictionnaire silver](silver.md#disposition-dune-ligne-bronze)) et vérifie que la version 1 de
+chaque produit vaut depuis cette date, sans trou jusqu'à la version courante. Toute commande
+qu'il publie trouve donc exactement une version : `no_version` ne vient que d'un silver qui ne
+tient pas ses invariants, ce que les tests construisent avec des tables écrites à la main. Le
+contrôle 1 reste la défense de gold et échoue fermé. Le pays `UNKNOWN` de
 `dim_customer` est celui d'un client sans région (drapeau `MISSING_REGION`), pas un membre
 technique.
 

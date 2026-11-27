@@ -7,11 +7,12 @@ from decimal import Decimal
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
-from gtdp.io import INGESTION_DATE
 from gtdp.schemas import DISCOUNT, SILVER_ORDERS, SOURCES
 from gtdp.silver.parse import (
     amount,
+    ancient,
     blank,
+    future,
     integer,
     matching,
     missing_or_not_positive,
@@ -45,11 +46,6 @@ def _columns() -> dict[str, Column]:
     }
 
 
-def _future(column: str) -> Column:
-    """Later than the day after the drop: ``event_time > ingestion_date + 1 day``."""
-    return F.col(column) > F.date_add(F.col(INGESTION_DATE), 1).cast("timestamp")
-
-
 ENTITY = Entity(
     SOURCES["orders"],
     _columns,
@@ -65,7 +61,8 @@ ENTITY = Entity(
         Rule("BAD_QUANTITY", REJECT, lambda: missing_or_not_positive(F.col("quantity"))),
         Rule("BAD_PRICE", REJECT, lambda: missing_or_not_positive(F.col("unit_price_eur"))),
         Rule("BAD_TIMESTAMP", REJECT, lambda: F.col("event_time").isNull()),
-        Rule("FUTURE_TIMESTAMP", REJECT, lambda: _future("event_time")),
+        Rule("FUTURE_TIMESTAMP", REJECT, lambda: future(F.col("event_time"))),
+        Rule("ANCIENT_TIMESTAMP", REJECT, lambda: ancient(F.col("event_time"))),
         Rule(
             "BAD_ENUM",
             REJECT,

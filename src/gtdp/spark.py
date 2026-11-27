@@ -33,6 +33,13 @@ def build_spark(
         "spark.sql.adaptive.enabled": str(cfg.spark.adaptive).lower(),
         "spark.sql.session.timeZone": cfg.app.timezone,
         "spark.sql.parquet.compression.codec": "snappy",
+        # Dates and times as Spark 3 computes them (proleptic Gregorian), before 1582 and 1900
+        # included: the default, EXCEPTION, refuses to write them, and no reader of the legacy
+        # calendar (Spark 2, Hive) reads this lake (ADR-0002).
+        "spark.sql.parquet.datetimeRebaseModeInWrite": "CORRECTED",
+        "spark.sql.parquet.datetimeRebaseModeInRead": "CORRECTED",
+        "spark.sql.parquet.int96RebaseModeInWrite": "CORRECTED",
+        "spark.sql.parquet.int96RebaseModeInRead": "CORRECTED",
         **(extra_conf or {}),
     }
     # Starts the JVM, or joins the one spark-submit started, to read the properties it was given.
