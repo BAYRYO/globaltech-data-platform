@@ -2,56 +2,91 @@
 
 import json
 import shutil
+import subprocess
+from argparse import Namespace
 from datetime import date, datetime
+from pathlib import Path
 
 import pytest
+from pyspark.sql import DataFrameReader
 from pyspark.sql import functions as F
 
-from gtdp.datagen.__main__ import main as datagen
 from gtdp.io import read_table
+from gtdp.perf import bench
 from gtdp.perf import datasets as ds
 from gtdp.perf.mr_compare import QUALITY_CODES
 from gtdp.silver.products import with_applicable_price
 
 pytestmark = pytest.mark.slow
 DAYS = ("2026-01-01", "2026-01-02", "2026-01-03")
-SOURCES = ("orders", "customers", "products")
+
+
+class LocalHdfs:
+    """``hdfs dfs -mkdir -p`` and ``hdfs dfs -put -f`` on the local disk."""
+
+    def run(self, command, check=False, **_):
+        args = command[1:]
+        if args[:3] == ["dfs", "-mkdir", "-p"]:
+            Path(args[3]).mkdir(parents=True, exist_ok=True)
+        elif args[:3] == ["dfs", "-put", "-f"]:
+            for path in args[3:-1]:
+                shutil.copy(path, args[-1])
+        else:
+            raise AssertionError(f"unexpected command {command}")
+        return subprocess.CompletedProcess(command, 0)
 
 
 @pytest.fixture(scope="module")
 def prepared(spark, tmp_path_factory):
-    """The ``ci`` profile landed as on HDFS (``<source>/ingestion_date=<day>/``), prepared."""
-    out = tmp_path_factory.mktemp("generated")
-    assert datagen(["generate", "--profile", "ci", "--seed", "42", "--out", str(out)]) == 0
-    drops, landing = out / "ci" / "landing", out / "landing"
-    for day in DAYS:
-        for source in SOURCES:
-            shutil.copytree(drops / day / source, landing / source / f"ingestion_date={day}")
-    root = out / "perf"
-    counts = ds.prepare(spark, landing.as_uri(), root.as_uri())
-    return drops, root.as_uri(), counts
+    """The ``ci`` profile landed by ``bench land`` (``<source>/ingestion_date=<day>/``), then
+    prepared, with the folders land wrote and the paths prepare read."""
+    out = tmp_path_factory.mktemp("bench")
+    landing, root = out / "landing", (out / "perf").as_uri()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(bench.subprocess, "run", LocalHdfs().run)
+        written = bench.land(Namespace(profile="ci", seed=42, landing=str(landing)))
+    read, text = [], DataFrameReader.text
+    with pytest.MonkeyPatch.context() as patch:
+
+        def recorded(self, paths, *args, **kwargs):
+            read.append(paths)
+            return text(self, paths, *args, **kwargs)
+
+        patch.setattr(DataFrameReader, "text", recorded)
+        counts = ds.prepare(spark, landing.as_uri(), root)
+    return landing, root, counts, written, read
+
+
+def test_land_puts_every_source_that_prepare_reads(prepared):
+    """docs/performance.md#reproduire lands the data with bench.sh land, then runs prepare."""
+    landing, _, _, written, read = prepared
+    landed = {Path(folder).parent.name for folder in written}
+    assert landed == {*ds.LANDED, "_manifests"}
+    assert sorted(read) == sorted(f"{landing.as_uri()}/{source}" for source in ds.LANDED)
+    assert {Path(folder).name for folder in written} == {f"ingestion_date={d}" for d in DAYS}
 
 
 def test_every_layout_holds_the_same_rows(prepared):
-    _, _, counts = prepared
-    for source in SOURCES:
+    counts = prepared[2]
+    for source in ds.SCHEMAS:
         assert len({counts[f"{layout.name}/{source}"] for layout in ds.LAYOUTS}) == 1
 
 
 def test_the_orders_are_the_lines_that_pass_the_lot_6_rules(prepared):
-    drops, _, counts = prepared
+    landing, _, counts = prepared[:3]
     lines = rejected = 0
     for day in DAYS:
-        [csv] = (drops / day / "orders").iterdir()
+        [csv] = (landing / "orders" / f"ingestion_date={day}").iterdir()
         lines += len(csv.read_text(encoding="utf-8").splitlines()) - 1
-        manifest = json.loads((drops / day / "_MANIFEST.json").read_text(encoding="utf-8"))
+        manifest = landing / "_manifests" / f"ingestion_date={day}" / "_MANIFEST.json"
+        manifest = json.loads(manifest.read_text(encoding="utf-8"))
         [orders] = [f for f in manifest["files"] if f["source"] == "orders"]
         rejected += sum(n for code, n in orders["anomalies"].items() if code in QUALITY_CODES)
     assert counts["csv/orders"] == lines - rejected
 
 
 def test_the_revenue_query_gives_the_same_rows_on_every_layout(spark, prepared):
-    _, root, _ = prepared
+    root = prepared[1]
     results = set()
     for layout in ds.LAYOUTS:
         tables = [ds.read(spark, root, layout, name) for name in ds.SCHEMAS]
@@ -62,14 +97,14 @@ def test_the_revenue_query_gives_the_same_rows_on_every_layout(spark, prepared):
 
 
 def test_the_partitioned_layout_has_one_directory_per_order_date(spark, prepared):
-    _, root, _ = prepared
+    root = prepared[1]
     orders = ds.read(spark, root, ds.LAYOUT["parquet_part"], "orders")
     plan = orders.where(F.col("order_date") == date(2025, 6, 1))._jdf.queryExecution()
     assert "PartitionFilters: [isnotnull(order_date" in plan.executedPlan().toString()
 
 
 def test_each_version_ends_where_the_next_one_starts(spark, prepared):
-    _, root, counts = prepared
+    root, counts = prepared[1:3]
     versions = read_table(spark, f"{root}/versions", ds.VERSIONS).collect()
     by_product = {}
     for version in sorted(versions, key=lambda v: (v.product_id, v.valid_from)):

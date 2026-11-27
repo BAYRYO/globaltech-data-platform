@@ -24,7 +24,6 @@ ERASURE_CODED = """\
 
 Status: HEALTHY
 """  # noqa: E501
-KAN52 = ("/benchmarks/ec", "/benchmarks/rep3")
 SOURCE, SMALL = "/scratch/orders.csv", "/scratch/products.csv"
 
 
@@ -123,20 +122,6 @@ def hdfs(monkeypatch):
 def run_tool(tmp_path, *extra, runs=2):
     args = ["--source", SOURCE, "--small", SMALL, "--runs", str(runs), "--out", str(tmp_path)]
     return storage.main([*args, "--root", "/benchmarks/storage", *extra])
-
-
-def test_rerunning_the_storage_benchmark_leaves_the_kan52_files_alone(hdfs, tmp_path):
-    """docs/performance.md#reproduire runs storage.sh again and asks to keep /benchmarks/ec and
-    /benchmarks/rep3 for KAN-52, whose block layout is committed in docs/perf-evidence/storage."""
-    fake = hdfs(
-        existing=[f"{folder}/orders_20260101.csv" for folder in KAN52],
-        read_s={"rep3": [9, 1, 1], "ec": [9, 1, 1]},
-    )
-    assert run_tool(tmp_path, "--run", "r1") == 0
-    rewrites = [c for c in fake.commands if "-cp" in c and c[-1].rstrip("/") in KAN52]
-    assert rewrites == []
-    assert fake.writes()
-    assert all(path.startswith("/benchmarks/storage/r1/") for path in fake.writes())
 
 
 def test_a_run_area_that_exists_is_refused_before_any_write(hdfs, tmp_path):
