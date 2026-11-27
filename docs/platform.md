@@ -419,6 +419,28 @@ Avec 3 DataNodes et une réplication 3, la perte d'un nœud laisse tous les bloc
 jusqu'à son retour. Une écriture en cours continue sur les 2 DataNodes restants
 (`dfs.client.block.write.replace-datanode-on-failure.best-effort`).
 
+### DataNode de secours (profil `spare`)
+
+Le service `datanode4` ne démarre qu'avec le profil compose `spare`. `up.sh` démarre donc
+toujours 3 DataNodes. `datanode4` donne une cible aux répliques d'un DataNode perdu le temps de
+sa réparation : sans lui, ces répliques n'ont nulle part où aller. Il a son propre volume
+`datanode4` et le même plafond qu'un autre DataNode (tas de 384 Mio, 640 Mio au plus).
+
+```bash
+docker compose --profile spare up --detach --no-deps datanode4
+```
+
+`--no-deps` ne touche à aucun autre service. Pendant une panne, `datanode4` remplace le nœud
+arrêté et le budget mémoire ne change pas. Il ajoute 640 Mio quand les 4 DataNodes tournent, le
+temps de la décommission : 12 672 Mio pour le cluster au lieu de 12 032 Mio, et 14 464 Mio
+(14,1 Gio) dans le pire cas à deux drivers en mode client décrit plus haut.
+
+On retire `datanode4` par une décommission, jamais par un simple arrêt : un arrêt laisserait
+sous-répliqués les blocs dont il porte une réplique. `dfs.hosts.exclude` désigne
+`/opt/hadoop/etc/hadoop/dfs.exclude`, vide dans l'image. La procédure complète, avec les délais
+mesurés, est dans le [runbook HDFS](runbook/hdfs.md#perte-dun-datanode). `down.sh` et
+`reset.sh` activent le profil `spare` : ils suppriment aussi `datanode4`, et `reset.sh` son volume.
+
 ## Dépannage
 
 Les problèmes ci-dessous ont été rencontrés pendant la mise au point.
