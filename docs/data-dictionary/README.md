@@ -9,6 +9,7 @@ règle, exemple. Les entités, les clés et le traitement de chaque anomalie son
 | --- | --- |
 | [Bronze](bronze.md) | `bronze/<source>` : colonnes brutes des quatre sources, colonnes techniques, valeurs vides, lignes corrompues, colonnes inconnues |
 | [Silver](silver.md) | `silver/orders`, `customers`, `products_scd2`, `weblogs` et `rejects/<source>` : jours complets, disposition d'une ligne, formats acceptés, règles, pseudonymisation |
+| [Flux capteurs](gold-sensors.md) | `gold/sensor_aggregates`, `gold/sensor_alerts`, `streaming/rejects` : événements retenus, fenêtres, alertes et seuils, motifs de rejet, fichiers d'entrée archivés |
 | [MapReduce contre Spark](mapreduce.md) | sorties du calcul du Lot 6 : chiffre d'affaires par pays, compteurs de lignes invalides, ligne d'audit du job Spark |
 
 ## Conventions
