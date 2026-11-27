@@ -1,15 +1,15 @@
 """Review B (operations and robustness) of the gold job: each test states the behaviour the
 runbook or the Jira criteria promise and fails on the current code."""
 
-import dataclasses
 from pathlib import Path
 
 import pytest
 from pyspark.sql import functions as F
 
-from gtdp.config import ConfigError, GoldSettings, load_config
+from gtdp.config import ConfigError, load_config
 from gtdp.gold.tables import FACT_SALES
 from gtdp.io import TableLockedError
+from gtdp.jobs import gold as gold_job
 from gtdp.silver import days
 from gtdp.silver.pipelines import PIPELINES
 
@@ -69,12 +69,18 @@ def test_a_gold_setting_spark_cannot_use_is_refused_by_the_configuration(key, va
         load_config("local", overrides={f"gold.{key}": str(value)})
 
 
-def test_a_run_with_an_unusable_window_publishes_nothing(silver_lake):
+def test_a_run_with_an_unusable_window_publishes_nothing(silver_lake, monkeypatch):
     published(silver_lake)
     silver_lake.orders(J2, order("T3", "2026-01-01T08:00:00", day=J2))
-    silver_lake.cfg = dataclasses.replace(
-        silver_lake.cfg, gold=GoldSettings(top_n=5, moving_average_days=3_000_000_000)
-    )
+    # Adapted in the fix round: GoldSettings now refuses a window Spark cannot use when the
+    # configuration loads, so an indicator that fails only when Spark computes it stands for it.
+    unusable = {
+        **gold_job.KPIS,
+        "kpi_revenue_moving_avg": lambda star, _: star.sales.select(
+            F.raise_error(F.lit("[INVALID_BOUNDARY.START] unusable window"))
+        ),
+    }
+    monkeypatch.setattr(gold_job, "KPIS", unusable)
 
     with pytest.raises(Exception) as failure:
         silver_lake.run_gold(J2)
