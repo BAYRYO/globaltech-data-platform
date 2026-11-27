@@ -35,10 +35,17 @@ règle, exemple. Les entités, les clés et le traitement de chaque anomalie son
   `Colonne | Type | Règle | Exemple`, les champs d'un fichier JSON dans un tableau
   `Champ | Type | Règle | Exemple`. La règle d'une colonne de partition commence par
   « Partition ».
-- **Vérification.** `tests/docs/test_data_dictionary.py` compare ces tableaux au code : chaque
-  table et chaque fichier JSON que le code écrit a une section, avec les mêmes colonnes, les
-  mêmes types (`simpleString()` de Spark) et les mêmes colonnes de partition. Une colonne ajoutée
-  au code sans être décrite ici fait échouer la CI.
+- **Vérification.** `tests/docs/test_data_dictionary.py` compare ces tableaux aux registres du
+  code : chaque table et chaque fichier JSON que le code écrit a une section, avec les mêmes
+  colonnes, les mêmes types (`simpleString()` de Spark) et les mêmes colonnes de partition. Une
+  colonne n'est décrite qu'une fois par chemin, et un tableau de colonnes est sous un titre qui
+  nomme son chemin (sauf les sorties texte du Lot 6). Les jobs `bronze`, `silver` et `gold`
+  écrivent chaque table par `gtdp.publish.publish`, qui refuse des lignes dont les colonnes, les
+  types ou l'ordre diffèrent du schéma déclaré et prend les colonnes de partition dans le
+  registre : ce que le job écrit est ce que le registre déclare. `tests/docs/test_dictionary_rules.py`
+  compare les codes de chaque tableau de règles silver à `ENTITY.rules`, les motifs de rejet du
+  flux à `REJECT_RULES` et les seuils à `[streaming.thresholds]`. Un écart fait échouer la CI. Les
+  filtres de statut et les formules des indicateurs sont relus à la main.
 - **Nullabilité.** Les schémas déclarent `nullable=False` pour une colonne jamais nulle. La
   colonne « Règle » dit quand une valeur est nulle : champ vide, valeur hors format, colonne
   absente avant J3. Relue depuis Parquet, toute colonne apparaît nullable : Spark ne garde pas la
@@ -68,11 +75,11 @@ ailleurs pour la raison donnée.
 | `gold/_state.json` | JSON | job `gold` (`src/gtdp/gold/state.py`) | [gold](gold.md#gold_statejson) |
 | `gold/sensor_aggregates`, `gold/sensor_alerts`, `streaming/rejects` | Parquet | job `streaming-sensors` (`src/gtdp/streaming/stream.py`), compactées par `streaming-housekeeping` | [flux capteurs](gold-sensors.md) |
 | `streaming/archive/sensors/arrival_date=<d>/` | JSON Lines, fichiers d'entrée inchangés | job `streaming-housekeeping` (`src/gtdp/streaming/housekeeping.py`) | [flux capteurs](gold-sensors.md#fichiers-dentrée-archivés) |
-| `ops/audit` | Parquet | chaque exécution de `run.py` (`src/gtdp/audit.py`) | [ops](ops.md#opsaudit) |
+| `ops/audit` | Parquet | chaque job lancé par `run.py` (`src/gtdp/audit.py`) | [ops](ops.md#opsaudit) |
 | `ops/smoke` | Parquet | job `smoke` (`src/gtdp/jobs/smoke.py`) | [ops](ops.md#opssmoke) |
 | `ops/pseudonymization/salt_fingerprint.json` | JSON | job `silver` (`src/gtdp/silver/pseudonymize.py`) | [ops](ops.md#opspseudonymizationsalt_fingerprintjson) |
 | `ops/mr_vs_spark/spark/revenue`, `ops/mr_vs_spark/spark/counters` | texte, tabulations | job `revenue-by-country-spark` (`src/gtdp/jobs/revenue_by_country.py`) | [MapReduce contre Spark](mapreduce.md) |
-| sortie Hadoop Streaming (`part-00000`) | texte, tabulations | `scripts/mapreduce/run_mr.sh` (`mapreduce/`) | [MapReduce contre Spark](mapreduce.md) |
+| `ops/mr_vs_spark/mapreduce` (sortie Hadoop Streaming, `part-00000`) | texte, tabulations | `scripts/mapreduce/run_mr.sh`, lancé par la campagne (`src/gtdp/perf/mr_compare.py`) ou à la main ([runbook](../runbook/mapreduce.md)) | [MapReduce contre Spark](mapreduce.md) |
 
 Le test de cohérence couvre les tables Parquet et les fichiers JSON. Les fichiers archivés gardent
 le format du contrat. Les sorties texte du Lot 6 n'ont ni en-tête ni schéma : `tests/mapreduce`
@@ -87,5 +94,7 @@ vérifie que Spark et MapReduce y écrivent les mêmes lignes.
 | checkpoints du flux (`offsets/`, `commits/`, `sources/`, `state/`) | Spark Structured Streaming | format interne de Spark : [ADR-0008](../adr/0008-streaming.md) |
 | `streaming/control/stop-streaming-sensors` | `scripts/streaming/stop.sh` | fichier vide, sa présence arrête le flux : [runbook streaming](../runbook/streaming.md#arrêter) |
 | `/spark-logs`, `/app-logs`, `/mr-history` | Spark, YARN, MapReduce JobHistory | journaux des services : [guide de la plateforme](../platform.md#arborescence-hdfs-droits-et-quotas) |
+| `/user/etl/smoke/streaming`, `/user/etl/smoke/spark` | `scripts/cluster/smoke/run.sh`, `scripts/cluster/smoke/spark_smoke.py` | sorties du test de fumée du cluster, hors du lake, réécrites à chaque test : [guide de la plateforme](../platform.md#démarrage-en-moins-de-10-minutes) |
+| `/apps/spark/spark-jars-3.5.3.zip` | `scripts/cluster/init-hdfs.sh` | archive des jars Spark que YARN distribue (`spark.yarn.archive`), pas une donnée : [guide de la plateforme](../platform.md#notes-de-conception) |
 | `report.md`, `runs.json` et journaux de la campagne du Lot 6 | `src/gtdp/perf/mr_compare.py` | fichiers locaux de mesure, hors du lake : [MapReduce contre Spark](../mapreduce-vs-spark.md#campagne-de-mesure) |
 | `/benchmarks` | outils de mesure des Lots 6 et 7 et de l'[ADR-0006](../adr/0006-topologie-hdfs.md) | jeux d'entrée copiés ou convertis pour les mesures, recréés par ces outils : [MapReduce contre Spark](../mapreduce-vs-spark.md#campagne-de-mesure) |

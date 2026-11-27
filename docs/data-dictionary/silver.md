@@ -43,7 +43,9 @@ du cluster.
 ### `silver/_days/ingestion_date=<d>/_SUCCESS`
 
 Écrit par `mark_complete` quand chacune des quatre sources a son marqueur pour le jour. Gold ne
-lit que les jours qui ont ce fichier.
+lit des commandes, des logs et des rejets que les jours qui ont ce fichier. Il lit `customers` et
+`products_scd2` tels que silver les a publiés en dernier, jour terminé ou non (limite connue
+KAN-58, voir le [dictionnaire gold](gold.md)).
 
 | Champ | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -64,6 +66,12 @@ Chaque ligne bronze d'un jour reçoit exactement une disposition, évaluée dans
 | `clean` | aucune des précédentes, drapeaux compris | table silver |
 
 Identité vérifiée à chaque exécution : `lignes bronze du jour = clean + rejected + duplicated`.
+
+Limite connue (KAN-59) : une date antérieure au `1582-10-15` ou un horodatage antérieur au
+`1900-01-01 00:00:00` UTC respecte les formats acceptés, mais Spark refuse de l'écrire en Parquet
+(`WRITE_ANCIENT_DATETIME`, aucun mode de conversion n'est configuré). L'exécution échoue en
+écrivant la table : la ligne ne reçoit aucune disposition publiée, la source n'a pas de marqueur et
+le jour reste incomplet.
 Les codes de rejet et les drapeaux sont calculés en **une seule projection** à partir du
 registre de règles de la source (`ENTITY.rules` de `src/gtdp/silver/<source>.py`). Une ligne
 dont `_corrupt_record` est non nul reçoit le seul code `MALFORMED_ROW` : ses colonnes sont
