@@ -12,4 +12,4 @@ Une décision remplacée garde son fichier avec le statut « Remplacée par ADR-
 | [0005](0005-silver-incremental.md) | Silver incrémental par date d'ingestion, publié par jour complet, jours traités dans l'ordre | Acceptée |
 | [0006](0006-topologie-hdfs.md) | 3 DataNodes, réplication 3 par défaut, erasure coding XOR-2-1 comparé | Acceptée |
 | [0007](0007-evolution-schema.md) | Schéma brut par en-tête de fichier en bronze, schéma canonique en silver | Acceptée |
-| [0008](0008-streaming.md) | Streaming : watermark 2 min, fenêtres 1 min en append, alertes par événement, écriture par `batch_id` | Acceptée |
+| [0008](0008-streaming.md) | Streaming : watermark 2 min, fenêtres 1 min en append, une alerte par capteur et fenêtre, écriture par jour et `batch_id`, housekeeping horaire | Acceptée |
