@@ -185,12 +185,14 @@ def _check_order(
         for dependency in PIPELINES[source].depends_on:
             if dependency in sources:
                 continue
-            built = days.latest_day(spark, paths.silver, dependency)
-            if built != day:
+            published = days.latest_day(spark, paths.silver, dependency)
+            built = days.rebuilt_day(spark, table_path(paths.silver, dependency)) or published
+            if published != day or built != day:
                 raise DayOrderError(
                     f"{source} of {day} are checked against {dependency} as published for "
-                    f"{day}, but {dependency} is published for {built}: run silver --date {day} "
-                    f"--source {dependency} first, or the whole day"
+                    f"{day}, but {dependency} is published for {published} and rebuilt for "
+                    f"{built}: run silver --date {day} --source {dependency} first, or the whole "
+                    "day"
                 )
 
 
