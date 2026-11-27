@@ -1,5 +1,6 @@
 """Taking a table lock over: the YARN state of the run that holds it, its age, racing takers."""
 
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from gtdp.io import (
     read_table,
     replace_table,
     table_lock,
+    write_partitions,
 )
 
 pytestmark = pytest.mark.slow
@@ -126,7 +128,7 @@ def test_the_lock_of_a_run_that_yarn_reports_ended_is_taken_over_at_once(
     assert not lock.exists()
 
 
-@pytest.mark.parametrize("state", ["RUNNING", "ACCEPTED"])
+@pytest.mark.parametrize("state", ["NEW", "NEW_SAVING", "SUBMITTED", "ACCEPTED", "RUNNING", "?"])
 def test_the_lock_of_a_run_that_yarn_reports_alive_holds_whatever_its_age(
     spark, table, resource_manager, state
 ):
@@ -139,6 +141,54 @@ def test_the_lock_of_a_run_that_yarn_reports_alive_holds_whatever_its_age(
         pass
 
     assert lock.read_text() == lock_of(APP)
+
+
+def test_the_state_decides_not_the_final_status(spark, table, resource_manager):
+    path, lock = table
+    lock.write_text(lock_of(APP))
+    # A client-mode driver killed outright: state FINISHED, finalStatus SUCCEEDED (ADR-0002).
+    resource_manager.states[APP] = {"id": APP, "state": "FINISHED", "finalStatus": "SUCCEEDED"}
+    with table_lock(spark, path):
+        pass
+    lock.write_text(lock_of(APP))
+    make_old(lock)
+    resource_manager.states[APP] = {"id": APP, "state": "RUNNING", "finalStatus": "FAILED"}
+
+    with pytest.raises(TableLockedError), table_lock(spark, path):
+        pass
+
+
+def test_a_dead_takers_claim_is_taken_over_as_soon_as_yarn_says_it_ended(
+    spark, table, resource_manager
+):
+    path, lock = table
+    taker = "application_1795715756506_0008"
+    resource_manager.states.update({APP: "KILLED", taker: "KILLED"})
+    dead = lock_of(APP)
+    lock.write_text(dead)
+    claim = lock.with_name(f"{lock.name}.takeover-{hashlib.sha256(dead.encode()).hexdigest()[:16]}")
+    claim.write_text(lock_of(taker))
+
+    with table_lock(spark, path):
+        assert sorted(os.listdir(lock.parent)) == [f".{lock.name}.crc", lock.name]
+    assert os.listdir(lock.parent) == []
+
+
+def test_one_application_holds_several_locks_and_takes_them_again_after_release(
+    spark, tmp_path, resource_manager, monkeypatch
+):
+    monkeypatch.setattr(SparkContext, "applicationId", property(lambda _self: APP))
+    resource_manager.states[APP] = "RUNNING"
+    gold, fact = str(tmp_path / "gold"), str(tmp_path / "gold" / "fact_sales")
+    frame = spark.createDataFrame([(1, "2026-01-01")], "id int, day string")
+
+    with table_lock(spark, gold):  # the run lock of the gold layer, then the lock of each table
+        for _ in range(2):  # one micro-batch after the other
+            write_partitions(frame, fact, {"day": ["2026-01-01"]})
+        with pytest.raises(TableLockedError), table_lock(spark, gold):
+            pass  # the same application does not enter its own lock twice
+
+    assert resource_manager.requests == [f"/ws/v1/cluster/apps/{APP}"]
 
 
 UNREACHABLE = "unreachable"
@@ -299,26 +349,32 @@ def test_a_run_killed_at_any_step_never_blocks_the_next_one_once_yarn_says_it_en
 
 
 class Gate:
-    """The filesystem of one run, which waits before its first delete of the lock file."""
+    """The filesystem of one run, which waits before its call number ``nth`` of ``method`` on the
+    lock file."""
 
-    def __init__(self):
-        self.fs, self.armed = None, True
+    def __init__(self, method, nth):
+        self.fs, self._method, self._left = None, method, nth
         self.reached, self.resume = threading.Event(), threading.Event()
 
-    def delete(self, path, recursive):
-        if self.armed and path.getName().endswith(".lock"):
-            self.armed = False
-            self.reached.set()
-            assert self.resume.wait(60)
-        return self.fs.delete(path, recursive)
-
     def __getattr__(self, name):
-        return getattr(self.fs, name)
+        member = getattr(self.fs, name)
+        if name != self._method:
+            return member
+
+        def call(path, *args):
+            if path.getName().endswith(".lock"):
+                self._left -= 1
+                if self._left == 0:
+                    self.reached.set()
+                    assert self.resume.wait(60)
+            return member(path, *args)
+
+        return call
 
 
-def gate(monkeypatch, *runs):
+def gate(monkeypatch, *runs, method="delete", nth=1):
     """Give each thread named in ``runs`` a ``Gate`` around the filesystem ``gtdp.io`` uses."""
-    real, gates = gtdp.io._filesystem, {run: Gate() for run in runs}
+    real, gates = gtdp.io._filesystem, {run: Gate(method, nth) for run in runs}
 
     def filesystem(spark, path):
         fs, hadoop_path = real(spark, path)
@@ -418,6 +474,51 @@ def test_a_taker_and_a_run_that_takes_the_released_lock_never_both_hold_it(
 
     assert len(holders) == 1
     assert named == holders[0]
+
+
+def test_the_holder_removes_the_claims_and_lock_copies_of_killed_runs_once_stale(spark, table):
+    path, lock = table
+    dead = [lock.with_name(f"{lock.name}.{suffix}") for suffix in ("takeover-dead", "tmp-dead")]
+    live = [lock.with_name(f"{lock.name}.{suffix}") for suffix in ("takeover-live", "tmp-live")]
+    for leftover in dead + live:
+        leftover.write_text(lock_of(APP))
+    for leftover in dead:
+        make_old(leftover)
+
+    with table_lock(spark, path):
+        pass
+
+    assert sorted(os.listdir(lock.parent)) == sorted(p.name for p in live)
+
+
+def test_a_taker_that_outlived_its_claim_leaves_it_to_the_run_that_took_it_over(
+    spark, table, monkeypatch
+):
+    """run-t claims a dead lock, then stalls past staleAfterSeconds (its claim is aged here) and
+    run-u takes the claim over. A claim is deleted by the run that holds it only: run-t, done
+    with the lock, leaves run-u's claim to run-u."""
+    path, lock = table
+    dead = lock_of("local-1795715756506")
+    lock.write_text(dead)
+    make_old(lock)
+    claim = lock.with_name(f"{lock.name}.takeover-{hashlib.sha256(dead.encode()).hexdigest()[:16]}")
+    gates = gate(monkeypatch, "run-t", "run-u", method="open", nth=2)
+    t, u = Run(spark, path, "run-t"), Run(spark, path, "run-u")
+    t.start()
+    assert gates["run-t"].reached.wait(60)  # run-t holds the claim, checks the lock next
+    make_old(claim)
+    u.start()
+    assert gates["run-u"].reached.wait(60)  # run-u took the claim over, checks the lock next
+    gates["run-t"].resume.set()
+    assert t.inside.wait(60)
+    claimed_by = json.loads(claim.read_text())["run_id"] if claim.exists() else None
+    gates["run-u"].resume.set()
+    u.join(60)
+    t.leave.set()
+    t.join(60)
+
+    assert (t.outcome, u.outcome, claimed_by) == ("held", "locked", "run-u")
+    assert os.listdir(lock.parent) == []
 
 
 def test_a_stop_signal_received_while_taking_the_lock_still_releases_it(spark, table, monkeypatch):
