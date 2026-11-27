@@ -67,7 +67,7 @@ def _names(cell: str) -> list[str]:
     return re.findall(r"`([^`]+)`", cell)
 
 
-def documented() -> dict[str, Shape]:
+def _sections() -> dict[str, Shape]:
     """Every path a section heading names, with the columns of the section's column tables."""
     shapes: dict[str, Shape] = {}
     for page in sorted(DICTIONARY.glob("*.md")):
@@ -186,7 +186,7 @@ def code(spark, tmp_path_factory) -> dict[str, Shape]:
 
 @pytest.fixture(scope="module")
 def doc() -> dict[str, Shape]:
-    return documented()
+    return _sections()
 
 
 def _documented(path: str, doc: dict[str, Shape]) -> Shape:
