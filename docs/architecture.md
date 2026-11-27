@@ -11,25 +11,29 @@ Ce document est la référence de conception. Les décisions structurantes sont 
 ## Vue d'ensemble
 
 Le schéma montre les services du cluster, les zones du lake et les flux qui les relient. La
-légende sous le schéma explique chaque forme, chaque couleur et chaque trait.
+légende sous le schéma explique chaque forme, chaque couleur et chaque trait. Chaque couleur de
+trait a un contraste d'au moins 3:1 sur le fond clair et sur le fond sombre de GitHub.
 
 ```mermaid
 flowchart TB
-  subgraph SRC["Sources, hors cluster"]
+  subgraph EDGE["Client edge : conteneur lancé à la demande"]
     GEN(["Générateur<br/>dépôts J1, J2, J3"]):::program
     SIM(["Simulateur capteurs<br/>1 fichier toutes les 5 s"]):::program
+    CLI[["land.sh, submit.sh,<br/>spark-submit, hdfs, yarn"]]:::client
   end
-  CLI[["Client edge<br/>land.sh, submit.sh,<br/>spark-submit, hdfs, yarn"]]:::client
   subgraph YARN["YARN"]
     RM["ResourceManager"]:::service
     NM1["NodeManager 1"]:::service
     NM2["NodeManager 2"]:::service
     subgraph APPS["Applications dans les conteneurs des NodeManagers"]
-      JB(["job bronze"]):::job
-      JS(["job silver"]):::job
-      JG(["job gold"]):::job
-      SS(["jobs streaming-sensors<br/>et streaming-housekeeping"]):::job
-      MR(["Lot 6 : Hadoop Streaming<br/>et revenue-by-country-spark"]):::job
+      subgraph SPARK["Jobs Spark de run.py"]
+        JB(["job bronze"]):::job
+        JS(["job silver"]):::job
+        JG(["job gold"]):::job
+        SS(["jobs streaming-sensors<br/>et streaming-housekeeping"]):::job
+        RBC(["Lot 6 : revenue-by-country-spark"]):::job
+      end
+      MRS(["Lot 6 : job Hadoop Streaming"]):::job
     end
   end
   subgraph HDFS["HDFS"]
@@ -47,6 +51,7 @@ flowchart TB
       OPS[("ops")]:::ops
     end
     SLOG[("/spark-logs")]:::logs
+    ALOG[("/app-logs")]:::logs
     MLOG[("/mr-history")]:::logs
   end
   subgraph HIST["Historique"]
@@ -67,19 +72,26 @@ flowchart TB
   BRZ ==> JS
   JS ==> SLV
   JS ==> REJ
+  JS ==>|"empreinte du sel"| OPS
   SLV ==> JG
+  REJ ==>|"kpi_data_quality"| JG
   JG ==> GLD
-  SIM ==>|"put puis mv"| LAND
+  SIM ==>|"hdfs dfs -put puis -mv"| LAND
   LAND ==>|"sensors/incoming"| SS
   SS ==>|"agrégats, alertes"| GLD
   SS ==>|"rejets, checkpoints, archive"| STR
-  LAND ==>|"commandes, clients"| MR
-  MR ==>|"mr_vs_spark"| OPS
-  APPS -.->|"audit"| OPS
-  APPS -.->|"event logs"| SLOG
-  MR -.->|"historique, compteurs"| MLOG
+  LAND ==>|"commandes, clients"| MRS
+  LAND ==>|"commandes, clients"| RBC
+  MRS ==>|"mr_vs_spark/mapreduce"| OPS
+  RBC ==>|"mr_vs_spark/spark"| OPS
+  SPARK -.->|"audit"| OPS
+  SPARK -.->|"event logs"| SLOG
+  MRS -.->|"historique, compteurs"| MLOG
+  NM1 -.->|"journaux des conteneurs"| ALOG
+  NM2 -.-> ALOG
   SLOG -.-> SHS
   MLOG -.-> JHS
+  ALOG -.-> JHS
 
   classDef service fill:#dbeafe,stroke:#1e40af,color:#111827
   classDef client fill:#fce7f3,stroke:#9d174d,color:#111827
@@ -94,23 +106,23 @@ flowchart TB
   classDef ops fill:#bbf7d0,stroke:#15803d,color:#111827
   classDef logs fill:#f3f4f6,stroke:#6b7280,color:#111827
   classDef frame fill:#f8fafc,stroke:#94a3b8,color:#111827
-  class SRC,YARN,APPS,HDFS,LAKE,HIST frame
-  linkStyle 0,1,2 stroke:#374151,stroke-width:1px
-  linkStyle 3,4,5 stroke:#1e40af,stroke-width:1px
-  linkStyle 6,7,8,9,10,11,12,13,14 stroke:#2563eb,stroke-width:3px
-  linkStyle 15,16,17,18 stroke:#7e22ce,stroke-width:3px
-  linkStyle 19,20 stroke:#ea580c,stroke-width:3px
-  linkStyle 21 stroke:#15803d,stroke-width:2px
-  linkStyle 22,23,24,25 stroke:#6b7280,stroke-width:2px
+  class EDGE,YARN,APPS,SPARK,HDFS,LAKE,HIST frame
+  linkStyle 0,1,2 stroke:#db2777,stroke-width:1px
+  linkStyle 3,4,5 stroke:#0284c7,stroke-width:1px
+  linkStyle 6,7,8,9,10,11,12,13,14,15,16 stroke:#2563eb,stroke-width:3px
+  linkStyle 17,18,19,20 stroke:#9333ea,stroke-width:3px
+  linkStyle 21,22,23,24 stroke:#ea580c,stroke-width:3px
+  linkStyle 25 stroke:#15803d,stroke-width:2px
+  linkStyle 26,27,28,29,30,31,32 stroke:#6b7280,stroke-width:2px
 ```
 
 | Élément du schéma | Signification |
 | --- | --- |
-| Cadre gris clair | Groupe de composants : sources hors cluster, YARN, HDFS, serveurs d'historique. Un cadre dans un cadre en est une partie : les applications tournent dans les conteneurs des NodeManagers, les zones du lake sont stockées en blocs sur les DataNodes. |
+| Cadre gris clair | Groupe de composants : client edge, YARN, HDFS, serveurs d'historique. Un cadre dans un cadre en est une partie : les applications tournent dans les conteneurs des NodeManagers, les jobs Spark de `run.py` sont des applications, les zones du lake sont stockées en blocs sur les DataNodes. |
 | Rectangle bleu | Service du cluster, un démon par rectangle : NameNode, DataNode, ResourceManager, NodeManager, Spark History Server, MapReduce JobHistory. |
-| Rectangle rose à double bord | Client edge : conteneur lancé à la demande, qui dépose les données (`land.sh`) et soumet les jobs (`submit.sh`). En mode client, le driver Spark y tourne. |
-| Ovale blanc | Programme hors cluster : le générateur des dépôts batch, le simulateur qui rejoue les fichiers capteurs. |
-| Ovale cyan | Application soumise à YARN : un job Spark de `run.py`, ou le job Hadoop Streaming du Lot 6. |
+| Rectangle rose à double bord | Outils du client edge, conteneur lancé à la demande qui monte la copie du dépôt : `land.sh` dépose les données, `submit.sh` soumet les jobs par `spark-submit`. En mode client, le driver Spark tourne dans ce conteneur. |
+| Ovale blanc | Programme Python du dépôt lancé dans le client edge : le générateur écrit les dépôts batch dans la copie du dépôt, le simulateur rejoue les fichiers capteurs dans HDFS. |
+| Ovale cyan | Application soumise à YARN : un job Spark de `run.py`, ou le job Hadoop Streaming du Lot 6 (`scripts/mapreduce/run_mr.sh`). |
 | Parallélogramme blanc à bord pointillé | Zone `landing` : fichiers déposés tels quels (CSV, logs, JSON Lines) et manifestes. |
 | Cylindre orange | Couche `bronze` : Parquet, colonnes brutes en `string`. |
 | Cylindre gris bleu | Couche `silver` : tables typées, dédupliquées, historisées, pseudonymisées. |
@@ -118,16 +130,16 @@ flowchart TB
 | Cylindre jaune | Couche `gold` : modèle en étoile, indicateurs, agrégats et alertes capteurs. |
 | Cylindre violet | Zone `streaming` : rejets du flux, checkpoints, fichiers capteurs archivés. |
 | Cylindre vert | Zone `ops` : table d'audit, sorties du Lot 6, empreinte du sel. |
-| Cylindre gris clair | Journaux des services : event logs Spark (`/spark-logs`), historique MapReduce (`/mr-history`). |
-| Flèche épaisse bleue | Flux batch d'un dépôt J1, J2 ou J3 : dépôt en landing, puis jobs `bronze`, `silver` (tables et rejets) et `gold`. |
-| Flèche épaisse violette | Flux capteurs : fichiers posés en landing, lus par le streaming, écrits en gold et dans la zone `streaming`. |
-| Flèche épaisse orange | Comparaison MapReduce contre Spark du Lot 6 : mêmes fichiers du landing, sorties sous `ops/mr_vs_spark`. |
-| Flèche pointillée verte | Audit : chaque exécution de `run.py` ajoute une ligne à `ops/audit`, aussi en cas d'échec. |
-| Flèche pointillée grise | Event logs Spark et historique des jobs MapReduce, écrits par les applications et lus par les serveurs d'historique. |
-| Flèche fine gris foncé | Commande : le client soumet un job au ResourceManager, qui alloue les conteneurs des NodeManagers. |
-| Trait fin bleu sans pointe | Le NameNode tient les métadonnées des blocs que stockent les DataNodes. |
+| Cylindre gris clair | Journaux des services : event logs Spark (`/spark-logs`), journaux des conteneurs agrégés par YARN (`/app-logs`), historique MapReduce (`/mr-history`). |
+| Flèche épaisse bleue | Flux batch d'un dépôt J1, J2 ou J3 : dépôt en landing, puis jobs `bronze`, `silver` (tables, rejets, empreinte du sel dans `ops`) et `gold`, qui relit aussi les rejets pour `kpi_data_quality`. |
+| Flèche épaisse violette | Flux capteurs : fichiers posés en landing par le simulateur, lus par le streaming, écrits en gold et dans la zone `streaming`. |
+| Flèche épaisse orange | Comparaison MapReduce contre Spark du Lot 6 : les deux jobs lisent les mêmes fichiers du landing et écrivent sous `ops/mr_vs_spark`. |
+| Flèche pointillée verte | Audit : chaque job Spark lancé par `run.py` ajoute une ligne à `ops/audit`, aussi en cas d'échec. Le job Hadoop Streaming n'en écrit pas. |
+| Flèche pointillée grise | Journaux : event logs des jobs Spark, historique et compteurs du job Hadoop Streaming, journaux des conteneurs agrégés par les NodeManagers. Les serveurs d'historique les servent. |
+| Flèche fine rose | Commande : le client soumet un job au ResourceManager, qui alloue les conteneurs des NodeManagers. |
+| Trait fin bleu ciel sans pointe | Le NameNode tient les métadonnées des blocs que stockent les DataNodes. |
 | Pointe de flèche | Sens du flux : la donnée ou la commande va vers la pointe. |
-| Texte sur un trait | Ce qui passe : dépôts, commande `land.sh`, répertoire lu, tables écrites. |
+| Texte sur un trait | Ce qui passe : dépôts, commande, répertoire lu, tables écrites, ou l'indicateur pour lequel gold lit les rejets. |
 
 ## Composants
 
@@ -139,7 +151,7 @@ flowchart TB
 | NodeManager | Exécution des conteneurs Spark et MapReduce | 2 |
 | Spark History Server | Historique des applications Spark (`hdfs:///spark-logs`) | 1 |
 | MapReduce JobHistory | Historique et compteurs des jobs MapReduce | 1 |
-| Client (edge) | `spark-submit`, `hdfs`, `yarn`, générateur. Conteneur éphémère qui monte le dépôt courant | à la demande |
+| Client (edge) | `land.sh`, `submit.sh`, `spark-submit`, `hdfs`, `yarn`, le générateur et le simulateur capteurs. Conteneur éphémère qui monte le dépôt courant | à la demande |
 
 Versions : Hadoop 3.3.6, Spark 3.5.3 (build `without-hadoop`, branché sur le classpath Hadoop du
 cluster), Python 3.11, Java 11. Voir [ADR-0001](adr/0001-image-hadoop-spark.md). Le budget mémoire
