@@ -1,0 +1,30 @@
+=== max-streams=2 work.multiplier=2 max-streams-hard-limit=4
+files: 900
+killed 127.0.0.1:19863 at 12:21:30, spare 127.0.0.1:19864 already live
+dead at 12:22:12
+asks per 3 s pass after the death: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+100 asks over 75 s = 1.33 blocks/s
+by source: [('127.0.0.1:19862', 52), ('127.0.0.1:19861', 52)]
+	Under replicated blocks: 788
+Live datanodes (3):
+Dead datanodes (1):
+=== max-streams=8 work.multiplier=4 max-streams-hard-limit=4
+files: 900
+killed 127.0.0.1:19863 at 12:24:15, spare 127.0.0.1:19864 already live
+dead at 12:24:54
+asks per 3 s pass after the death: [3, 5, 8, 8, 8, 7, 6, 6, 6, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+184 asks over 75 s = 2.45 blocks/s
+by source: [('127.0.0.1:19861', 99), ('127.0.0.1:19862', 93)]
+	Under replicated blocks: 675
+Live datanodes (3):
+Dead datanodes (1):
+=== max-streams=8 work.multiplier=4 max-streams-hard-limit=8
+files: 900
+killed 127.0.0.1:19863 at 12:26:57, spare 127.0.0.1:19864 already live
+dead at 12:27:39
+asks per 3 s pass after the death: [12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+300 asks over 75 s = 4.00 blocks/s
+by source: [('127.0.0.1:19861', 157), ('127.0.0.1:19862', 155)]
+	Under replicated blocks: 576
+Live datanodes (3):
+Dead datanodes (1):

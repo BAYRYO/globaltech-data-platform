@@ -21,9 +21,10 @@ for settings in "2 2 4" "8 4 4" "8 4 8"; do
   kill -9 "${DN_PID[3]}"
   echo "killed 127.0.0.1:19863 at $(date -u +%H:%M:%S), spare 127.0.0.1:19864 already live"
   wait_report "Dead datanodes (1)" 120
-  echo "dead at $(date -u +%H:%M:%S)"
+  dead=$(date -u +%H:%M:%S)
+  echo "dead at $dead"
   sleep 80
-  python3 "$(dirname "${BASH_SOURCE[0]}")/asks.py" /tmp/logs/nn.log 127.0.0.1:19864
+  python3 "$(dirname "${BASH_SOURCE[0]}")/asks.py" /tmp/logs/nn.log 127.0.0.1:19864 "$dead"
   report | grep -E "Under replicated|Live datanodes|Dead datanodes"
   stop_all
 done
