@@ -35,7 +35,7 @@ import time
 import tokenize
 import urllib.request
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -614,6 +614,87 @@ def _seconds(value: float | None) -> str:
     return "—" if value is None else f"{value:.2f}"
 
 
+PYTHON_CPU_S_PER_MILLION = (2.1, 2.7)
+"""CPU seconds of the Python mapper per million lines, measured in a client container outside
+YARN, which does not count it (docs/mapreduce-vs-spark.md): 2.1 on a quiet machine, 2.7 the
+median of the current mapper under load."""
+COMBINER_CPU_S_PER_MILLION = 0.24
+"""CPU seconds of the combiner per million lines, measured the same way."""
+
+
+@dataclass(frozen=True)
+class EngineComparison:
+    """A MapReduce variant against Spark on one volume, from their medians: the change of the
+    memory MapReduce reserves, of the cores Spark holds, and the range of the ratio of CPU per
+    line, MapReduce over Spark (None without a CPU slope)."""
+
+    memory_change_pct: float
+    core_change_pct: float
+    cpu_ratio: tuple[float, float] | None
+
+
+def engine_comparison(
+    mapreduce: Mapping[str, float | None], spark: Mapping[str, float | None]
+) -> EngineComparison:
+    """``mapreduce`` and ``spark`` hold the medians ``memory_mb_s``, ``core_s`` and
+    ``cpu_s_per_million``, the slope of the task CPU (the JVMs only for MapReduce). MapReduce's
+    CPU per line adds the Python mapper and the combiner, measured aside."""
+    jvm, slope = mapreduce["cpu_s_per_million"], spark["cpu_s_per_million"]
+    ratio = None
+    if jvm is not None and slope:
+        low, high = PYTHON_CPU_S_PER_MILLION
+        ratio = tuple((jvm + p + COMBINER_CPU_S_PER_MILLION) / slope for p in (low, high))
+    return EngineComparison(
+        100 * (mapreduce["memory_mb_s"] - spark["memory_mb_s"]) / spark["memory_mb_s"],
+        100 * (spark["core_s"] - mapreduce["core_s"]) / mapreduce["core_s"],
+        ratio,
+    )
+
+
+def engines_markdown(
+    syntheses: Mapping[str, Mapping[str, Mapping[str, float | None]]],
+) -> list[str]:
+    """One line per volume and MapReduce variant: its ``engine_comparison`` with Spark."""
+    lines = [
+        "| Volume | Variante MapReduce | Mo·s de MapReduce contre Spark "
+        "| Cœurs·s de Spark contre MapReduce | CPU par ligne, MapReduce / Spark |",
+        "| --- | --- | ---: | ---: | ---: |",
+    ]
+    for volume, medians in syntheses.items():
+        for variant, own in medians.items():
+            if variant == "spark" or "spark" not in medians:
+                continue
+            found = engine_comparison(own, medians["spark"])
+            cpu = "—" if found.cpu_ratio is None else "{:.1f} à {:.1f}".format(*found.cpu_ratio)
+            lines.append(
+                f"| `{volume}` | {variant} | {found.memory_change_pct:+.1f} % "
+                f"| {found.core_change_pct:+.1f} % | {cpu} |"
+            )
+    return lines
+
+
+SYNTHESIS_COLUMNS = {"memory_mb_s": 6, "core_s": 7, "cpu_s_per_million": 9}
+"""The cells of a variant's row in the Synthèse table of ``volume_report``."""
+
+
+def synthesis(report: str) -> dict[str, dict[str, dict[str, float | None]]]:
+    """The medians of each variant in the Synthèse tables of a campaign ``report.md``, by
+    volume, as ``volume_report`` printed them."""
+    found = {}
+    for section in report.split("## Volume `")[1:]:
+        table = section.split("### Synthèse", 1)[1].split("###", 1)[0]
+        rows = {}
+        for line in table.splitlines():
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) > max(SYNTHESIS_COLUMNS.values()) and cells[1].isdigit():
+                rows[cells[0]] = {
+                    key: None if cells[i] == "—" else float(cells[i])
+                    for key, i in SYNTHESIS_COLUMNS.items()
+                }
+        found[section.split("`", 1)[0]] = rows
+    return found
+
+
 COST_FIELDS = ("fixed_cpu_s", "cpu_s_per_million", "fixed_run_s", "run_s_per_million")
 
 
@@ -648,6 +729,7 @@ def volume_report(
         "| Durée fixe par tâche (s) | Durée par M lignes (s) |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    medians: dict[str, dict[str, float | None]] = {}
     for variant in variants:
         own = [m for m in measures if m.variant == variant]
         median, low, high, rel = spread([m.elapsed_s for m in own])
@@ -656,6 +738,13 @@ def volume_report(
             _seconds(statistics.median(getattr(c, name) for c in costs) if costs else None)
             for name in COST_FIELDS
         ]
+        medians[variant] = {
+            "memory_mb_s": statistics.median(m.memory_mb_s for m in own),
+            "core_s": statistics.median(m.core_s for m in own),
+            "cpu_s_per_million": (
+                statistics.median(c.cpu_s_per_million for c in costs) if costs else None
+            ),
+        }
         summary.append(
             f"| {variant} | {len(own)} | {median:.1f} | {low:.1f} | {high:.1f} | {rel:.0%} "
             f"| {statistics.median(m.memory_mb_s for m in own):.0f} "
@@ -686,6 +775,10 @@ def volume_report(
         "### Synthèse",
         "",
         *summary,
+        "",
+        "### Comparaison des moteurs",
+        "",
+        *engines_markdown({volume: medians}),
         "",
         "### Test de Mann-Whitney exact sur la durée",
         "",
@@ -867,7 +960,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="NAME=APP_ID,APP_ID",
         help="rebuild the measures of finished applications instead of running",
     )
+    parser.add_argument(
+        "--summarize",
+        type=Path,
+        metavar="REPORT",
+        help="print the engine comparison of each volume of a campaign report.md, then stop",
+    )
     args = parser.parse_args(argv)
+    if args.summarize:
+        print("\n".join(engines_markdown(synthesis(args.summarize.read_text("utf-8")))))
+        return 0
     for setting in args.mr_conf:
         _pair(setting)
     args.out.mkdir(parents=True, exist_ok=True)
