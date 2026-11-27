@@ -37,6 +37,11 @@ def rows(spark, path):
     return sorted(tuple(r) for r in spark.read.parquet(path).collect())
 
 
+def swaps_a_partition(destination):
+    """Whether a rename publishes a partition, not a lock file (``_<table>.lock``)."""
+    return not destination.getName().startswith("_")
+
+
 def make_old(path):
     old = time.time() - DAY_OLD
     os.utime(path, (old, old))
@@ -62,9 +67,11 @@ def test_a_second_writer_fails_at_once_while_the_first_swaps_and_the_table_stays
     real_rename, inside, resume = gtdp.io._rename, threading.Event(), threading.Event()
 
     def held_rename(fs, source, destination):
+        if not swaps_a_partition(destination):
+            return real_rename(fs, source, destination)
         inside.set()  # the published day 2 is deleted, its new copy not yet renamed
         assert resume.wait(60)
-        real_rename(fs, source, destination)
+        return real_rename(fs, source, destination)
 
     monkeypatch.setattr(gtdp.io, "_rename", held_rename)
     errors = []
@@ -99,9 +106,11 @@ def test_a_partition_is_never_renamed_into_an_existing_one(spark, orders, tmp_pa
     real_rename = gtdp.io._rename
 
     def racing_rename(fs, source, destination):
+        if not swaps_a_partition(destination):
+            return real_rename(fs, source, destination)
         # Another writer, which took no lock, publishes day 2 between the delete and the rename.
         shutil.copytree(source.toUri().getPath(), destination.toUri().getPath())
-        real_rename(fs, source, destination)
+        return real_rename(fs, source, destination)
 
     monkeypatch.setattr(gtdp.io, "_rename", racing_rename)
 
@@ -161,7 +170,8 @@ def test_a_stop_signal_during_the_swap_waits_for_its_end(spark, orders, tmp_path
     real_rename = gtdp.io._rename
 
     def stop_then_rename(fs, source, destination):
-        os.kill(os.getpid(), signal.SIGTERM)  # after the delete of the published day 2
+        if swaps_a_partition(destination):
+            os.kill(os.getpid(), signal.SIGTERM)  # after the delete of the published day 2
         real_rename(fs, source, destination)
 
     def raise_stopped(signum, _frame):
@@ -206,44 +216,30 @@ def test_a_job_holding_the_table_lock_keeps_writers_out_until_it_releases_it(
     assert sorted(os.listdir(tmp_path)) == ["orders"]
 
 
-class LockHeldForAnInstant:
-    """A filesystem on which another run creates the lock, then deletes it, during our create."""
-
-    def __init__(self, fs):
-        self._fs, self.raced = fs, False
-
-    def __getattr__(self, name):
-        return getattr(self._fs, name)
-
-    def create(self, path, overwrite, *args):
-        if self.raced or not path.getName().endswith(".lock"):
-            return self._fs.create(path, overwrite, *args)
-        self.raced = True
-        self._fs.create(path, True).close()
-        try:
-            return self._fs.create(path, overwrite)
-        finally:
-            self._fs.delete(path, False)
-
-
 def test_a_lock_another_run_held_for_an_instant_is_not_an_error(
     spark, orders, tmp_path, monkeypatch
 ):
     path, replay = orders
-    racing = []
+    real_rename, raced = gtdp.io._rename, []
+    lock = tmp_path / "_orders.lock"
 
-    def filesystem(spark_, path_):
-        fs, hadoop_path = real(spark_, path_)
-        racing.append(LockHeldForAnInstant(fs))
-        return racing[-1], hadoop_path
+    def rename_while_held(fs, source, destination):
+        if raced or destination.getName() != lock.name:
+            return real_rename(fs, source, destination)
+        raced.append(destination)
+        lock.write_text('{"run_id": "run-b"}')  # another run creates the lock, then deletes it
+        try:
+            return real_rename(fs, source, destination)
+        finally:
+            lock.unlink()
 
-    real = gtdp.io._filesystem
-    monkeypatch.setattr(gtdp.io, "_filesystem", filesystem)
+    monkeypatch.setattr(gtdp.io, "_rename", rename_while_held)
     write_partitions(replay, path, {INGESTION_DATE: [JAN_2]})
     monkeypatch.undo()
 
-    assert any(fs.raced for fs in racing)
+    assert raced
     assert rows(spark, path) == [(1, JAN_1), (3, JAN_2), (4, JAN_2)]
+    assert sorted(os.listdir(tmp_path)) == ["orders"]
 
 
 def test_a_reader_leaves_a_locked_swap_to_its_writer(spark, tmp_path):
