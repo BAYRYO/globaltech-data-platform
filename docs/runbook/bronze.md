@@ -192,10 +192,12 @@ du rapport. Une valeur nulle dans `rows_written` signale un échec avant écritu
 
 ### Après un arrêt par signal
 
-Un Ctrl+C ou un SIGTERM au processus Python du driver arrête l'exécution avec le code 130 ou 143
-et une ligne d'audit `STOPPED`. Si le signal arrive pendant l'échange d'une table, l'échange se
-termine d'abord. Chaque partition est l'ancienne ou la nouvelle, et aucun verrou ne reste.
-Rejouez le jour pour que toutes les sources aient la nouvelle partition.
+Un SIGINT ou un SIGTERM reçu par le seul processus Python du driver arrête l'exécution avec le
+code 130 ou 143 et une ligne d'audit `STOPPED`. Si le signal arrive pendant l'échange d'une table,
+l'échange se termine d'abord. Chaque partition est l'ancienne ou la nouvelle, et aucun verrou ne
+reste. Rejouez le jour pour que toutes les sources aient la nouvelle partition. Un Ctrl+C dans le
+terminal de `submit.sh` atteint aussi la JVM du driver
+([codes de sortie](exploitation.md#codes-de-sortie)).
 
 ### Après une exécution tuée
 

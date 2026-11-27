@@ -98,7 +98,7 @@ Un micro-batch planifié et non validé (ici 30) est celui que Spark rejoue.
 Générer la journée `dev` (180 fichiers, 15 minutes de flux) si elle manque, puis la rejouer :
 
 ```bash
-python -m gtdp.datagen generate --profile dev --seed 42 --out data/generated
+scripts/cluster/client.sh python3 -m gtdp.datagen generate --profile dev --seed 42 --out data/generated
 scripts/cluster/client.sh python3 -m gtdp.datagen replay-sensors \
   --src data/generated/dev/sensors/2026-01-01 \
   --dst hdfs://namenode:8020/datalake/landing/sensors/incoming --interval 5
