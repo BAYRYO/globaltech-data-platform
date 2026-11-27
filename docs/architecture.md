@@ -22,7 +22,7 @@ flowchart LR
     SLV[(silver<br/>typé, dédupliqué, SCD2)]
     REJ[(rejects<br/>motif de rejet)]
     GLD[(gold<br/>étoile + KPI)]
-    STR[(streaming<br/>agrégats, alertes)]
+    STR[(streaming<br/>rejets, checkpoints, archive)]
     OPS[(ops<br/>audit)]
   end
   subgraph YARN["YARN (ResourceManager + 2 NodeManagers)"]
@@ -36,7 +36,8 @@ flowchart LR
   BRZ --> SB --> SLV
   SB --> REJ
   SLV --> SB --> GLD
-  LAND --> SS --> STR
+  LAND --> SS --> GLD
+  SS --> STR
   LAND --> MR
   SB & SS --> OPS
   SB & SS -.event logs.-> SHS[Spark History Server]
@@ -73,7 +74,9 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 ├── silver/_days/ingestion_date=…/                <source>.json par source publiée, _SUCCESS si le jour est complet
 ├── gold/<table>/                                 modèle en étoile et indicateurs
 ├── gold/sensor_aggregates/, gold/sensor_alerts/  agrégats et alertes du flux capteurs
-├── streaming/{sensors/checkpoints,rejects}/      état technique du streaming
+├── streaming/sensors/checkpoints/, rejects/      checkpoints et lignes rejetées du flux capteurs
+├── streaming/archive/sensors/arrival_date=…/     fichiers capteurs validés, jour courant et 2 jours précédents
+├── streaming/control/                            marqueur d'arrêt du flux
 ├── ops/audit/run_date=…/run_id=…/                table d'audit, une ligne par exécution
 └── ops/pseudonymization/salt_fingerprint.json    empreinte du sel de pseudonymisation
 /spark-logs                                       event logs Spark (History Server)
@@ -160,13 +163,21 @@ Le simulateur rejoue les fichiers capteurs pré-générés vers `/datalake/landi
 à raison d'un fichier toutes les 5 secondes (écriture dans un répertoire de transit puis `mv`
 atomique, pour que Spark ne lise jamais un fichier partiel).
 
-Le job Structured Streaming lit ce répertoire avec un schéma explicite, applique un watermark de
-2 minutes sur `event_time`, déduplique par `event_id` dans la limite du watermark, calcule des
-agrégats sur des fenêtres d'une minute par machine et métrique (mode `append` : chaque fenêtre est
-écrite une fois, définitive), émet une alerte par événement au-delà du seuil, et écrit en
-`foreachBatch` vers `gold/sensor_aggregates` et `gold/sensor_alerts` dans des répertoires indexés
-par `batch_id`, ce qui rend la réécriture d'un micro-batch rejoué idempotente. Le checkpoint HDFS
-permet la reprise après arrêt. Détails mesurés : [ADR-0008](adr/0008-streaming.md).
+Le job Structured Streaming `streaming-sensors` lit ce répertoire avec un schéma explicite,
+toutes les 30 secondes et au plus 12 fichiers par micro-batch. Il applique un watermark de
+2 minutes sur `event_time` et déduplique par `event_id` dans la limite du watermark. Il calcule
+des agrégats sur des fenêtres d'une minute par machine et métrique (mode `append` : chaque fenêtre
+est écrite une fois, définitive). Il émet une alerte par capteur et par fenêtre d'une minute, dès
+le micro-batch où arrive la première valeur hors seuil, et range les lignes hors contrat dans
+`streaming/rejects`. Il écrit en `foreachBatch` vers `gold/sensor_aggregates`,
+`gold/sensor_alerts` et `streaming/rejects`, dans des partitions `<jour>=<d>/batch_id=<n>`
+remplacées : la réécriture d'un micro-batch rejoué est idempotente. Le checkpoint HDFS permet la
+reprise après arrêt, et un marqueur d'arrêt (`scripts/streaming/stop.sh`) l'arrête proprement.
+
+Le job `streaming-housekeeping`, lancé toutes les heures à côté du flux, archive les fichiers
+lus par les trois requêtes, purge l'archive et fusionne les partitions des micro-batches que Spark
+ne rejoue plus. Détails mesurés : [ADR-0008](adr/0008-streaming.md) et le
+[runbook streaming](runbook/streaming.md).
 
 ## Comparaison MapReduce contre Spark (Lot 6)
 
@@ -222,7 +233,8 @@ src/gtdp/
 ├── silver/          quality.py (registre de règles, disposition), un module par source,
 │                    days.py (marqueurs des jours complets), pseudonymize.py, reconcile.py, report.py
 ├── perf/            calcul Spark du Lot 6 et outil de comparaison avec MapReduce
-├── gold/  streaming/  lots 4 et 5, sur leurs branches en cours de revue
+├── streaming/       sensors.py (lecture, fenêtres, alertes), stream.py (requêtes, puits, arrêt), housekeeping.py
+├── gold/            lot 4, sur sa branche en cours de revue
 └── jobs/            run.py (point d'entrée spark-submit), registry.py, catalog.py, un module par job
 mapreduce/           mapper et reducer Hadoop Streaming
 scripts/             exploitation du cluster
