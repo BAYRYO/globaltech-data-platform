@@ -80,7 +80,7 @@ def notes_html(slide: Slide) -> str:
 
     body = "".join(f"\n<p>{inline(p)}</p>" for p in slide.paragraphs)
     return (
-        f'<aside class="notes">\n<p class="who">{html.escape(slide.role)} · {slide.target}</p>'
+        f'<aside class="notes">\n<p class="who">{html.escape(slide.role)} · {html.escape(slide.target)}</p>'
         f'{body}\n<p class="src">Sources : {html.escape(slide.sources, quote=False)}</p>\n</aside>'
     )
 
@@ -116,7 +116,8 @@ def wav_seconds(path: Path) -> float:
 
 
 def mmss(seconds: float) -> str:
-    return f"{int(seconds) // 60} min {round(seconds) % 60:02d} s" if seconds >= 60 else f"{seconds:.0f} s"
+    whole = round(seconds)
+    return f"{whole // 60} min {whole % 60:02d} s" if whole >= 60 else f"{whole} s"
 
 
 def fill_rehearsal(report: str, table: list[str]) -> str | None:

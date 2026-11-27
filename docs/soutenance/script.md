@@ -20,12 +20,18 @@ notes` les recopie depuis ce fichier, et un test vérifie que les deux restent i
 | Data engineer streaming et performance | 5, 6, 7 | 7, 8, 9, démonstration étapes 1 et 5 | 3 min 15 s |
 
 Les durées cibles des rôles comptent leur texte pendant la démonstration, pas le temps où les
-commandes tournent sans commentaire : la démonstration dure 3 min 50 s, son texte environ 1 min
-35 s.
+commandes tournent sans commentaire : la démonstration enregistrée dure 3 min 47 s, son texte
+1 min 45 s.
 
-La diapositive 13 fait parler le data engineer batch des limites de toute la plateforme, pas
-seulement des siennes : la grille demande aussi de répondre sur une partie qui n'est pas la
-sienne, avec du recul sur les limites.
+Deux diapositives sortent volontairement de cette règle, car la grille demande aussi de répondre
+sur une partie qui n'est pas la sienne, avec du recul sur les limites :
+
+- la diapositive 10 fait présenter par l'architecte plateforme l'exercice de panne d'un DataNode,
+  qui relève du Lot 8 du responsable qualité et delivery : la panne porte sur le HDFS que
+  l'architecte a monté, et sa partie stockage relève du volet HDFS du Lot 7. Le responsable
+  qualité et delivery répond aux questions sur la fiche d'incident ;
+- la diapositive 13 fait parler le data engineer batch des limites de toute la plateforme, pas
+  seulement des siennes.
 
 ## Diapositives
 
@@ -56,15 +62,15 @@ prend la parole et ne se disent pas.
 > des indicateurs fiables. Le kit fourni est propre. Notre générateur à graine fixe en tire trois
 > dépôts, J1, J2 et J3, avec des anomalies volontaires et un manifeste qui les compte. Chaque
 > compte attendu est donc exact et testable. J2 apporte des retardataires et des renvois de J1,
-> J3 une nouvelle colonne. Le produit P00042 porte vingt pour cent des lignes : c'est le
-> déséquilibre de clé du sujet. La plateforme répond à neuf questions métier et surveille les
+> J3 une nouvelle colonne. Le produit P00042 porte vingt pour cent des lignes synthétiques : c'est
+> le déséquilibre de clé du sujet. La plateforme répond à neuf questions métier et surveille les
 > capteurs.
 
 ### 3. Architecture
 
 - Rôle : architecte plateforme
 - Durée cible : 50 s
-- Sources : docs/architecture.md (vue d'ensemble) ; docs/rapport-technique.md section 3 ; docs/adr/0001-image-hadoop-spark.md ; docs/adr/0011-exploitation-plateforme.md ; docs/platform.md (budget mémoire)
+- Sources : docs/architecture.md (vue d'ensemble) ; docs/rapport-technique.md section 3 ; docs/adr/0001-image-hadoop-spark.md ; docs/adr/0006-topologie-hdfs.md ; docs/adr/0011-exploitation-plateforme.md ; docs/platform.md (budget mémoire)
 
 > Le cluster tourne sous Docker Compose, à partir d'une seule image construite par le projet :
 > Hadoop 3.3.6, Spark 3.5.3 et Python 3.11. HDFS a un NameNode et trois DataNodes, le minimum
@@ -78,7 +84,7 @@ prend la parole et ne se disent pas.
 
 - Rôle : architecte plateforme
 - Durée cible : 45 s
-- Sources : docs/rapport-technique.md section 4 ; docs/adr/0012-bronze-controle-manifeste.md ; docs/adr/0002-parquet-idempotence.md ; docs/adr/0007-evolution-schema.md ; PR #7 (tour de correction)
+- Sources : docs/rapport-technique.md section 4 ; docs/adr/0012-bronze-controle-manifeste.md ; docs/adr/0002-parquet-idempotence.md ; docs/adr/0007-evolution-schema.md ; PR #7 (tour de correction) ; PR #18 (verrous des exécutions terminées)
 
 > Bronze garde la donnée brute, sans perte. Avant toute écriture, le job vérifie chaque fichier
 > contre son manifeste : empreinte SHA-256, nombre de lignes, UTF-8 strict et colonnes
@@ -107,7 +113,7 @@ prend la parole et ne se disent pas.
 
 - Rôle : data engineer batch
 - Durée cible : 55 s
-- Sources : docs/rapport-technique.md section 6 ; docs/adr/0009-gold-etoile-recalcul.md ; docs/data-model.md (gold, modèle en étoile) ; PR #11 (SCD2 de P00042) ; PR #15 (preuves, tour de correction)
+- Sources : docs/rapport-technique.md section 6 ; docs/adr/0009-gold-etoile-recalcul.md ; docs/data-model.md (gold, modèle en étoile) ; PR #11 (SCD2 de P00042) ; PR #15 (preuves, tour de correction) ; PR #22 (jours silver complets)
 
 > Gold est un schéma en étoile : une table de faits, une ligne par ligne de commande, et les
 > dimensions date, client et produit. La dimension produit est historisée en SCD type 2, et
@@ -157,8 +163,8 @@ prend la parole et ne se disent pas.
 > gagne 88 % sur la même requête. Diffuser la dimension produit gagne 48 % et supprime le
 > shuffle. L'élagage par date gagne 43 % une fois la table listée, mais quand Spark liste ses 396
 > dossiers par un job, la requête est 79 % plus lente. P00042 donne un rapport de 4,16 entre la
-> tâche la plus longue et la médiane. AQE et le salage ramènent ce rapport vers 1,5, sans gain de
-> durée retenu, et le salage ralentit de 20 %.
+> tâche la plus longue et la médiane. AQE le ramène à 1,5, le salage entre 1,6 et 1,8, sans gain
+> de durée retenu, et le salage ralentit de 20 %.
 
 ### 10. Stockage et panne d'un DataNode
 
@@ -168,22 +174,22 @@ prend la parole et ne se disent pas.
 
 > Sur le même fichier de 713 Mo, la réplication 3 coûte 200 % de volume en plus, l'erasure coding
 > XOR-2-1 50 %, sans différence de lecture détectable. Mais XOR-2-1 ne tolère qu'une panne par
-> groupe : le lac reste en réplication 3. Nous avons arrêté un DataNode pendant que gold écrivait.
-> Le NameNode l'a déclaré mort entre 86 et 91 secondes après son dernier battement de cœur, pour
-> 90 attendues. Fsck est resté sain : 5 568 blocs à deux répliques, zéro bloc manquant. Gold
-> reconstruite pendant la panne est identique à la gold publiée. La limite est la topologie :
-> avec trois DataNodes, les répliques perdues n'avaient aucune cible avant le démarrage manuel
-> d'un secours.
+> groupe : le lac reste en réplication 3. Nous avons arrêté deux fois un DataNode pendant que
+> gold écrivait. La première fois, le NameNode l'a déclaré mort entre 86 et 91 secondes après son
+> dernier battement de cœur, pour 90 attendues, et fsck est resté sain : 5 568 blocs à deux
+> répliques, zéro bloc manquant. La seconde, gold reconstruite pendant la panne est identique à
+> la gold publiée. La limite est la topologie : avec trois DataNodes, les répliques perdues
+> n'avaient aucune cible avant le démarrage manuel d'un secours.
 
 ### 11. Industrialisation et qualité
 
 - Rôle : responsable qualité et delivery
 - Durée cible : 50 s
-- Sources : docs/rapport-technique.md sections 3 (relance du cluster) et 10 ; docs/validation/2026-11-27-validation-tiers.md (relance par un tiers, chronométrages) ; docs/project-management.md (revues, définition de « terminé ») ; docs/reviews/2026-11-26-revue-adverse-lot0.md ; PR #15 (revue) ; PR #25 (preuves sur YARN)
+- Sources : docs/rapport-technique.md sections 3 (relance du cluster) et 10 ; docs/validation/2026-11-27-validation-tiers.md (relance par un tiers, chronométrages) ; docs/project-management.md (revues, définition de « terminé ») ; docs/reviews/2026-11-26-revue-adverse-lot0.md ; PR #11 (revue de silver) ; PR #15 (revue de gold) ; PR #18 (revue des verrous) ; PR #25 (preuves sur YARN)
 
 > Le code est découpé en transformations pures et en jobs minces, avec une configuration TOML,
-> des journaux JSON et une table d'audit, une ligne par exécution. La suite compte 911 tests
-> pytest, tous verts, pour 91,2 % de couverture. La CI lance lint et tests à chaque PR, et démarre
+> des journaux JSON et une table d'audit, une ligne par exécution. Au relevé du rapport, la suite
+> comptait 911 tests pytest, tous verts, pour 91,2 % de couverture. La CI lance lint et tests à chaque PR, et démarre
 > un cluster neuf quand la plateforme change. Chaque story Jira a sa branche et sa PR. Il n'y a
 > pas eu de relecture humaine : chaque livrable passe deux revues adverses, et un constat n'est
 > retenu que s'il est prouvé par une exécution. La revue de gold a trouvé un bloquant, le pays du
@@ -198,8 +204,8 @@ prend la parole et ne se disent pas.
 
 > **Data engineer streaming et performance.** Je lance d'abord le flux capteurs en arrière-plan,
 > sur une racine de test : trente fichiers de cinq secondes de mesures. Le déclenchement passe de
-> trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au deuxième
-> micro-batch, puis relancera le job.
+> trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au micro-batch
+> numéro 2, puis relancera le job.
 >
 > **Architecte plateforme.** Pendant ce temps, l'état du cluster : neuf services sains, trois
 > DataNodes vivants, aucun mort, deux NodeManagers en marche.
@@ -207,13 +213,14 @@ prend la parole et ne se disent pas.
 > **Data engineer batch.** Gold est publiée pour les trois jours silver complets. La table
 > d'audit redonne la réconciliation de chaque jour : pour J1, 1 106 403 lignes bronze égalent
 > propres, rejets et doublons, comme sur la diapositive silver. Le rapport gold recalcule silver
-> et compare : 970 262 commandes, le même chiffre d'affaires des deux côtés, et le prix de P00042
-> qui change à 8 h 19. Dernière ligne : zéro contrôle en échec.
+> et compare : 970 262 commandes et le même chiffre d'affaires des deux côtés, zéro contrôle en
+> échec. Puis le prix de P00042, qui change à 8 h 19, appliqué à chaque commande selon son heure.
 >
 > **Data engineer streaming et performance.** Le journal du flux montre le driver tué au
 > micro-batch 2 : planifié, pas validé. Le job relancé reprend à son checkpoint et rejoue ce
 > micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt, préparée avant la
-> soutenance sur les mêmes fichiers : identique, sans clé en double.
+> soutenance sur les mêmes fichiers : identique, sans clé en double. L'échantillon est petit,
+> 23 agrégats et 14 rejets : la reprise sur la journée entière est dans le runbook du flux.
 >
 > **Architecte plateforme.** Dans YARN, l'application tuée est terminée avec succès : en mode
 > client, YARN ne voit pas la mort du driver. Le rapport la repère donc à l'absence de sa ligne
@@ -243,9 +250,9 @@ prend la parole et ne se disent pas.
 > exact. Mesurer avant de décider : nous avons gardé Spark pour sa plomberie, et écarté le
 > salage, plus lent. Des revues qui doivent prouver leurs constats : elles ont trouvé le pays figé
 > dans le fait et le sel visible dans un plan d'exécution. Ce que nous ferions autrement. Quatre
-> DataNodes dès le départ. Prouver chaque story sur YARN avant de la fusionner : deux l'ont été
-> après. Archiver toutes les revues dans le dépôt, mettre un seuil de couverture, et publier
-> l'image dans un registre.
+> DataNodes dès le départ. Prouver chaque story sur YARN avant de la fusionner : deux ne l'ont pas
+> été, et l'une n'y est prouvée que pour sa non-régression. Archiver toutes les revues dans le
+> dépôt, mettre un seuil de couverture, et publier l'image dans un registre.
 
 ### 15. Questions
 
@@ -274,10 +281,11 @@ une réponse courte et le document qui la tient.
    dans un répertoire de transit, puis remplace chaque partition par un renommage. Le mode
    `dynamic` de Spark a été écarté : il ne remplace que les partitions qui reçoivent une ligne.
    Source : [ADR-0002](../adr/0002-parquet-idempotence.md#pourquoi-nommer-les-partitions).
-4. **Que dit `fsck` pendant la panne ?** `Status: HEALTHY`, 5 568 blocs sous-répliqués (100 %),
-   réplication moyenne 2.0, 0 bloc manquant. Côté erasure coding, 3 groupes sur 4 ont perdu une
-   unité, reconstruite par XOR à la lecture. Source :
-   [rapport, section 9](../rapport-technique.md#réplication-3-contre-erasure-coding).
+4. **Une autre équipe peut-elle relancer le cluster ?** Un tiers a suivi le README de bout en
+   bout, 10 étapes sur 10 en code 0, et relancé le cluster en 67 s avec les données gardées,
+   122 s depuis zéro. Un tiers sans image dépend du débit de archive.apache.org. Source :
+   [rapport, section 3](../rapport-technique.md#relance-du-cluster),
+   [validation par un tiers](../validation/2026-11-27-validation-tiers.md).
 5. **Pourquoi ne pas passer le lac en erasure coding ?** `XOR-2-1` tolère une panne au lieu de
    deux. Un fichier plus petit que la cellule de 1 Mio paie 100 % au lieu de 50 %, et les blocs du
    lac font 167 748 octets en moyenne. Sans quatrième nœud, aucune réparation n'est possible.
@@ -348,7 +356,8 @@ une réponse courte et le document qui la tient.
 4. **À quoi sert la table d'audit ?** Elle garde une ligne par exécution d'un job Spark qui
    démarre : statut, compteurs, durée, application YARN. Un driver tué n'en laisse pas. Source :
    [runbook, interroger l'audit](../runbook/README.md#interroger-laudit).
-5. **Une autre équipe peut-elle reprendre la plateforme ?** Un tiers a suivi le README de bout en
-   bout, 10 étapes sur 10 en code 0, et relancé le cluster en 67 s avec les données gardées,
-   122 s depuis zéro. Un tiers sans image dépend du débit de archive.apache.org. Source :
-   [rapport, section 3](../rapport-technique.md#relance-du-cluster).
+5. **Que dit `fsck` pendant la panne ?** Au premier exercice, `Status: HEALTHY`, 5 568 blocs
+   sous-répliqués (100 %), réplication moyenne 2.0, 0 bloc manquant. Côté erasure coding, 3
+   groupes sur 4 ont perdu une unité, reconstruite par XOR à la lecture. Source :
+   [rapport, section 9](../rapport-technique.md#réplication-3-contre-erasure-coding),
+   [fiche d'incident](../incidents/2026-11-27-perte-datanode.md).

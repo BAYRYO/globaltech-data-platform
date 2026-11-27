@@ -35,26 +35,26 @@ dossier choisi.
 | # | Diapositive | Rôle | Durée cible | Durée mesurée | Cumul |
 | ---: | --- | --- | ---: | --- | ---: |
 | 1 | GlobalTech Data Platform | responsable qualité et delivery | 30 s | 39 s | 39 s |
-| 2 | Contexte et question | responsable qualité et delivery | 45 s | 49 s | 1 min 28 s |
-| 3 | Architecture | architecte plateforme | 50 s | 51 s | 2 min 19 s |
-| 4 | Bronze | architecte plateforme | 45 s | 44 s | 3 min 04 s |
-| 5 | Silver | data engineer batch | 55 s | 55 s | 3 min 59 s |
+| 2 | Contexte et question | responsable qualité et delivery | 45 s | 49 s | 1 min 29 s |
+| 3 | Architecture | architecte plateforme | 50 s | 51 s | 2 min 20 s |
+| 4 | Bronze | architecte plateforme | 45 s | 44 s | 3 min 05 s |
+| 5 | Silver | data engineer batch | 55 s | 55 s | 4 min 00 s |
 | 6 | Gold | data engineer batch | 55 s | 51 s | 4 min 50 s |
 | 7 | Streaming | data engineer streaming et performance | 50 s | 51 s | 5 min 41 s |
 | 8 | MapReduce contre Spark | data engineer streaming et performance | 50 s | 45 s | 6 min 26 s |
-| 9 | Performance | data engineer streaming et performance | 55 s | 52 s | 7 min 18 s |
-| 10 | Stockage et panne d'un DataNode | architecte plateforme | 55 s | 53 s | 8 min 11 s |
-| 11 | Industrialisation et qualité | responsable qualité et delivery | 50 s | 49 s | 9 min 00 s |
-| 12 | Démonstration | data engineer streaming et performance, architecte plateforme, data engineer batch, dans l'ordre des étapes | 3 min 50 s | démonstration 230 s (texte dit en 95 s pendant la démonstration) | 12 min 50 s |
-| 13 | Limites | data engineer batch | 50 s | 47 s | 13 min 37 s |
-| 14 | Retour d'expérience | responsable qualité et delivery | 45 s | 40 s | 14 min 17 s |
-| 15 | Questions | responsable qualité et delivery | 5 s | 6 s | 14 min 23 s |
-| | **Total** | | | | **14 min 23 s** (863 s) |
+| 9 | Performance | data engineer streaming et performance | 55 s | 54 s | 7 min 20 s |
+| 10 | Stockage et panne d'un DataNode | architecte plateforme | 55 s | 55 s | 8 min 15 s |
+| 11 | Industrialisation et qualité | responsable qualité et delivery | 50 s | 51 s | 9 min 06 s |
+| 12 | Démonstration | data engineer streaming et performance, architecte plateforme, data engineer batch, dans l'ordre des étapes | 3 min 50 s | démonstration 227 s (texte dit en 105 s pendant la démonstration) | 12 min 53 s |
+| 13 | Limites | data engineer batch | 50 s | 47 s | 13 min 40 s |
+| 14 | Retour d'expérience | responsable qualité et delivery | 45 s | 43 s | 14 min 23 s |
+| 15 | Questions | responsable qualité et delivery | 5 s | 6 s | 14 min 28 s |
+| | **Total** | | | | **14 min 28 s** (868 s) |
 
 | Rôle | Temps de parole hors démonstration |
 | --- | ---: |
-| responsable qualité et delivery | 3 min 03 s |
-| architecte plateforme | 2 min 29 s |
+| responsable qualité et delivery | 3 min 08 s |
+| architecte plateforme | 2 min 31 s |
 | data engineer batch | 2 min 33 s |
-| data engineer streaming et performance | 2 min 28 s |
+| data engineer streaming et performance | 2 min 30 s |
 <!-- /rehearsal -->
