@@ -40,13 +40,28 @@ def rows(frame):
     return sorted(frame.collect(), key=lambda r: (r.transaction_id, r.event_time))
 
 
+@pytest.mark.parametrize("salt_on", ["event_time", "transaction_id"])
 @pytest.mark.parametrize("salts", [1, 4, 16])
-def test_the_salted_join_gives_the_rows_of_the_plain_join(frames, salts):
+def test_the_salted_join_gives_the_rows_of_the_plain_join(frames, salts, salt_on):
     orders, versions = frames
     plain = with_applicable_price(orders, versions)
-    salted = salted_applicable_price(orders, versions, salts)
+    salted = salted_applicable_price(orders, versions, salts, salt_on)
     assert salted.columns == plain.columns
     assert rows(salted) == rows(plain)
+
+
+def test_the_salt_comes_from_the_chosen_column(frames):
+    """The first KAN-45 series (application _0408) salted on transaction_id: its plan reads
+    ``pmod(xxhash64(transaction_id, 42), 16)``, the later ones on event_time."""
+    orders, versions = frames
+    for salt_on in ("event_time", "transaction_id"):
+        plan = salted_applicable_price(orders, versions, 16, salt_on)._jdf.queryExecution()
+        assert f"pmod(xxhash64({salt_on}#" in plan.optimizedPlan().toString()
+
+
+def test_only_the_two_documented_salt_columns_are_accepted(frames):
+    with pytest.raises(ValueError, match="salt_on"):
+        salted_applicable_price(*frames, 4, "quantity")
 
 
 def test_an_order_without_a_valid_version_keeps_a_null_price(frames):
