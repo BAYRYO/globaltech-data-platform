@@ -1,11 +1,15 @@
 # Runbooks
 
+Commencez par le [runbook d'exploitation](exploitation.md), point d'entrée de l'équipe qui
+exploite la plateforme : démarrage et arrêt, santé, traitement d'un jour, jobs, incidents.
+
 Une page par couche ou par traitement : lancer, rejouer, vérifier, dépanner. Les commandes se
 lancent depuis la racine du dépôt, cluster démarré ([guide de la plateforme](../platform.md)). Les
 colonnes des tables sont décrites dans le [dictionnaire de données](../data-dictionary/README.md).
 
 | Page | Contenu |
 | --- | --- |
+| [Exploitation](exploitation.md) | démarrer, arrêter et vérifier la plateforme, traiter un jour, lancer chaque job, codes de sortie, procédures d'incident, dépannage consolidé |
 | [Bronze](bronze.md) | ingérer un jour du landing, rejouer, vérifier contre le manifeste et l'audit, verrou de table, exécution arrêtée ou tuée |
 | [Silver](silver.md) | traiter les jours dans l'ordre, rejouer, réparer un jour incomplet, changer le sel, rapport de vérification |
 | [Gold](gold.md) | construire gold depuis les jours silver terminés, rejouer, corriger une commande, état de publication, rapport, reprise après un arrêt brutal |
