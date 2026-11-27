@@ -8,9 +8,9 @@ behaviour is the expected value, and the dictionary sentence that describes it i
 import re
 from datetime import date, datetime
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
+from test_dictionary_rules import DICTIONARY, section
 
 from gold.silver_lake import J1, frame
 from gtdp.bronze.transform import ReconciliationError
@@ -27,17 +27,7 @@ from silver.lakes import DAYS, SALT, Lake, drops, lake_config, local
 
 pytestmark = pytest.mark.slow
 
-ROOT = Path(__file__).resolve().parents[2]
-DICTIONARY = ROOT / "docs" / "data-dictionary"
-
-
-def section(page: str, heading: str) -> str:
-    """The text of ``page`` from the line ``heading`` to the next heading of the same level."""
-    text = (DICTIONARY / page).read_text(encoding="utf-8")
-    level = heading.split(" ")[0]
-    start = text.index(f"\n{heading}\n")
-    end = re.search(rf"\n{level} ", text[start + 1 :])
-    return text[start : start + 1 + end.start()] if end else text[start:]
+ROOT = DICTIONARY.parents[1]
 
 
 def row(text: str, first_cell: str) -> list[str]:
