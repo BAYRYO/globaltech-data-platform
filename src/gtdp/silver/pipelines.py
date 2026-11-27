@@ -37,14 +37,18 @@ class Pipeline:
     """Clean records -> the rows of the table."""
     key: tuple[str, ...]
     """Columns unique across the whole table, checked after each write."""
-    partitioned: bool
-    """True: day D replaces its own ``ingestion_date`` partition, built from bronze(D)
-    (ADR-0005). False: the table is rebuilt from bronze up to D and swapped whole."""
+    partitions: tuple[str, ...]
+    """``(ingestion_date,)``: day D replaces its own partition, built from bronze(D) (ADR-0005).
+    Empty: the table is rebuilt from bronze up to D and swapped whole."""
     cross_day: bool = False
     """A key already published on a complete day before D is a cross-day duplicate
     (ADR-0005)."""
     checks: Callable[[DataFrame], dict[str, int]] | None = None
     """Further invariants of the written table: rows breaking each one."""
+
+    @property
+    def partitioned(self) -> bool:
+        return bool(self.partitions)
 
     @property
     def depends_on(self) -> tuple[str, ...]:
@@ -60,7 +64,7 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             SILVER_CUSTOMERS,
             customers.table,
             ("customer_id",),
-            partitioned=False,
+            partitions=(),
         ),
         "products": Pipeline(
             products.ENTITY,
@@ -68,7 +72,7 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             SILVER_PRODUCTS_SCD2,
             products.table,
             ("product_id", "valid_from"),
-            partitioned=False,
+            partitions=(),
             checks=products.violations,
         ),
         "orders": Pipeline(
@@ -77,7 +81,7 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             SILVER_ORDERS,
             orders.table,
             ("transaction_id",),
-            partitioned=True,
+            partitions=(INGESTION_DATE,),
             cross_day=True,
         ),
         "weblogs": Pipeline(
@@ -86,7 +90,7 @@ PIPELINES: Mapping[str, Pipeline] = MappingProxyType(
             SILVER_WEBLOGS,
             weblogs.table,
             ("log_id",),
-            partitioned=True,
+            partitions=(INGESTION_DATE,),
             cross_day=True,
         ),
     }
