@@ -51,6 +51,17 @@ def test_a_nominal_report_gives_three_live_nodes_and_no_low_redundancy_block(wat
     }
 
 
+def test_a_dead_node_counts_dead_and_its_lost_replicas_under_replicated(watch):
+    row = sample(watch, "report-dead.txt")
+
+    assert (row["live"], row["dead"]) == (2, 1)
+    assert (row["datanode1"], row["datanode1_blocks"]) == ("dead", 0)
+    assert (row["datanode2"], row["datanode3"]) == ("live", "live")
+    assert row["under_replicated"] == 5551
+    assert row["pending_deletion"] == 102
+    assert (row["ec_low_redundancy"], row["missing"], row["ec_missing"]) == (3, 0, 0)
+
+
 def test_the_header_names_every_column_of_a_row(watch):
     row = sample(watch, "report-nominal.txt")
     assert watch.header(HOSTS) == ["time", *row, "error"]
