@@ -303,7 +303,14 @@ Un même calcul, deux moteurs, mêmes entrées et mêmes règles :
 
 ## Banc de performance (Lot 7)
 
-Indicateur mesuré : CA mensuel par pays et catégorie au prix applicable, soit la jointure
+Cette section est le plan du Lot 0. Le banc mesuré s'en écarte : une requête par famille de
+leviers au lieu d'un seul indicateur, chaque levier contre sa propre référence au lieu d'une
+version naïve qui cumule les réglages ci-dessous, CSV lu avec un schéma explicite, gzip non
+mesuré, balayage de 4, 8, 16, 64 et 200 partitions, plans d'élagage, de filtre poussé et de
+jointure, 5 exécutions par variante. Requêtes, variantes et résultats :
+[performance et optimisation](performance.md).
+
+Indicateur prévu : CA mensuel par pays et catégorie au prix applicable, soit la jointure
 commandes × `products_scd2` × clients puis l'agrégation, sur le profil `full` (10 M de lignes,
 `P00042` porte 20 % des lignes synthétiques).
 
@@ -361,8 +368,8 @@ Les jobs sont des coquilles minces qui lisent la configuration, appellent les tr
 
 | Contrainte | Réponse |
 | --- | --- |
-| Traitements finaux sur YARN | `scripts/submit.sh` soumet en `--master yarn` depuis un client éphémère |
+| Traitements finaux sur YARN | `scripts/cluster/submit.sh` soumet en `--master yarn` depuis un client éphémère |
 | Pas d'UDF Python si une fonction native existe | Contrôles, parsing de logs (`regexp_extract`), pseudonymisation (`sha2`) en fonctions natives |
-| Choix justifiés par une mesure | `docs/benchmarks.md`, `docs/mapreduce-vs-spark.md`, ADR chiffrés |
+| Choix justifiés par une mesure | [`docs/performance.md`](performance.md), [`docs/mapreduce-vs-spark.md`](mapreduce-vs-spark.md), ADR chiffrés |
 | Versions du cours | Spark 3.5.3 (celle du kit), Hadoop 3.3.6 |
 | Historique Git lisible | Une branche et une PR par story Jira, commits conventionnels référencés `KAN-xx` |
