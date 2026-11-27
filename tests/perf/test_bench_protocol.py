@@ -176,9 +176,10 @@ def test_each_run_gets_the_totals_and_key_stage_of_its_own_job_group():
     bench.measure(OWN, runs, {"scan": "inputBytes", "join": "shuffleReadBytes"}, history())
     scan, join = runs
     assert (scan.stages["inputBytes"], scan.stages["shuffleReadBytes"]) == (900, 60)
-    assert (scan.key_stage["stage"], scan.key_stage["read_ratio"]) == (0, 2.0)
-    assert (join.key_stage["stage"], join.key_stage["read_ratio"]) == (3, 10.0)
-    assert join.key_stage["duration_ratio"] == 4.0
+    assert (scan.key_stage["stage"], scan.key_stage["read_max_bytes"]) == (0, 20.0)
+    assert (join.key_stage["stage"], join.key_stage["read_max_bytes"]) == (3, 50.0)
+    assert (join.key_stage["duration_median_ms"], join.key_stage["duration_max_ms"]) == (100, 400)
+    assert [r["read_ratio"] for r in bench.summarize(runs)] == [2.0, 10.0]
     assert scan.stage_walls == {"scan": 2.5, "key": 2.5}
     assert join.stage_walls == {"scan": 1.0, "key": 0.75}
 
