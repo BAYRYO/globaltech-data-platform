@@ -187,15 +187,16 @@ les dates antérieures au `1582-10-15` et les horodatages INT96 antérieurs au `
 calendrier hybride (julien puis grégorien). Par défaut (`EXCEPTION`), Spark 3.5 refuse d'écrire
 ces valeurs (`WRITE_ANCIENT_DATETIME`) : une seule ligne bien formée mais ancienne faisait échouer
 toute l'exécution silver (KAN-59). `build_spark` pose donc
-`spark.sql.parquet.datetimeRebaseModeInWrite`, `datetimeRebaseModeInRead`,
-`int96RebaseModeInWrite` et `int96RebaseModeInRead` à `CORRECTED` : les valeurs s'écrivent et
-se relisent telles que Spark les calcule, sans conversion. Aucun lecteur du calendrier hybride
-(Spark 2, Hive) ne lit ce lake, et les fichiers déjà écrits par Spark 3 se relisent à
-l'identique. Le type physique des horodatages reste INT96 : `outputTimestampType` n'est pas
-changé, aucun besoin ne le demande et les partitions déjà écrites mêleraient deux types. Les
-tests passent par `build_spark`, comme le cluster, dont `spark-defaults.conf` ne pose aucun de ces
-modes. Silver borne en outre les dates plausibles au `1900-01-01` par ses règles
-([dictionnaire silver](../data-dictionary/silver.md#disposition-dune-ligne-bronze)).
+`spark.sql.parquet.datetimeRebaseModeInWrite` et `int96RebaseModeInWrite` à `CORRECTED` : les
+valeurs s'écrivent telles que Spark les calcule, sans conversion. Aucun lecteur du calendrier
+hybride (Spark 2, Hive) ne lit ce lake. Les modes de lecture restent ceux par défaut : Spark 3
+inscrit sa version dans chaque fichier qu'il écrit et le relit alors sans conversion, quel que
+soit le mode de lecture ; ce mode ne joue que pour un fichier sans cette mention, qu'aucun job
+ne lit (`tests/core/test_spark.py`). Le type physique des horodatages reste INT96 :
+`outputTimestampType` n'est pas changé, aucun besoin ne le demande et les partitions déjà écrites
+mêleraient deux types. Les tests passent par `build_spark`, comme le cluster, dont
+`spark-defaults.conf` ne pose aucun de ces modes. Silver borne en outre les dates plausibles au
+`1900-01-01` par ses règles ([dictionnaire silver](../data-dictionary/silver.md#disposition-dune-ligne-bronze)).
 
 ### Lecture : `read_table`
 
