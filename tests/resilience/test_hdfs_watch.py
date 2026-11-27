@@ -1,4 +1,7 @@
 import importlib.util
+import io
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -89,6 +92,58 @@ def test_a_host_listed_live_and_dead_counts_as_live(watch):
     assert (row["datanode1"], row["datanode1_blocks"]) == ("live", 5556)
 
 
+def numbered(text: str) -> str:
+    """The report with each counter line set to a value of its own: 101, 102... under
+    ``Replicated Blocks``, 201, 202... under ``Erasure Coded Block Groups``."""
+    lines, group, position = [], 0, 0
+    for raw in text.splitlines():
+        line = raw
+        if raw.strip() in ("Replicated Blocks:", "Erasure Coded Block Groups:"):
+            group, position = group + 1, 0
+        elif raw.startswith("-----"):
+            group = 0
+        elif group and raw.startswith("\t"):
+            position += 1
+            line = f"{raw.partition(':')[0]}: {100 * group + position}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def test_each_counter_reads_its_own_line_of_the_report(watch):
+    text = numbered((DATA / "report-dead.txt").read_text())
+
+    row = watch.row(watch.parse_report(text), NAMENODE, HOSTS)
+
+    assert {column: row[column] for column in watch.COUNTERS} == {
+        "under_replicated": 101,
+        "corrupt": 102,
+        "missing": 103,
+        "pending_deletion": 106,
+        "ec_low_redundancy": 201,
+        "ec_corrupt": 202,
+        "ec_missing": 203,
+    }
+
+
+def test_a_report_without_a_counter_line_gives_an_error_sample(watch, monkeypatch):
+    text = re.sub(r"(?m)^\tMissing blocks: 0\n", "", (DATA / "report-nominal.txt").read_text())
+    monkeypatch.setattr(watch, "dfsadmin_report", lambda: watch.parse_report(text))
+    metrics = json.dumps({"beans": [NAMENODE]}).encode()
+    monkeypatch.setattr(watch.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(metrics))
+
+    assert watch.sample(HOSTS) == {"error": "KeyError: 'Missing blocks'"}
+
+
+def test_state_prints_one_host_from_one_report(watch, monkeypatch, capsys):
+    report = watch.parse_report((DATA / "report-spare-decommissioned.txt").read_text())
+    monkeypatch.setattr(watch, "dfsadmin_report", lambda: report)
+
+    for host in ("datanode4", "datanode1", "datanode9"):
+        assert watch.main(["state", host]) == 0
+
+    assert capsys.readouterr().out.split() == ["dead/decommissioned", "live", "absent"]
+
+
 def test_the_header_names_every_column_of_a_row(watch):
     row = sample(watch, "report-nominal.txt")
     assert watch.header(HOSTS) == ["time", *row, "error"]
@@ -177,3 +232,39 @@ def test_peak_gives_the_first_sample_of_the_highest_value(watch):
         {"time": at(15), "under_replicated": "", "error": "TimeoutExpired"},
     )
     assert watch.peak(rows, "under_replicated") == (at(5), 12)
+
+
+def test_a_sample_taken_in_the_second_of_its_event_counts(watch):
+    rows = timeline({"time": at(30)})
+
+    lines = watch.summarize(rows, {"victim_started": at(30)}, "datanode1", "datanode4")
+
+    assert lines[0] == ("victim live again", "victim_started", at(30), 0)
+
+
+def test_the_spare_milestones_wait_for_the_decommission_to_end_and_a_decommissioned_death(watch):
+    rows = timeline(
+        {"time": at(0), "datanode4": "live/decommissioning"},
+        {"time": at(60), "datanode4": "live/decommissioned"},
+        {"time": at(130), "datanode4": "live/decommissioned"},
+        {"time": at(220), "datanode4": "dead/decommissioned"},
+    )
+    events = {"decommission_started": at(0), "spare_stopped": at(125)}
+
+    lines = watch.summarize(rows, events, "datanode1", "datanode4")
+
+    assert lines == [
+        ("spare decommissioned", "decommission_started", at(60), 60),
+        ("spare dead", "spare_stopped", at(220), 95),
+    ]
+
+
+def test_a_spare_dead_before_its_decommission_ended_is_not_a_retired_spare(watch):
+    rows = timeline(
+        {"time": at(10), "datanode4": "live/decommissioning"},
+        {"time": at(100), "datanode4": "dead"},
+    )
+
+    lines = watch.summarize(rows, {"spare_stopped": at(5)}, "datanode1", "datanode4")
+
+    assert lines == [("spare dead", "spare_stopped", "", None)]
