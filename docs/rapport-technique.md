@@ -701,7 +701,7 @@ l'architecture : la mesure isole le format. La série à 8 tâches change aussi 
 
 | Mesure | Valeur | Source |
 | --- | --- | --- |
-| Tests pytest, `scripts/test.sh` sur `main` à `dd18d20` | 868, tous verts | commentaire de preuves de la PR de ce rapport |
+| Tests pytest, `scripts/test.sh` à la tête de la PR de ce rapport (`main` à `28cf5cb`) | 911, tous verts | [#25, preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7220056921) |
 | Couverture du paquet `gtdp`, lignes et branches | 91,2 % | idem |
 | Couverture de `io.py` (écritures, verrous, lectures) | 96,7 % | idem |
 | Modules les moins couverts | les rapports en ligne de commande, par exemple `gold/report.py` à 69,5 % : leur `main()`, non testé, finit par `spark.stop()`, qui arrêterait la session Spark partagée des tests | idem, et [#16](https://github.com/BAYRYO/globaltech-data-platform/pull/16) |
