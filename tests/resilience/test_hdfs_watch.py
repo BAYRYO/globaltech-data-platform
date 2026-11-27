@@ -62,6 +62,16 @@ def test_a_dead_node_counts_dead_and_its_lost_replicas_under_replicated(watch):
     assert (row["ec_low_redundancy"], row["missing"], row["ec_missing"]) == (3, 0, 0)
 
 
+def test_a_host_listed_live_and_dead_counts_as_live(watch):
+    dead_section = (DATA / "report-dead.txt").read_text().split("Dead datanodes")[1]
+    text = (DATA / "report-nominal.txt").read_text() + "Dead datanodes" + dead_section
+
+    row = watch.row(watch.parse_report(text), NAMENODE, HOSTS)
+
+    assert (row["live"], row["dead"]) == (3, 1)
+    assert (row["datanode1"], row["datanode1_blocks"]) == ("live", 5556)
+
+
 def test_the_header_names_every_column_of_a_row(watch):
     row = sample(watch, "report-nominal.txt")
     assert watch.header(HOSTS) == ["time", *row, "error"]
