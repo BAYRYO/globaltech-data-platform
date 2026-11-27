@@ -72,7 +72,7 @@ reached() {
       event "no_${what}_after_${timeout}s"
       return 1
     fi
-    kill -0 "$poller" 2>/dev/null || die "the poller stopped: $out/poller.log"
+    [[ -z $poller ]] || kill -0 "$poller" 2>/dev/null || die "the poller stopped: $out/poller.log"
     sleep 5
   done
   event "$what"
