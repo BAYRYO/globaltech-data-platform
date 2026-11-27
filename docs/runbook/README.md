@@ -11,6 +11,7 @@ colonnes des tables sont décrites dans le [dictionnaire de données](../data-di
 | [Gold](gold.md) | construire gold depuis les jours silver terminés, rejouer, corriger une commande, état de publication, rapport, reprise après un arrêt brutal |
 | [Streaming des capteurs](streaming.md) | démarrer, alimenter, suivre et arrêter le flux, housekeeping horaire, quotas sur 24 h, reprise après arrêt brutal |
 | [MapReduce contre Spark](mapreduce.md) | lancer la comparaison du Lot 6 sur `dev` et `full`, rejouer, vérifier les résultats |
+| [HDFS](hdfs.md) | perte d'un DataNode, DataNode de secours, décommission, retour à l'état nominal, rejouer la panne |
 
 ## Interroger l'audit
 
