@@ -1,0 +1,49 @@
+FSCK started by hadoop (auth:SIMPLE) from /172.22.0.11 for path /benchmarks/rep3/orders_20260101.csv at Fri Nov 27 03:14:27 UTC 2026
+
+/benchmarks/rep3/orders_20260101.csv 713401398 bytes, replicated: replication=3, 6 block(s):  OK
+0. BP-1884475711-172.22.0.2-1795715752320:blk_1073790911_50159 len=134217728 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]
+1. BP-1884475711-172.22.0.2-1795715752320:blk_1073790912_50160 len=134217728 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]
+2. BP-1884475711-172.22.0.2-1795715752320:blk_1073790913_50161 len=134217728 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]
+3. BP-1884475711-172.22.0.2-1795715752320:blk_1073790914_50162 len=134217728 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]]
+4. BP-1884475711-172.22.0.2-1795715752320:blk_1073790915_50163 len=134217728 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]
+5. BP-1884475711-172.22.0.2-1795715752320:blk_1073790916_50164 len=42312758 Live_repl=3  [DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]]
+
+
+Status: HEALTHY
+ Number of data-nodes:	3
+ Number of racks:		1
+ Total dirs:			0
+ Total symlinks:		0
+
+Replicated Blocks:
+ Total size:	713401398 B
+ Total files:	1
+ Total blocks (validated):	6 (avg. block size 118900233 B)
+ Minimally replicated blocks:	6 (100.0 %)
+ Over-replicated blocks:	0 (0.0 %)
+ Under-replicated blocks:	0 (0.0 %)
+ Mis-replicated blocks:		0 (0.0 %)
+ Default replication factor:	3
+ Average block replication:	3.0
+ Missing blocks:		0
+ Corrupt blocks:		0
+ Missing replicas:		0 (0.0 %)
+ Blocks queued for replication:	0
+
+Erasure Coded Block Groups:
+ Total size:	0 B
+ Total files:	0
+ Total block groups (validated):	0
+ Minimally erasure-coded block groups:	0
+ Over-erasure-coded block groups:	0
+ Under-erasure-coded block groups:	0
+ Unsatisfactory placement block groups:	0
+ Average block group size:	0.0
+ Missing block groups:		0
+ Corrupt block groups:		0
+ Missing internal blocks:	0
+ Blocks queued for replication:	0
+FSCK ended at Fri Nov 27 03:14:28 UTC 2026 in 31 milliseconds
+
+
+The filesystem under path '/benchmarks/rep3/orders_20260101.csv' is HEALTHY

@@ -1,0 +1,37 @@
+== Physical Plan ==
+AdaptiveSparkPlan (5)
++- HashAggregate (4)
+   +- Exchange (3)
+      +- HashAggregate (2)
+         +- Scan parquet  (1)
+
+
+(1) Scan parquet 
+Output [2]: [revenue_eur#12, order_date#14]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/gold/fact_sales]
+PartitionFilters: [isnotnull(order_date#14), (order_date#14 >= 2025-12-01), (order_date#14 <= 2025-12-31)]
+ReadSchema: struct<revenue_eur:decimal(20,2)>
+
+(2) HashAggregate
+Input [2]: [revenue_eur#12, order_date#14]
+Keys [1]: [order_date#14]
+Functions [1]: [partial_sum(revenue_eur#12)]
+Aggregate Attributes [2]: [sum#68, isEmpty#69]
+Results [3]: [order_date#14, sum#70, isEmpty#71]
+
+(3) Exchange
+Input [3]: [order_date#14, sum#70, isEmpty#71]
+Arguments: hashpartitioning(order_date#14, 16), ENSURE_REQUIREMENTS, [plan_id=11]
+
+(4) HashAggregate
+Input [3]: [order_date#14, sum#70, isEmpty#71]
+Keys [1]: [order_date#14]
+Functions [1]: [sum(revenue_eur#12)]
+Aggregate Attributes [1]: [sum(revenue_eur#12)#64]
+Results [2]: [order_date#14, sum(revenue_eur#12)#64 AS sum(revenue_eur)#65]
+
+(5) AdaptiveSparkPlan
+Output [2]: [order_date#14, sum(revenue_eur)#65]
+Arguments: isFinalPlan=false
+
