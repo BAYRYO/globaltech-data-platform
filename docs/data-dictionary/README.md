@@ -42,10 +42,12 @@ règle, exemple. Les entités, les clés et le traitement de chaque anomalie son
   nomme son chemin (sauf les sorties texte du Lot 6). Les jobs `bronze`, `silver` et `gold`
   écrivent chaque table par `gtdp.publish.publish`, qui refuse des lignes dont les colonnes, les
   types ou l'ordre diffèrent du schéma déclaré et prend les colonnes de partition dans le
-  registre : ce que le job écrit est ce que le registre déclare. `tests/docs/test_dictionary_rules.py`
+  registre : ces jobs écrivent ce que le registre déclare. Le flux capteurs
+  (`src/gtdp/streaming/stream.py`) met chaque micro-batch dans les colonnes de son schéma
+  (`_as_table`), sans passer par `publish`. `tests/docs/test_dictionary_rules.py`
   compare les codes de chaque tableau de règles silver à `ENTITY.rules`, les motifs de rejet du
-  flux à `REJECT_RULES` et les seuils à `[streaming.thresholds]`. Un écart fait échouer la CI. Les
-  filtres de statut et les formules des indicateurs sont relus à la main.
+  flux à `REJECT_RULES` et les seuils à `[streaming.thresholds]`. Un écart fait échouer la CI.
+  Les filtres de statut et les formules des indicateurs sont relus à la main.
 - **Nullabilité.** Les schémas déclarent `nullable=False` pour une colonne jamais nulle. La
   colonne « Règle » dit quand une valeur est nulle : champ vide, valeur hors format, colonne
   absente avant J3. Relue depuis Parquet, toute colonne apparaît nullable : Spark ne garde pas la
