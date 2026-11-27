@@ -274,3 +274,13 @@ est journalisé et ne remplace jamais l'erreur du job.
 - Delta Lake (`MERGE`) : hors programme, ajoute une dépendance et un format.
 - `FileSystem.rename` : il déplace une partition dans une destination existante au lieu
   d'échouer, et imbrique la partition dans elle-même.
+
+## Mise à jour du 2026-11-27
+
+La phrase « `io.table_lock` sur le répertoire gold tient le verrou `/datalake/_gold.lock` pendant
+toute l'exécution » de [Pourquoi nommer les partitions](#pourquoi-nommer-les-partitions) n'est
+plus exacte depuis KAN-58 (#22). Gold lit silver et contrôle ses tables entières avant de prendre
+ce verrou : le verrou couvre l'exécution de la fin de ce contrôle à la fin
+(`src/gtdp/jobs/gold.py`). Une seconde exécution gold échoue donc sur le verrou après son contrôle
+de silver, avant tout calcul. La décision ne change pas. Les décisions de gold sont rassemblées
+dans [ADR-0009](0009-gold-etoile-recalcul.md).
