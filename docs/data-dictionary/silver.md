@@ -26,7 +26,9 @@ est en cours, échoué, ou rendu incomplet par le rejeu d'un jour antérieur ou 
 dépend. Les doublons inter-jours ne regardent que les jours complets ; un lecteur qui doit voir
 des jours entiers ne lit des tables partitionnées que les partitions de
 `complete_days(spark, silver)`. Rejouer un jour réécrit ses marqueurs et retire ceux des jours
-suivants ([ADR-0005](../adr/0005-silver-incremental.md)).
+suivants ([ADR-0005](../adr/0005-silver-incremental.md)). Dans les exemples des marqueurs,
+`run_id` est l'exécution J3 des rejets plus bas ; les heures ont le format écrit, pas la valeur
+du cluster.
 
 ### `silver/_days/ingestion_date=<d>/<source>.json`
 

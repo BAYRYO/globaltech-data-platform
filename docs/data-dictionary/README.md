@@ -88,4 +88,4 @@ vérifie que Spark et MapReduce y écrivent les mêmes lignes.
 | `streaming/control/stop-streaming-sensors` | `scripts/streaming/stop.sh` | fichier vide, sa présence arrête le flux : [runbook streaming](../runbook/streaming.md#arrêter) |
 | `/spark-logs`, `/app-logs`, `/mr-history` | Spark, YARN, MapReduce JobHistory | journaux des services : [guide de la plateforme](../platform.md#arborescence-hdfs-droits-et-quotas) |
 | `report.md`, `runs.json` et journaux de la campagne du Lot 6 | `src/gtdp/perf/mr_compare.py` | fichiers locaux de mesure, hors du lake : [MapReduce contre Spark](../mapreduce-vs-spark.md#campagne-de-mesure) |
-| `/benchmarks` | commandes de mesure du Lot 6 et de l'[ADR-0006](../adr/0006-topologie-hdfs.md) | copies de jeux d'entrée pour les mesures |
+| `/benchmarks` | outils de mesure des Lots 6 et 7 et de l'[ADR-0006](../adr/0006-topologie-hdfs.md) | jeux d'entrée copiés ou convertis pour les mesures, recréés par ces outils : [MapReduce contre Spark](../mapreduce-vs-spark.md#campagne-de-mesure) |
