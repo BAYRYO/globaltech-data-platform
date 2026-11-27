@@ -88,6 +88,14 @@ services:
     volumes:
       - datanode3:/hadoop/dfs/data
 
+  # Spare DataNode, started by hand to replace a lost one (docs/runbook/hdfs.md).
+  datanode4:
+    <<: *datanode
+    hostname: datanode4
+    profiles: [spare]
+    volumes:
+      - datanode4:/hadoop/dfs/data
+
   resourcemanager:
     <<: *node
     hostname: resourcemanager
@@ -150,3 +158,4 @@ volumes:
   datanode1:
   datanode2:
   datanode3:
+  datanode4:
