@@ -1,5 +1,5 @@
 # Cluster environment: jobs submitted to YARN with scripts/cluster/submit.sh.
-# GTDP_PSEUDO_SALT must be set, otherwise every job stops at startup.
+# silver, the only job that pseudonymizes, stops at startup without GTDP_PSEUDO_SALT.
 
 [spark]
 # 2 NodeManagers run the executors; the project data sets are small.

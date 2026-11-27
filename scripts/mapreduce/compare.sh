@@ -13,7 +13,6 @@
 #   --out       report directory, relative to the repository root (default build/mr-vs-spark)
 #   --no-wait   start each run at once instead of waiting until YARN runs no other application
 #   --reread    rebuild the measures of finished applications, grouped by volume, without running
-#   GTDP_PSEUDO_SALT  required, as for every --env cluster job
 # shellcheck source=scripts/cluster/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../cluster/lib.sh"
 
