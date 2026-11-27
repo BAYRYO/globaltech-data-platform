@@ -14,7 +14,9 @@ from gtdp.perf.mr_compare import (
     checks,
     code_lines,
     differences,
+    engine_comparison,
     jobs_window_s,
+    main,
     main_stage,
     manifest_quality,
     mann_whitney,
@@ -27,6 +29,7 @@ from gtdp.perf.mr_compare import (
     spark_core_seconds,
     spark_tasks,
     stage_totals,
+    synthesis,
     task_cost,
     volume_report,
 )
@@ -364,6 +367,7 @@ def test_the_volume_report_tests_each_pair_of_variants_and_fits_the_task_costs()
     assert "| mapreduce | spark | 3, 3 | 9 / 9 | 0.050 | 0.100 |" in report
     assert "| 1.00 | 1.00 | 1.00 | 2.00 |" in report
     assert "Les compteurs Quality sont égaux aux anomalies des manifestes." in report
+    assert "| `full` | mapreduce | +0.0 % | +0.0 % | 3.3 à 3.9 |" in report
 
 
 def _counter(name: str, value: int) -> dict:
@@ -372,3 +376,47 @@ def _counter(name: str, value: int) -> dict:
 
 def _orders(anomalies: dict) -> dict:
     return {"source": "orders", "anomalies": anomalies}
+
+
+CAMPAIGN = """\
+# MapReduce contre Spark : mesures
+
+## Volume `full`
+
+### Synthèse
+
+| Variante | n | Durée médiane (s) | Min | Max | Écart (max - min) / médiane | Mo·s médian | Cœurs·s médian | CPU fixe par tâche (s) | CPU par M lignes (s) | Durée fixe par tâche (s) | Durée par M lignes (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| mapreduce | 5 | 21.6 | 21.2 | 23.1 | 9% | 58800 | 86.3 | 0.98 | 0.95 | 2.38 | 4.10 |
+| spark | 5 | 20.7 | 19.9 | 22.6 | 13% | 69741 | 81.9 | -0.05 | 1.92 | -0.13 | 2.07 |
+
+### Test de Mann-Whitney exact sur la durée
+"""  # noqa: E501
+
+
+def test_the_engine_comparison_uses_the_medians_and_the_python_cpu_measured_aside():
+    """docs/mapreduce-vs-spark.md: MapReduce spends JVM + Python mapper (2.1 to 2.7 s per million
+    lines, measured outside the cluster) + combiner (0.24 s) of CPU per line, Spark its slope."""
+    found = engine_comparison(
+        {"memory_mb_s": 58800, "core_s": 86.3, "cpu_s_per_million": 0.95},
+        {"memory_mb_s": 69741, "core_s": 81.9, "cpu_s_per_million": 1.92},
+    )
+    assert round(found.memory_change_pct, 1) == -15.7
+    assert round(found.core_change_pct, 1) == -5.1
+    assert [round(r, 3) for r in found.cpu_ratio] == [1.714, 2.026]
+
+
+def test_the_synthesis_of_a_campaign_report_is_read_back():
+    assert synthesis(CAMPAIGN) == {
+        "full": {
+            "mapreduce": {"memory_mb_s": 58800.0, "core_s": 86.3, "cpu_s_per_million": 0.95},
+            "spark": {"memory_mb_s": 69741.0, "core_s": 81.9, "cpu_s_per_million": 1.92},
+        }
+    }
+
+
+def test_summarize_prints_the_engine_comparison_of_each_volume(tmp_path, capsys):
+    (tmp_path / "report.md").write_text(CAMPAIGN, encoding="utf-8")
+    assert main(["--summarize", str(tmp_path / "report.md")]) == 0
+    printed = capsys.readouterr().out
+    assert "| `full` | mapreduce | -15.7 % | -5.1 % | 1.7 à 2.0 |" in printed
