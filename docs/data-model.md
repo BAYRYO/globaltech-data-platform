@@ -213,7 +213,6 @@ erDiagram
     string customer_id FK
     string product_sk FK
     string product_id
-    string country
     string channel
     string status
     int quantity
@@ -241,6 +240,7 @@ erDiagram
     string segment
     date signup_date
     string email_hash
+    string[] quality_flags
   }
   DIM_PRODUCT {
     string product_sk PK
@@ -251,6 +251,7 @@ erDiagram
     timestamp valid_from
     timestamp valid_to
     boolean is_current
+    int version
   }
   FACT_WEB_EVENTS {
     string log_id PK
@@ -270,28 +271,45 @@ Grain de `fact_sales` : une ligne de commande, `transaction_id` unique (vérifi�
   prix catalogue applicable à la date de commande (jointure SCD2). `discount_pct` vaut toujours
   une valeur non nulle en silver (0 avant J3).
 - `invoiced_amount_eur = quantity × unit_price_invoiced × (1 − discount_pct)` : montant facturé.
+- Les deux montants sont arrondis au centime et typés `decimal(20,2)` : une quantité `int` fois un
+  prix `decimal(10,2)` tient en 18 chiffres entiers.
 
-**Rafraîchissement** : `fact_sales` est partitionné par `order_date`. Le traitement de `D`
-recalcule chaque partition `order_date` présente dans silver(`D`) à partir de **toutes** les lignes
-silver de ces dates (toutes partitions `ingestion_date`), puis remplace ces partitions seules. Une
-commande retardataire de J2 datée du 2025-12-30 reconstruit la partition du 2025-12-30 avec les
-lignes de J1 et de J2. Dimensions et indicateurs sont recalculés en entier et échangés.
+Les attributs du client (pays, segment) sont des valeurs actuelles (SCD 1) : ils restent dans
+`dim_customer` et les indicateurs les joignent à chaque calcul. Le fait ne porte que
+`customer_id`. Les attributs du produit sont versionnés par `product_sk`.
+
+**Rafraîchissement** : gold est une fonction des jours silver terminés (marqués par
+`silver/_days/ingestion_date=D/_SUCCESS`). Chaque exécution recalcule toutes les tables depuis ces
+jours et vérifie les invariants (grain, clés, colonnes obligatoires, références) avant toute
+écriture. `fact_sales` (partitionné par `order_date`) n'est réécrit que pour les dates dont
+l'empreinte (nombre de lignes, somme des 60 premiers bits du SHA-256 de chaque ligne) diffère de
+la table publiée ; une date publiée qui n'a plus de commande est supprimée. Dimensions et
+indicateurs sont échangés en entier. Un verrou couvre toute l'exécution et `gold/_state.json`
+vaut `PUBLISHING` pendant l'écriture, `PUBLISHED` après. Une commande retardataire de J2 datée du
+2025-12-30 réécrit donc la date du 2025-12-30 avec les lignes de J1 et de J2 ; une date dont
+aucune ligne ne change reste telle quelle. Le
+[runbook gold](runbook/gold.md#ce-que-fait-une-exécution) explique pourquoi un recalcul limité aux
+dates touchées par le jour n'est pas retenu.
 
 ## Indicateurs gold
 
-| Table | Indicateur | Mécanisme Spark |
-| --- | --- | --- |
-| `kpi_revenue_daily` | CA quotidien par pays (commandes `COMPLETED`) | agrégation |
-| `kpi_top_products_country` | Top 5 produits par CA et par pays | `dense_rank()` sur fenêtre partitionnée par pays |
-| `kpi_revenue_moving_avg` | Moyenne mobile 7 jours du CA quotidien par pays | fenêtre `rowsBetween(-6, 0)` |
-| `kpi_price_deviation` | Ratio médian prix facturé / prix applicable, par catégorie et par mois | jointure SCD2 par intervalle, `percentile_approx` |
-| `kpi_cancel_return_rate` | Taux d'annulation et de retour par canal et catégorie | agrégation conditionnelle |
-| `kpi_avg_basket` | Panier moyen par pays et segment | agrégation |
-| `kpi_http_errors_hourly` | Taux de 404 et 500 par heure | agrégation sur `fact_web_events` |
-| `kpi_conversion_funnel` | Entonnoir vue → panier → achat par appareil | agrégation conditionnelle |
-| `kpi_data_quality` | Rejets par motif et par jour, commandes antérieures à l'inscription | agrégation sur `rejects` et `fact_sales` |
+Le chiffre d'affaires ne compte que les lignes `COMPLETED`, au prix catalogue applicable
+(`revenue_eur`). Le pays et le segment d'un indicateur sont ceux, actuels, du client dans
+`dim_customer`. Les colonnes sont décrites dans le [dictionnaire gold](data-dictionary/gold.md).
 
-`kpi_price_deviation` prend la médiane, robuste aux lignes du kit dont le prix facturé est
+| Table | Indicateur et grain | Mécanisme Spark |
+| --- | --- | --- |
+| `kpi_revenue_daily` | CA, commandes et quantité `COMPLETED` par `order_date` et pays | agrégation |
+| `kpi_top_products_country` | Produits des rangs 1 à `[gold] top_n` (5) par CA et par pays, sur tout l'historique ; des ex aequo partagent un rang | `dense_rank()` sur fenêtre partitionnée par pays |
+| `kpi_revenue_moving_avg` | CA quotidien par pays et sa moyenne sur `[gold] moving_average_days` (7) jours, jour inclus, sur un calendrier complet où un jour sans vente vaut 0 | fenêtre `rowsBetween(1 - jours, 0)` |
+| `kpi_price_deviation` | Ratio médian prix facturé / prix applicable, par mois et catégorie de la version appliquée, toutes lignes quel que soit leur statut | jointure SCD2 par intervalle, médiane exacte (`median`) |
+| `kpi_cancel_return_rate` | Taux d'annulation et de retour par `order_date`, pays, canal et catégorie | agrégation conditionnelle |
+| `kpi_avg_basket` | Panier moyen `COMPLETED` (une transaction) par `order_date`, pays et segment, au prix applicable et au prix facturé | agrégation |
+| `kpi_http_errors_hourly` | Requêtes, erreurs 4xx et 5xx et leurs taux, par heure | agrégation conditionnelle sur `fact_web_events` |
+| `kpi_conversion_funnel` | Visites (un client, un appareil, un jour ; requêtes servies d'un client identifié) qui atteignent produit vu, panier, commande, par appareil | agrégation conditionnelle |
+| `kpi_data_quality` | Lignes par jour de dépôt, source et code : rejets silver par motif, commandes silver gardées bien qu'antérieures à l'inscription du client (`ORDER_BEFORE_SIGNUP`) | agrégation sur `silver/rejects` et `silver/orders` |
+
+`kpi_price_deviation` prend la médiane exacte, robuste aux lignes du kit dont le prix facturé est
 indépendant du catalogue (constat mesuré du contrat) ; sur les lignes synthétiques, le ratio
 attendu est compris entre 0,90 et 1,00.
 
