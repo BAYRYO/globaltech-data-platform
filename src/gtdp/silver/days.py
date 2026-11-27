@@ -4,6 +4,12 @@
 verified it. ``_SUCCESS`` beside them appears once every source of ``D`` has its marker: the
 day is complete. Later days deduplicate against complete days only, and a reader that must see
 whole days reads the partitions of ``complete_days`` alone.
+
+A table rebuilt whole (customers, products) holds no partition to leave out: it holds the day it
+was last written for, which ``silver/_days/rebuilt/<source>.json`` names from before the write.
+A reader that must see complete days only reads it while that day is complete.
+
+Each file is written whole, then renamed into place (``gtdp.io.write_file``).
 """
 
 from __future__ import annotations
@@ -13,12 +19,18 @@ from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import Any
 
+from py4j.protocol import Py4JJavaError
 from pyspark.sql import SparkSession
 
-from gtdp.io import INGESTION_DATE, list_partition_values
+from gtdp.io import INGESTION_DATE, list_partition_values, write_file
 
 DAYS = "_days"
 COMPLETE = "_SUCCESS"
+REBUILT = "rebuilt"
+
+
+class MarkerError(RuntimeError):
+    """A file of ``silver/_days`` cannot be read."""
 
 
 def days_path(silver: str) -> str:
@@ -37,8 +49,9 @@ def published_sources(spark: SparkSession, silver: str, day: date) -> dict[str, 
     if not fs.exists(path):
         return {}
     markers = [s.getPath().getName() for s in fs.listStatus(path)]
+    redo = f"run silver --date {day} again to rewrite the markers of the day"
     return {
-        name.removesuffix(".json"): json.loads(_read(spark, f"{directory}/{name}"))["run_id"]
+        name.removesuffix(".json"): _field(spark, f"{directory}/{name}", "run_id", redo)
         for name in markers
         if name.endswith(".json")
     }
@@ -76,6 +89,36 @@ def mark_complete(
     return True
 
 
+def mark_rebuilt(
+    spark: SparkSession, silver: str, source: str, day: date | None, run_id: str
+) -> None:
+    """Record that the table of ``source``, rebuilt whole, is being written with the rows of
+    ``day``, or emptied (``None``). Written before the table, so that it never holds a day the
+    record does not name."""
+    record = {
+        "source": source,
+        "day": day,
+        "run_id": run_id,
+        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    _write(spark, _rebuilt(silver, source), record)
+
+
+def rebuilt_day(spark: SparkSession, silver: str, source: str) -> date | None:
+    """The day the table of ``source``, rebuilt whole, was last written for; ``None`` if it was
+    emptied, or if no record names one (a table no run of this version of silver wrote)."""
+    path = _rebuilt(silver, source)
+    if not _exists(spark, path):
+        return None
+    marked = _marked_days(spark, silver)
+    redo = f"run silver --date {marked[-1] if marked else '<day>'} again to rewrite it"
+    day = _field(spark, path, "day", redo)
+    try:
+        return None if day is None else date.fromisoformat(day)
+    except (TypeError, ValueError) as exc:
+        raise MarkerError(f"{path} is unreadable ({exc!r}): {redo}") from None
+
+
 def unmark(spark: SparkSession, silver: str, day: date, sources: Iterable[str]) -> None:
     """Make ``day`` incomplete and ``sources`` unpublished for it."""
     for path in (_complete(silver, day), *[f"{_day_path(silver, day)}/{s}.json" for s in sources]):
@@ -107,6 +150,10 @@ def _complete(silver: str, day: date) -> str:
     return f"{_day_path(silver, day)}/{COMPLETE}"
 
 
+def _rebuilt(silver: str, source: str) -> str:
+    return f"{days_path(silver)}/{REBUILT}/{source}.json"
+
+
 def _fs(spark: SparkSession, path: str) -> tuple[Any, Any]:
     hadoop_path = spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
     return hadoop_path.getFileSystem(spark.sparkContext._jsc.hadoopConfiguration()), hadoop_path
@@ -118,18 +165,21 @@ def _exists(spark: SparkSession, path: str) -> bool:
 
 
 def _write(spark: SparkSession, path: str, record: dict[str, Any]) -> None:
-    fs, hadoop_path = _fs(spark, path)
-    stream = fs.create(hadoop_path, True)
-    try:
-        stream.write(bytearray(json.dumps(record, default=str).encode()))
-    finally:
-        stream.close()
+    write_file(spark, path, json.dumps(record, default=str))
 
 
-def _read(spark: SparkSession, path: str) -> str:
+def _field(spark: SparkSession, path: str, name: str, redo: str) -> Any:
+    """Field ``name`` of the JSON object in the file ``path``; ``MarkerError`` saying ``redo``
+    if the file cannot be read or is not such an object."""
     fs, hadoop_path = _fs(spark, path)
-    stream = fs.open(hadoop_path)
     try:
-        return bytes(stream.readAllBytes()).decode("utf-8")
-    finally:
-        stream.close()
+        stream = fs.open(hadoop_path)
+        try:
+            return json.loads(bytes(stream.readAllBytes()).decode("utf-8"))[name]
+        finally:
+            stream.close()
+    except Py4JJavaError as exc:
+        reason = exc.java_exception.toString()
+    except (ValueError, KeyError, TypeError) as exc:
+        reason = repr(exc)
+    raise MarkerError(f"{path} is unreadable ({reason}): {redo}")

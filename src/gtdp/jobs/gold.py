@@ -31,13 +31,17 @@ from gtdp.io import INGESTION_DATE, drop_partitions, read_table, table_lock
 from gtdp.jobs.registry import JobContext, job
 from gtdp.publish import publish
 from gtdp.schemas import SILVER_REJECTS
-from gtdp.silver.days import complete_days
+from gtdp.silver.days import complete_days, published_sources, rebuilt_day
 from gtdp.silver.pipelines import PIPELINES, rejects_path
 from gtdp.silver.pipelines import table_path as silver_path
 
 
 class GoldCheckError(RuntimeError):
     """The gold built from silver breaks an invariant, or differs from it once published."""
+
+
+class IncompleteSilverError(RuntimeError):
+    """A silver table rebuilt whole holds a day silver has not completed."""
 
 
 @job(
@@ -50,16 +54,17 @@ def gold(ctx: JobContext) -> None:
     """Publish the gold tables for ``--date``.
 
     Gold reads the days that silver completed (``gtdp.silver.days``) and needs ``--date`` among
-    them. Every table is built from those days in full: whatever the order of the runs, the same
-    complete days give the same gold. Nothing is written before every table is built and every
-    invariant holds: an order with no catalog version or several, a duplicate key, a null in a
-    required column, a fact pointing at no dimension row. Then ``fact_sales`` is published for the
-    order dates whose rows differ from the published ones, a published date no order holds any
-    more is removed, and the other tables are replaced whole. ``fact_sales`` is read back: it must
-    hold exactly the rows built. The run holds the lock of the whole gold layer (``_gold.lock``
-    beside the gold directory) from start to end: a second run fails at once, before reading.
-    ``gold/_state.json`` says ``PUBLISHING`` from the first write until the read-back holds, then
-    ``PUBLISHED`` (``gtdp.gold.state``).
+    them. It refuses to run while ``silver/customers`` or ``silver/products_scd2``, which hold no
+    partition to leave out, hold a day silver has not completed. Every table is built from those
+    days in full: whatever the order of the runs, the same complete days give the same gold.
+    Nothing is written before every table is built and every invariant holds: an order with no
+    catalog version or several, a duplicate key, a null in a required column, a fact pointing at
+    no dimension row. Then ``fact_sales`` is published for the order dates whose rows differ from
+    the published ones, a published date no order holds any more is removed, and the other tables
+    are replaced whole. ``fact_sales`` is read back: it must hold exactly the rows built. The run
+    holds the lock of the whole gold layer (``_gold.lock`` beside the gold directory) from start
+    to end: a second run fails at once, before reading. ``gold/_state.json`` says ``PUBLISHING``
+    from the first write until the read-back holds, then ``PUBLISHED`` (``gtdp.gold.state``).
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -71,12 +76,30 @@ def gold(ctx: JobContext) -> None:
     if day not in complete:
         raise FileNotFoundError(f"silver has not completed {day}: run silver for {day} first")
     ctx.run.metrics["silver_days"] = [str(d) for d in complete]
+    _check_rebuilt_days(ctx.spark, ctx.cfg.paths.silver, complete)
 
     with table_lock(ctx.spark, ctx.cfg.paths.gold):
         try:
             _publish(ctx, _build(ctx, complete, settings), complete)
         finally:
             ctx.spark.catalog.clearCache()
+
+
+def _check_rebuilt_days(spark: SparkSession, silver: str, complete: list[date]) -> None:
+    """``IncompleteSilverError`` if the day a table silver rebuilds whole was last written for is
+    not among the ``complete`` days: gold would read rows of that day beside the others."""
+    for source, pipeline in PIPELINES.items():
+        written_for = None if pipeline.partitioned else rebuilt_day(spark, silver, source)
+        if written_for is None or written_for in complete:
+            continue
+        published = sorted(published_sources(spark, silver, written_for))
+        missing = sorted(PIPELINES.keys() - set(published))
+        raise IncompleteSilverError(
+            f"silver/{pipeline.table} holds the rows of {written_for}, a day silver has not "
+            f"completed (published: {', '.join(published) or 'none'}; missing: "
+            f"{', '.join(missing)}). Complete the day with scripts/cluster/submit.sh silver "
+            f"--date {written_for}, then run gold again"
+        )
 
 
 def _build(ctx: JobContext, complete: list[date], settings: GoldSettings) -> dict[str, DataFrame]:

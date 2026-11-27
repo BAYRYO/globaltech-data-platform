@@ -8,6 +8,7 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, IntegerType, StringType, StructField, StructType
 
+from gtdp import io
 from gtdp.config import load_config
 from gtdp.io import (
     INGESTION_DATE,
@@ -15,6 +16,7 @@ from gtdp.io import (
     path_exists,
     read_table,
     replace_table,
+    write_file,
     write_partitions,
 )
 
@@ -406,3 +408,25 @@ def test_a_checkout_under_a_space_reads_its_landing_files(spark, tmp_path):
     cfg = load_config("local", checkout / "conf")
 
     assert spark.read.option("header", True).csv(cfg.paths.landing).count() == 1
+
+
+class Killed(BaseException):
+    """What ``kill -9`` leaves behind: nothing after it runs."""
+
+
+def test_write_file_replaces_a_file_whole_and_a_write_killed_before_its_rename_changes_nothing(
+    spark, tmp_path, monkeypatch
+):
+    target = tmp_path / "days" / "orders.json"
+    write_file(spark, str(target), '{"run_id": "first"}')
+    write_file(spark, str(target), '{"run_id": "second"}')
+    assert target.read_text() == '{"run_id": "second"}'
+
+    def killed(*_args, **_kwargs):
+        raise Killed
+
+    monkeypatch.setattr(io, "_rename", killed)
+    with pytest.raises(Killed):
+        write_file(spark, str(target), '{"run_id": "third"}')
+
+    assert target.read_text() == '{"run_id": "second"}'

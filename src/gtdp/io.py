@@ -194,6 +194,23 @@ def path_exists(spark: SparkSession, path: str) -> bool:
     return bool(fs.exists(hadoop_path))
 
 
+def write_file(spark: SparkSession, path: str, text: str) -> None:
+    """Write the small file ``path`` holding ``text``, in place of any file there.
+
+    ``text`` is written to ``<path>.tmp-<id>``, then renamed onto ``path``, replacing it in the
+    same NameNode call on HDFS. A reader finds the previous file or ``text`` whole, even if the
+    run dies while it writes; a dead run leaves at most its ``.tmp-<id>`` copy.
+    """
+    fs, target = _filesystem(spark, path)
+    staged = target.suffix(f".tmp-{uuid.uuid4().hex}")
+    stream = fs.create(staged, False)
+    try:
+        stream.write(bytearray(text.encode()))
+    finally:
+        stream.close()
+    _rename(fs, staged, target, overwrite=True)
+
+
 def list_partition_values(spark: SparkSession, path: str, column: str) -> list[str]:
     """Sorted values of the ``<column>=<value>`` directories under ``path``; ``[]`` if absent."""
     fs, hadoop_path = _filesystem(spark, path)
@@ -254,17 +271,21 @@ def _recover(fs: Any, target: Any) -> None:
     logger.warning("finished an interrupted replace_table: %s became %s", source, target)
 
 
-def _rename(fs: Any, source: Any, destination: Any) -> None:
-    """Rename ``source`` to ``destination``; ``FileExistsError`` if ``destination`` exists.
+def _rename(fs: Any, source: Any, destination: Any, *, overwrite: bool = False) -> None:
+    """Rename ``source`` to ``destination``; ``FileExistsError`` if ``destination`` exists,
+    unless ``overwrite`` replaces a file there.
 
     ``FileSystem.rename`` moves a directory into an existing destination directory, which nests a
     partition inside itself. ``FileContext.rename`` refuses instead, in one NameNode call on HDFS.
     """
     jvm = SparkContext._jvm
     context = jvm.org.apache.hadoop.fs.FileContext.getFileContext(fs.getUri(), fs.getConf())
-    no_overwrite = SparkContext._gateway.new_array(jvm.org.apache.hadoop.fs.Options.Rename, 0)
+    rename = jvm.org.apache.hadoop.fs.Options.Rename
+    options = SparkContext._gateway.new_array(rename, 1 if overwrite else 0)
+    if overwrite:
+        options[0] = rename.OVERWRITE
     try:
-        context.rename(fs.makeQualified(source), fs.makeQualified(destination), no_overwrite)
+        context.rename(fs.makeQualified(source), fs.makeQualified(destination), options)
     except Py4JJavaError as exc:
         if exc.java_exception.getClass().getName() == _FILE_EXISTS:
             raise FileExistsError(f"not renaming {source} onto {destination}: it exists") from None

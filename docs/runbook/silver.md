@@ -36,11 +36,13 @@ commandes se lancent depuis la racine du dépôt, cluster démarré et bronze du
    source sans rien écrire (`nothing published`).
 7. **Écriture.** `write_partitions` remplace la partition du jour de `rejects/<source>`, puis
    celle de `orders` ou `weblogs`. `replace_table` échange `customers` ou `products_scd2` en
-   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)).
+   entier ([ADR-0002](../adr/0002-parquet-idempotence.md)), une fois le jour écrit noté dans
+   `_days/rebuilt/<source>.json` : gold ne lit la table que si ce jour est complet.
 8. **Vérification après écriture.** Rejets et lignes relus égaux aux comptes, clé unique,
    invariants SCD2. En cas d'échec, l'exécution retire ce qu'elle a publié pour la source et le
    jour (`publication removed`) : les partitions du jour, ou la table reconstruite remise dans
-   son état du dernier jour antérieur publié (vide s'il n'y en a pas).
+   son état du dernier jour antérieur publié (vide s'il n'y en a pas), que
+   `_days/rebuilt/<source>.json` nomme alors.
 9. **Marqueurs.** La source vérifiée reçoit son marqueur ; le jour reçoit `_SUCCESS` quand les
    quatre sources ont le leur.
 
@@ -61,12 +63,16 @@ Chaque exécution écrit une ligne d'audit, même en cas d'échec :
 /datalake/silver/_days/ingestion_date=2026-01-02/orders.json
 /datalake/silver/_days/ingestion_date=2026-01-02/weblogs.json
 /datalake/silver/_days/ingestion_date=2026-01-02/_SUCCESS          {"run_id", "sources": {source: run_id}}
+/datalake/silver/_days/rebuilt/customers.json                       {"source", "day", "run_id", "written_at"}
+/datalake/silver/_days/rebuilt/products.json
 ```
 
 Un lecteur qui doit voir des jours entiers (gold) ne lit des tables partitionnées que les
 partitions des jours complets : `gtdp.silver.days.complete_days(spark, silver)`. Un jour sans
 `_SUCCESS` est en cours de traitement, échoué ou rendu incomplet par le rejeu d'un jour
-antérieur.
+antérieur. `rebuilt/<source>.json` nomme le jour dont `customers` ou `products_scd2` tient les
+lignes : gold refuse de s'exécuter tant que ce jour n'est pas complet. Chaque fichier est écrit
+sous un nom temporaire puis renommé à sa place : il n'est jamais tronqué.
 
 ## Traiter un jour
 
@@ -137,8 +143,10 @@ compare au manifeste du jour.
 Un jour reste incomplet après l'échec d'une source pendant son traitement (contrôle, panne
 d'écriture), un arrêt (`SIGTERM`, code 143), un `kill -9`, ou le rejeu forcé d'un jour antérieur :
 son `_SUCCESS` manque, le jour suivant est refusé avec
-`DayOrderError: <D> is not complete in silver`, le rapport le liste et sort en 1. Les refus
-d'avant écriture (sel, ordre, dépendances, bronze absent) ne changent rien.
+`DayOrderError: <D> is not complete in silver`, le rapport le liste et sort en 1. Si
+`customers` ou `products_scd2` a été échangée pour le jour, gold refuse aussi de s'exécuter
+(`IncompleteSilverError`) jusqu'à ce que le jour soit complet. Les refus d'avant écriture (sel,
+ordre, dépendances, bronze absent) ne changent rien.
 
 1. Repérez les sources publiées et manquantes : tableau des jours du rapport, ou
    `hdfs dfs -ls /datalake/silver/_days/ingestion_date=<D>`.
@@ -238,6 +246,7 @@ print(text.count(os.environ["GTDP_PSEUDO_SALT"]), "occurrences du sel")'
 | `FileNotFoundError: .../bronze/<source>/ingestion_date=<D> not found: run bronze for <D> first` | Bronze n'a pas traité ce jour pour cette source. | Lancez `bronze --date <D>`, puis silver. Rien n'a été écrit. |
 | `SilverCheckError: <source> <D>, nothing published: ...` | Un contrôle a échoué avant l'écriture (comptes, clé, SCD2). | Bug : gardez les journaux, ouvrez un ticket. Les sources précédentes du jour sont publiées, le jour est incomplet. |
 | `SilverCheckError: <source> <D>, publication removed: ...` | La relecture diffère de ce qui a été écrit (écriture concurrente, panne pendant l'échange). | Ce que la source avait publié pour le jour est retiré. Rejouez le jour. |
+| `MarkerError: .../_days/ingestion_date=<D>/<source>.json is unreadable (...): run silver --date <D> again ...` | Un marqueur est illisible : abîmé, ou tronqué par une version antérieure du job. Une exécution qui doit le lire s'arrête au lieu de le prendre pour absent. | Rejouez le jour entier, `silver --date <D>` : il retire puis réécrit les marqueurs du jour. Pour `_days/rebuilt/<source>.json`, rejouez le jour que le message nomme. |
 | `TableLockedError: ... is being written by another run` | Une autre exécution écrit la table. | Attendez sa fin : le verrou se libère dès que YARN la rapporte terminée. S'il reste alors que l'application est terminée (`no state from YARN` dans le journal), supprimez le verrou nommé. |
 | Code de sortie 2, `ConfigError: silver needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
 | Code de sortie 2, `ConfigError: unknown source ...` | `--source` inconnue. | Relancez avec `--source` parmi `customers`, `products`, `orders`, `weblogs`. |

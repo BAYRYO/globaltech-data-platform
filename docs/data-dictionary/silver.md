@@ -25,10 +25,20 @@ puis `_SUCCESS` quand les quatre sources le sont (`gtdp.silver.days`). Un jour s
 est en cours, échoué, ou rendu incomplet par le rejeu d'un jour antérieur ou d'une source dont il
 dépend. Les doublons inter-jours ne regardent que les jours complets ; un lecteur qui doit voir
 des jours entiers ne lit des tables partitionnées que les partitions de
-`complete_days(spark, silver)`. Rejouer un jour réécrit ses marqueurs et retire ceux des jours
-suivants ([ADR-0005](../adr/0005-silver-incremental.md)). Dans les exemples des marqueurs,
-`run_id` est l'exécution J3 des rejets plus bas ; les heures ont le format écrit, pas la valeur
-du cluster.
+`complete_days(spark, silver)`. `customers` et `products_scd2`, reconstruites en entier, n'ont
+pas de partition à écarter : elles tiennent les lignes du jour pour lequel silver les a écrites en
+dernier, que `silver/_days/rebuilt/<source>.json` nomme dès avant l'écriture. Un tel lecteur ne
+les lit que si ce jour est complet : gold refuse sinon ([dictionnaire gold](gold.md)). Rejouer un
+jour réécrit ses marqueurs et retire ceux des jours suivants
+([ADR-0005](../adr/0005-silver-incremental.md)).
+
+Chaque fichier de `_days` est écrit en entier sous un nom temporaire, `<fichier>.tmp-<id>`, puis
+renommé à sa place en remplaçant l'ancien, dans le même appel au NameNode
+(`gtdp.io.write_file`) : un lecteur trouve l'ancien contenu ou le nouveau, jamais un fichier
+tronqué. Un fichier illisible (abîmé, ou tronqué par une version antérieure du job) arrête le job
+qui le lit avec `MarkerError: <chemin> is unreadable (...)` et la commande silver qui le
+réécrit, au lieu d'être pris pour absent. Dans les exemples des marqueurs, `run_id` est
+l'exécution J3 des rejets plus bas ; les heures ont le format écrit, pas la valeur du cluster.
 
 ### `silver/_days/ingestion_date=<d>/<source>.json`
 
@@ -43,14 +53,26 @@ du cluster.
 ### `silver/_days/ingestion_date=<d>/_SUCCESS`
 
 Écrit par `mark_complete` quand chacune des quatre sources a son marqueur pour le jour. Gold ne
-lit des commandes, des logs et des rejets que les jours qui ont ce fichier. Il lit `customers` et
-`products_scd2` tels que silver les a publiés en dernier, jour terminé ou non (limite connue
-KAN-58, voir le [dictionnaire gold](gold.md)).
+lit des commandes, des logs et des rejets que les jours qui ont ce fichier, et ne s'exécute que si
+le jour de `rebuilt/customers.json` et celui de `rebuilt/products.json` l'ont aussi.
 
 | Champ | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `run_id` | string | Exécution silver qui a complété le jour. | `20261126T195836Z-d3d2ae34` |
 | `sources` | map<string,string> | Chaque source publiée pour le jour, avec le `run_id` de l'exécution qui l'a publiée. | `{"customers": "20261126T195836Z-d3d2ae34", "orders": "20261126T195836Z-d3d2ae34", …}` |
+
+### `silver/_days/rebuilt/<source>.json`
+
+Écrit par `mark_rebuilt` pour `customers` et `products`, juste avant chaque échange de leur table,
+puis après la remise en état d'une publication retirée. La table ne tient donc jamais les lignes
+d'un jour que le fichier ne nomme pas, même si l'exécution s'arrête ou échoue après l'échange.
+
+| Champ | Type | Règle | Exemple |
+| --- | --- | --- | --- |
+| `source` | string | Source de la table reconstruite. | `customers` |
+| `day` | string | Jour dont la table tient les lignes, reconstruites depuis bronze jusqu'à lui ; nul quand la remise en état a vidé la table. | `2026-01-03` |
+| `run_id` | string | Exécution silver qui écrit la table. | `20261126T195836Z-d3d2ae34` |
+| `written_at` | string | Heure d'écriture du fichier, avant l'échange, ISO 8601 en UTC à la seconde. | `2026-11-26T19:58:51+00:00` |
 
 ## Disposition d'une ligne bronze
 

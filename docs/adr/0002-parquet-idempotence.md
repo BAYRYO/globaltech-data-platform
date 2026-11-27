@@ -168,6 +168,18 @@ prend effet à la fin du bloc : une exécution arrêtée laisse chaque partition
 jamais absente. Reçu pendant la prise, il prend effet une fois le verrou pris, puis le verrou est
 libéré.
 
+### Petits fichiers d'état : `write_file`
+
+Les marqueurs de jours de silver (`silver/_days/...`) et `gold/_state.json` décident de ce qu'un
+lecteur croit publié. `write_file(spark, chemin, texte)` écrit le texte dans
+`<chemin>.tmp-<id>`, puis renomme cette copie sur le chemin par `FileContext.rename` avec
+l'option `OVERWRITE`, qui remplace un fichier existant dans le même appel au NameNode. Un lecteur
+trouve donc l'ancien contenu ou le nouveau en entier, même si l'exécution meurt pendant
+l'écriture ; elle ne laisse au plus que sa copie `.tmp-<id>`, qu'aucun lecteur ne lit. Un
+marqueur illisible (abîmé, ou tronqué par une version antérieure) arrête le job qui le lit
+(`MarkerError`) au lieu d'être pris pour absent. `_state.json` illisible se lit comme absent :
+gold n'est alors pas tenu pour publié.
+
 ### Lecture : `read_table`
 
 Les jobs lisent toute table du lake par `read_table(spark, chemin, schéma)`. Le schéma explicite
