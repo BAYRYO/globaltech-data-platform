@@ -72,9 +72,12 @@ l'ordre des exécutions, et un lecteur ne doit jamais voir une gold à moitié p
   incomplet passe jusqu'à la reconstruction suivante de la table.
 - Un rejeu silver d'un jour complet lancé pendant une exécution gold n'est pas détecté : gold peut
   lire certaines tables avant la réécriture et d'autres après.
-- À la date de cet ADR, les règles de KAN-58 sont prouvées par les tests locaux sur les dépôts
-  `ci`. Aucune exécution sur YARN n'est publiée depuis #22 : le cluster était pris par l'exercice
-  de KAN-52.
+- Les règles de KAN-58 sont prouvées par les tests locaux sur les dépôts `ci`. Elles ont tourné
+  sur YARN le 2026-11-27, après la fusion de #22, car le cluster était pris par l'exercice de
+  KAN-52. Sur un silver complet, gold publie avec 0 contrôle en échec. Quand un jour silver est
+  arrêté par SIGTERM après `customers`, gold refuse avant toute écriture, sur une
+  `IncompleteSilverError` qui nomme la commande à lancer
+  ([preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486)).
 
 ## Alternatives écartées
 
