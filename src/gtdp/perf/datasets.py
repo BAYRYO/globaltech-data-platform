@@ -58,6 +58,8 @@ VERSIONS = StructType(
     ]
 )
 SCHEMAS = {"orders": ORDERS, "customers": CUSTOMERS, "products": PRODUCTS}
+LANDED = ("orders", "customers", "products")
+"""The landing sources that ``prepare`` reads, ``<landing>/<source>``."""
 TIMESTAMP_FORMAT = "yyyy-MM-dd'T'HH:mm:ss"
 OPEN_END = "9999-12-31 00:00:00"
 PRODUCT_COLUMNS = ("product_id", "product_name", "category", "unit_price_eur", "updated_at")
