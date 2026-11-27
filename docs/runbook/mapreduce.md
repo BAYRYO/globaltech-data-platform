@@ -37,7 +37,8 @@ scripts/mapreduce/compare.sh --date 2026-01-03
 
 `run_mr.sh` affiche le résultat puis `job_id=job_…`. Des réglages `-D clé=valeur` placés après
 les trois arguments s'ajoutent au job. Le job Spark journalise `revenue by country written` avec
-`yarn_app_id`, le répertoire de sortie et la liste des fichiers de commandes lus.
+`yarn_app_id`, le répertoire de sortie et la liste des fichiers de commandes lus. Sans `--date`,
+il s'arrête avant toute lecture avec le code de sortie 2 (`ConfigError: --date is required ...`).
 
 `compare.sh` attend avant chaque exécution que YARN n'ait plus aucune application active, et
 recommence (3 fois au plus) une exécution qu'une autre application a chevauchée. `--no-wait`

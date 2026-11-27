@@ -11,7 +11,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from gtdp.audit import Layer, Run
-from gtdp.config import LakePaths
+from gtdp.config import ConfigError, LakePaths
 from gtdp.io import (
     INGESTION_DATE,
     LaterPartitionError,
@@ -124,7 +124,7 @@ def silver(ctx: JobContext) -> None:
     """
     day = ctx.run.ingestion_date
     if day is None:
-        raise ValueError("silver needs --date")
+        raise ConfigError("silver needs --date")
     if ctx.run.source and ctx.run.source not in PIPELINES:
         raise ValueError(f"unknown source {ctx.run.source!r}, expected one of {sorted(PIPELINES)}")
     sources = [ctx.run.source] if ctx.run.source else list(PIPELINES)
