@@ -19,7 +19,8 @@ commandes se lancent depuis la racine du dépôt, cluster démarré et bronze du
    sources sont publiées (voir « Jours publiés »).
 3. **Dépendances.** `orders` contrôle ses `customer_id` et `product_id` contre `customers` et
    `products_scd2` telles que publiées pour la même date. `--source orders` est refusé tant que
-   `customers` et `products` ne sont pas publiées pour cette date. Sans `--source`, les sources
+   `customers` et `products` ne sont pas publiées pour cette date, ou que leur `_built_for.json`
+   nomme un autre jour. Sans `--source`, les sources
    passent dans cet ordre : `customers`, `products`, `orders`, `weblogs`.
 4. **Invalidation.** Avant toute écriture, l'exécution retire les marqueurs des jours
    postérieurs (ils deviennent incomplets), le `_SUCCESS` du jour et les marqueurs des sources
@@ -244,7 +245,7 @@ print(text.count(os.environ["GTDP_PSEUDO_SALT"]), "occurrences du sel")'
 | `SaltError: GTDP_PSEUDO_SALT is blank`, `... is the development salt ...`, `... holds N characters, at least 16 needed` | Sel inutilisable sur le cluster. | Exportez le vrai sel. Rien n'a été écrit. |
 | `SaltError: GTDP_PSEUDO_SALT is not the salt silver was built with ...` | Autre sel que celui de l'empreinte. | Exportez le sel d'origine, ou « Changer le sel ». Rien n'a été écrit. |
 | `DayOrderError: <D-n> is not complete in silver, which <D> deduplicates against ...` | Un jour antérieur est incomplet. | « Réparer un jour incomplet » pour ce jour, puis `<D>`. Rien n'a été écrit. |
-| `DayOrderError: orders of <D> are checked against customers as published for <D>, but customers is published for <X> ...` | `--source orders` avant `customers` ou `products` du jour. | Lancez la source nommée pour `<D>`, ou le jour entier. Rien n'a été écrit. |
+| `DayOrderError: orders of <D> are checked against customers as published for <D>, but customers is published for <X> and rebuilt for <Y> ...` | `--source orders` avant `customers` ou `products` du jour, ou après une exécution d'un autre jour arrêtée entre l'échange de la table et son marqueur (`<Y>` diffère de `<X>`). | Lancez la source nommée pour `<D>`, ou le jour entier. Rien n'a été écrit. |
 | `LaterPartitionError: silver already holds the complete day <D+n>, later than <D> ...` | Un jour postérieur est complet. | Rejouez dans l'ordre, ou `--force` puis les jours suivants. Rien n'a été écrit. |
 | `FileNotFoundError: .../bronze/<source>/ingestion_date=<D> not found: run bronze for <D> first` | Bronze n'a pas traité ce jour pour cette source. | Lancez `bronze --date <D>`, puis silver. Rien n'a été écrit. |
 | `SilverCheckError: <source> <D>, nothing published: ...` | Un contrôle a échoué avant l'écriture (comptes, clé, SCD2). | Bug : gardez les journaux, ouvrez un ticket. Les sources précédentes du jour sont publiées, le jour est incomplet. |

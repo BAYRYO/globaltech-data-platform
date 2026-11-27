@@ -169,7 +169,11 @@ Doublons : `DUPLICATE_EXACT` du manifeste → `duplicated.exact`, `DUPLICATE_CRO
 
 Les commandes de `D` sont contrôlées contre les dimensions publiées pour `D` : le job traite
 `customers` et `products` avant `orders`, refuse `--source orders` tant qu'elles ne sont pas
-publiées pour `D`, et rend `orders` à refaire quand l'une d'elles est rejouée. Sur les données du
+publiées pour `D` ou que leur `_built_for.json` nomme un autre jour (exécution d'un autre jour
+arrêtée entre l'échange et le marqueur), et rend `orders` à refaire quand l'une d'elles est
+rejouée. Limite connue : sur une table écrite avant `_built_for.json`, seuls les marqueurs
+décident, et une telle exécution arrêtée laisse contrôler `orders` contre la table de l'autre jour
+jusqu'à la prochaine reconstruction de la table. Sur les données du
 contrat, les comptes `UNKNOWN_CUSTOMER` et `UNKNOWN_PRODUCT` restent ceux du manifeste : aucun
 client ni produit n'y existe seulement dans des lignes rejetées.
 
