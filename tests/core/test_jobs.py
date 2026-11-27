@@ -121,20 +121,30 @@ def test_an_unknown_timezone_or_master_exits_2_before_spark_starts(tmp_path, set
     assert not (tmp_path / "lake").exists()
 
 
-@pytest.mark.parametrize("job", ["bronze", "silver", "gold", "revenue-by-country-spark"])
-def test_a_job_that_needs_a_date_exits_2_without_one_and_audits_it(
-    spark, tmp_path, monkeypatch, job
+@pytest.mark.parametrize(
+    ("job", "args", "says"),
+    [
+        *[(job, [], "--date") for job in ("bronze", "silver", "gold", "revenue-by-country-spark")],
+        *[
+            (job, ["--date", "2026-01-01", "--source", "nope"], "unknown source 'nope'")
+            for job in ("bronze", "silver")
+        ],
+    ],
+)
+def test_a_job_given_a_wrong_argument_exits_2_and_audits_it(
+    spark, tmp_path, monkeypatch, job, args, says
 ):
+    """A ``--date`` missing from a job that needs it, or a ``--source`` the job does not know."""
     monkeypatch.setattr(run_py, "build_spark", lambda cfg, name: spark)
     monkeypatch.setattr(type(spark), "stop", lambda self: None)
 
-    code = main([job, "--env", "local", *lake_args(tmp_path)])
+    code = main([job, "--env", "local", *args, *lake_args(tmp_path)])
 
     assert code == 2
     [audit] = read_table(spark, str(tmp_path / "lake" / "ops" / "audit")).collect()
     assert (audit.job_name, audit.status) == (job, "FAILED")
     assert audit.error_message.startswith("ConfigError: ")
-    assert "--date" in audit.error_message
+    assert says in audit.error_message
 
 
 def test_spark_that_cannot_start_exits_2_with_a_json_error(tmp_path):
