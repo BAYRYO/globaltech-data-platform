@@ -71,11 +71,11 @@ pas comme une donnée (nom en `_`). Une table écrite par une version antérieur
 pas : gold s'en tient alors à ses lignes, et silver à ses marqueurs, jusqu'à sa prochaine
 reconstruction.
 
-Les lignes ne suffisent pas toujours. Une reconstruction pour `D` qui n'ajoute aucune ligne de `D`
-à `customers` la laisse telle que le jour d'avant l'a laissée : chaque client garde sa fiche, qui
-l'emporte aussi sur ses fiches de `D`. À `products_scd2`, une version renvoyée un jour `D` avec
-les attributs de la version précédente retire une version sans ajouter de ligne de `D` : seul ce
-fichier dit alors que la table a changé pour `D`.
+Pour `customers`, les lignes suffisent : une reconstruction pour `D` qui n'y ajoute aucune ligne
+de `D` la laisse telle que le jour d'avant l'a laissée, chaque client gardant sa fiche, qui
+l'emporte aussi sur ses fiches de `D`. Pas pour `products_scd2` : une version renvoyée un jour `D`
+avec les attributs de la version précédente retire une version sans ajouter de ligne de `D`, et
+seul ce fichier dit alors que la table a changé pour `D`.
 
 | Champ | Type | Règle | Exemple |
 | --- | --- | --- | --- |
