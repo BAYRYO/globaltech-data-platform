@@ -15,6 +15,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, StructField, StructType
 
+from gtdp.config import ConfigError
 from gtdp.io import INGESTION_DATE
 from gtdp.schemas import CORRUPT_RECORD, SOURCES, Format, Source
 
@@ -71,11 +72,12 @@ def landed_files(
     """The files of ``source``, or of every source of the manifest, that landed for ``day``.
 
     The manifest is written last by ``land.sh``, so a day without one is not fully landed:
-    ``FileNotFoundError``. ``LandingError`` when the manifest lists no file for ``source``, or when
-    a source's landing partition does not hold exactly the files the manifest lists for it.
+    ``FileNotFoundError``. ``ConfigError`` for a ``source`` that is not one of ``SOURCES``.
+    ``LandingError`` when the manifest lists no file for ``source``, or when a source's landing
+    partition does not hold exactly the files the manifest lists for it.
     """
     if source is not None and source not in SOURCES:
-        raise ValueError(f"unknown source {source!r}, expected one of {sorted(SOURCES)}")
+        raise ConfigError(f"unknown source {source!r}, expected one of {sorted(SOURCES)}")
     manifest = json.loads(_read_text(spark, manifest_uri(landing, day)))
     if manifest.get("ingestion_date") != day.isoformat():
         raise LandingError(

@@ -86,7 +86,7 @@ l'échange : chaque partition est soit l'ancienne, soit la nouvelle.
 
 3. Lisez le code de sortie. `0` signale un succès, `1` un échec du job, dont le motif est dans
    `error_message` de l'audit, et `2` une configuration ou un usage invalide (`--date` absent
-   compris).
+   ou `--source` inconnue compris).
 
 Sur la machine de référence, profil `dev` et un exécuteur, `duration_s` de l'audit vaut 31,2 s
 pour J1 (1 106 403 lignes), 12,5 s pour J2 et 14,3 s pour J3 (3 075 lignes chacun). Le
@@ -181,7 +181,7 @@ commandes de J1. La colonne `_record_hash` en représente 62,8 Mo, car un hash h
 | `ReconciliationError: <fichier>: manifest N, lines N, read M` | Le lecteur CSV a sauté des lignes. Il ignore une ligne vide ou faite d'espaces. | Corrigez le fichier en amont, puis redéposez-le. Rien n'a été écrit. |
 | `ReconciliationError: <fichier>: lines N, written M` | La partition relue après écriture n'a pas le nombre de lignes du landing. | La partition est publiée mais fausse. Cherchez la cause dans les journaux, puis rejouez le jour. |
 | Code de sortie 2, `ConfigError: bronze needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
-| `ValueError: unknown source '...'` | `--source` n'est pas une source de `SOURCES`. | Utilisez `orders`, `customers`, `products` ou `weblogs`. |
+| Code de sortie 2, `ConfigError: unknown source '...'` | `--source` n'est pas une source de `SOURCES`. | Utilisez `orders`, `customers`, `products` ou `weblogs`. Rien n'a été lu. |
 
 Si l'écriture d'une source échoue (quota, panne d'un nœud), les sources écrites avant elle ont
 déjà leur nouvelle partition, les suivantes gardent l'ancienne. Rejouez le jour pour obtenir
