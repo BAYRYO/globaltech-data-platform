@@ -3,7 +3,9 @@
 A section of a page in ``docs/data-dictionary`` documents the paths named in backticks in its
 heading, relative to the lake root; a ``<name>`` segment stands for any value. Its column tables
 have the header ``Colonne | Type | Règle | Exemple``, or ``Champ | ...`` for the fields of a JSON
-file. A column whose rule starts with ``Partition`` is a partition column.
+file. A column whose rule starts with ``Partition`` is a partition column. A column is documented
+once for a path, and a column table sits under a heading that names its path, except the tables
+of ``UNCHECKED``.
 
 The code side is read from the registries: the declared schemas of bronze, silver, the star and
 the sensor stream, the indicators built on empty inputs, and the ops tables and JSON files written
@@ -49,6 +51,9 @@ pytestmark = pytest.mark.slow
 
 DICTIONARY = Path(__file__).resolve().parents[2] / "docs" / "data-dictionary"
 HEADERS = ("| Colonne | Type | Règle | Exemple |", "| Champ | Type | Règle | Exemple |")
+UNCHECKED = {("mapreduce.md", "Chiffre d'affaires par pays"), ("mapreduce.md", "Compteurs")}
+"""Column tables of the Lot 6 text outputs, under headings without a lake path: the files have
+no schema, and ``tests/mapreduce`` checks that Spark and MapReduce write the same lines."""
 DAY = date(2026, 1, 1)
 
 
@@ -57,41 +62,60 @@ class Shape:
     columns: dict[str, str] = field(default_factory=dict)
     """Column name -> Spark SQL type (``simpleString``)."""
     partitions: set[str] = field(default_factory=set)
+    repeated: set[str] = field(default_factory=set)
+    """Columns documented more than once."""
 
     @classmethod
     def of(cls, schema: StructType, *partitions: str) -> Shape:
         return cls({f.name: f.dataType.simpleString() for f in schema.fields}, set(partitions))
+
+    def add(self, name: str, kind: str, *, partition: bool) -> None:
+        if name in self.columns:
+            self.repeated.add(name)
+        self.columns[name] = kind
+        if partition:
+            self.partitions.add(name)
+
+
+@dataclass
+class Pages:
+    shapes: dict[str, Shape] = field(default_factory=dict)
+    """Every path a section heading names, with the columns of the section's column tables."""
+    unnamed: list[str] = field(default_factory=list)
+    """``<page>: <heading>`` of each column table under a heading that names no path."""
+    unchecked: set[tuple[str, str]] = field(default_factory=set)
+    """The ``UNCHECKED`` tables found."""
 
 
 def _names(cell: str) -> list[str]:
     return re.findall(r"`([^`]+)`", cell)
 
 
-def _sections() -> dict[str, Shape]:
-    """Every path a section heading names, with the columns of the section's column tables."""
-    shapes: dict[str, Shape] = {}
-    for page in sorted(DICTIONARY.glob("*.md")):
-        paths: list[str] = []
-        in_table = False
+def _sections(directory: Path = DICTIONARY) -> Pages:
+    pages = Pages()
+    for page in sorted(directory.glob("*.md")):
+        heading, paths, in_table = "", [], False
         for line in page.read_text(encoding="utf-8").splitlines():
             if line.startswith("#"):
-                paths, in_table = _names(line), False
+                heading, paths, in_table = line.lstrip("# "), _names(line), False
                 for path in paths:
-                    shapes.setdefault(path, Shape())
+                    pages.shapes.setdefault(path, Shape())
             elif line in HEADERS:
                 in_table = True
+                if (page.name, heading) in UNCHECKED:
+                    pages.unchecked.add((page.name, heading))
+                elif not paths:
+                    pages.unnamed.append(f"{page.name}: {heading}")
             elif in_table and line.startswith("| ---"):
                 continue
             elif in_table and line.startswith("|"):
                 names, kind, rule = (c.strip() for c in re.split(r"(?<!\\)\|", line)[1:4])
                 for path in paths:
                     for name in _names(names):
-                        shapes[path].columns[name] = kind
-                        if rule.startswith("Partition"):
-                            shapes[path].partitions.add(name)
+                        pages.shapes[path].add(name, kind, partition=rule.startswith("Partition"))
             else:
                 in_table = False
-    return shapes
+    return pages
 
 
 def _relative(path: str) -> str:
@@ -185,8 +209,13 @@ def code(spark, tmp_path_factory) -> dict[str, Shape]:
 
 
 @pytest.fixture(scope="module")
-def doc() -> dict[str, Shape]:
+def pages() -> Pages:
     return _sections()
+
+
+@pytest.fixture(scope="module")
+def doc(pages) -> dict[str, Shape]:
+    return pages.shapes
 
 
 def _documented(path: str, doc: dict[str, Shape]) -> Shape:
@@ -194,8 +223,9 @@ def _documented(path: str, doc: dict[str, Shape]) -> Shape:
     merged = Shape()
     for pattern, shape in doc.items():
         if _matches(pattern, path):
-            merged.columns |= shape.columns
-            merged.partitions |= shape.partitions
+            merged.repeated |= shape.repeated
+            for name, kind in shape.columns.items():
+                merged.add(name, kind, partition=name in shape.partitions)
     return merged
 
 
@@ -211,6 +241,18 @@ def test_every_table_and_file_of_the_code_has_a_dictionary_section(code, doc):
 def test_every_dictionary_section_names_a_table_or_file_of_the_code(code, doc):
     unknown = sorted(pattern for pattern in doc if not any(_matches(pattern, p) for p in code))
     assert not unknown, f"the code writes nothing at {unknown}"
+
+
+def test_every_column_table_is_under_a_heading_naming_its_path(pages):
+    assert not pages.unnamed, f"column tables under a heading without a lake path: {pages.unnamed}"
+    assert pages.unchecked == UNCHECKED, f"UNCHECKED names no table: {UNCHECKED - pages.unchecked}"
+
+
+def test_the_dictionary_documents_each_column_once(code, doc):
+    repeated = {
+        path: sorted(shape.repeated) for path in code if (shape := _documented(path, doc)).repeated
+    }
+    assert not repeated, f"columns documented twice for one path: {repeated}"
 
 
 def test_the_dictionary_lists_exactly_the_columns_of_the_code(code, doc):
