@@ -4,7 +4,6 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from pyspark.sql import functions as F
 
 from gtdp.gold.kpis import KPIS
 from gtdp.gold.tables import FACT_SALES, STAR
@@ -17,6 +16,12 @@ pytestmark = pytest.mark.slow
 
 def sales_by_id(lake) -> dict:
     return {row.transaction_id: row for row in lake.gold("fact_sales").collect()}
+
+
+def snapshot(lake) -> dict:
+    """The rows of every gold table, by name."""
+    names = [table.name for table in STAR] + list(KPIS)
+    return {name: sorted(map(tuple, lake.gold(name).collect())) for name in names}
 
 
 def rows_per_date(lake) -> dict:
@@ -143,33 +148,28 @@ def test_replaying_a_day_leaves_every_gold_table_unchanged(silver_lake):
     )
     silver_lake.weblogs(J2, request("L2", "2026-01-01T08:00:00", "purchase", day=J2))
     silver_lake.run_gold(J2)
-    names = [table.name for table in STAR] + list(KPIS)
-
-    def snapshot():
-        return {name: sorted(map(tuple, silver_lake.gold(name).collect())) for name in names}
-
-    before = snapshot()
+    before = snapshot(silver_lake)
     silver_lake.run_gold(J2)
 
-    assert snapshot() == before
-    assert all(before[name] for name in names)
+    assert snapshot(silver_lake) == before
+    assert all(before.values())
 
 
-def test_a_star_that_breaks_an_invariant_fails_before_the_indicators(silver_lake):
+def test_a_build_that_breaks_an_invariant_writes_nothing(silver_lake):
     silver_lake.customers(customer("C1"))
     silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
     silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00"))
     silver_lake.run_gold(J1)
-    # The same transaction under another date: silver never publishes it, gold still checks.
+    before = snapshot(silver_lake)
+    # A new customer, and the same transaction under another date: silver never publishes the
+    # latter, gold still checks it.
+    silver_lake.customers(customer("C1"), customer("C2", country="DE"))
     silver_lake.orders(J2, order("T1", "2026-01-01T08:00:00", day=J2))
 
     with pytest.raises(GoldCheckError, match="duplicate_key.fact_sales"):
         silver_lake.run_gold(J2)
 
-    assert (
-        silver_lake.gold("kpi_revenue_daily").where(F.col("order_date") == date(2026, 1, 1)).count()
-        == 0
-    )
+    assert snapshot(silver_lake) == before
 
 
 def test_gold_reads_only_the_days_silver_completed(silver_lake):
