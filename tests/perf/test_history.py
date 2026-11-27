@@ -8,8 +8,10 @@ from gtdp.perf.history import (
     completed_stages,
     group_stage_ids,
     key_stage,
+    missing_stages,
     ratio,
     skew,
+    stage_wall_s,
     totals,
 )
 
@@ -80,3 +82,31 @@ def test_a_zero_median_gives_an_infinite_ratio_unless_the_max_is_zero_too():
 def test_other_quantiles_are_refused():
     with pytest.raises(ValueError, match="quantiles"):
         skew(STAGES[3], SUMMARY | {"quantiles": [0.25, 0.5, 0.75]}, "inputBytes")
+
+
+def test_only_the_last_completed_attempt_of_a_resubmitted_stage_counts():
+    """A stage resubmitted after a fetch failure has two COMPLETE attempts; a FAILED attempt is
+    never counted, even when it is the latest."""
+    attempts = [
+        {"stageId": 7, "attemptId": 0, "status": "COMPLETE", "inputBytes": 100},
+        {"stageId": 7, "attemptId": 1, "status": "COMPLETE", "inputBytes": 40},
+        {"stageId": 8, "attemptId": 0, "status": "COMPLETE", "inputBytes": 5},
+        {"stageId": 8, "attemptId": 1, "status": "FAILED", "inputBytes": 900},
+    ]
+    own = completed_stages(attempts, {7, 8})
+    assert [(s["stageId"], s["attemptId"]) for s in own] == [(7, 1), (8, 0)]
+    assert totals(own)["inputBytes"] == 45
+
+
+def test_stages_that_the_history_server_no_longer_holds_are_named():
+    assert missing_stages(STAGES, {0, 1, 2, 3}) == set()
+    assert missing_stages(STAGES, {3, 40, 41}) == {40, 41}
+
+
+def test_a_stage_lasts_from_its_first_task_to_its_completion():
+    stage = {
+        "submissionTime": "2026-11-27T03:08:30.000GMT",
+        "firstTaskLaunchedTime": "2026-11-27T03:08:30.250GMT",
+        "completionTime": "2026-11-27T03:08:35.370GMT",
+    }
+    assert stage_wall_s(stage) == 5.12
