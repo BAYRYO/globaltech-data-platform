@@ -1,7 +1,9 @@
 # Runbooks
 
 Commencez par le [runbook d'exploitation](exploitation.md), point d'entrée de l'équipe qui
-exploite la plateforme : démarrage et arrêt, santé, traitement d'un jour, jobs, incidents.
+exploite la plateforme : démarrage et arrêt, santé, traitement d'un jour, jobs, incidents. Un
+agent qui n'a écrit aucune de ces pages a suivi le README et quatre procédures du runbook
+d'exploitation le 27 novembre 2026 ([validation par un tiers](../validation/2026-11-27-validation-tiers.md)).
 
 Une page par couche ou par traitement : lancer, rejouer, vérifier, dépanner. Les commandes se
 lancent depuis la racine du dépôt, cluster démarré ([guide de la plateforme](../platform.md)). Les
