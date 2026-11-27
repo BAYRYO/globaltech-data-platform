@@ -92,13 +92,13 @@ def test_partitions_named_for_a_table_without_partition_column_are_refused(spark
 @pytest.mark.parametrize("job", ["bronze", "silver", "gold"])
 def test_the_batch_jobs_write_lake_tables_through_publish_only(job):
     """``publish`` checks the declared columns and takes the partition columns from the
-    registry; a direct write would skip both."""
+    registry; a direct write (``write_partitions``, ``replace_table``, ``DataFrame.write``)
+    would skip both."""
     tree = ast.parse((JOBS / f"{job}.py").read_text(encoding="utf-8"))
     direct = [
-        f"line {node.lineno}: {node.func.id}"
+        f"line {node.lineno}: {name}"
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {"write_partitions", "replace_table"}
+        if (name := getattr(node, "id", None) or getattr(node, "attr", None))
+        in {"write_partitions", "replace_table", "write"}
     ]
     assert not direct, f"jobs/{job}.py writes around publish: {direct}"

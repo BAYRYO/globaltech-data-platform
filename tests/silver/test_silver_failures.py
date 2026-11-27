@@ -8,6 +8,7 @@ from datetime import date
 import pytest
 from pyspark.sql import functions as F
 
+from gtdp import publish as publish_module
 from gtdp.jobs import silver as silver_job
 from gtdp.silver.pipelines import PIPELINES, classified, rejects_path
 from gtdp.silver.pseudonymize import salt_frame
@@ -63,14 +64,14 @@ def test_a_day_without_bronze_fails_and_publishes_nothing(fresh_lake):
 
 
 def test_records_that_do_not_add_up_fail_the_run_and_keep_their_counts(fresh_lake, monkeypatch):
-    write = silver_job.write_partitions
+    write = publish_module.write_partitions
 
     def losing_one_reject(frame, path, partitions):
         if path.endswith("/rejects/orders"):
             frame = frame.limit(frame.count() - 1)
         write(frame, path, partitions)
 
-    monkeypatch.setattr(silver_job, "write_partitions", losing_one_reject)
+    monkeypatch.setattr(publish_module, "write_partitions", losing_one_reject)
 
     with pytest.raises(silver_job.SilverCheckError, match="in silver/rejects"):
         fresh_lake.run("silver", J1)
