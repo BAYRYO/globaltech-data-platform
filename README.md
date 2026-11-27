@@ -45,13 +45,16 @@ tests/       tests pytest en Spark local
 - Docker Engine 25 ou plus récent avec Docker Compose v2. Sous Windows et macOS, Docker Desktop
   avec au moins 14 Go de mémoire.
 - Git et Bash. Sous Windows, lancez toutes les commandes depuis Git Bash.
-- 5 Go de disque libre et les ports 9870, 8088, 18080 et 19888 libres sur `127.0.0.1`.
+- 6 Go de disque libre au moins : les deux images occupent 3,3 Go et les volumes HDFS 1,8 Go
+  après la démonstration. Les ports 9870, 8088, 18080 et 19888 doivent être libres sur
+  `127.0.0.1`.
 - Ni Java, ni Hadoop, ni Spark, ni Python sur le poste. Tout tourne dans des conteneurs.
 
 ## Démarrage rapide
 
 Lancez les commandes depuis la racine du dépôt. Les durées viennent de la machine de référence
-(16 CPU, 15 Gio pour Docker) et du profil de données `dev`. Ces étapes supposent un cluster neuf.
+(16 CPU, 15 Gio pour Docker) et du profil de données `dev`, mesurées pour la plupart par la
+[validation par un tiers](docs/validation/2026-11-27-validation-tiers.md). Ces étapes supposent un cluster neuf.
 Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 [Rejouer un jour](docs/runbook/exploitation.md#rejouer-un-jour).
 
@@ -72,7 +75,7 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 
 3. Démarrez le cluster, créez l'arborescence HDFS et vérifiez le cluster. Le premier `up.sh`
    construit l'image en 6 min 52 s, plus si archive.apache.org est lent. Ensuite, les trois
-   commandes prennent 95 s (15 s, 26 s et 54 s).
+   commandes ont pris 118 s lors de la validation (20 s, 34 s et 64 s).
 
 	```bash
 	scripts/cluster/up.sh
@@ -90,13 +93,14 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 	scripts/cluster/client.sh python3 -m gtdp.datagen verify --path data/generated/dev
 	```
 
-	La première commande affiche `192 files, 1124325 rows`, la seconde se termine par `OK`.
+	La première commande affiche `192 files, 1124325 rows`. La dernière ligne de la seconde
+	commence par `OK`, suivi de sa durée.
 
 5. Choisissez un sel de test pour silver, qui pseudonymise les données personnelles. La commande
-   l'écrit dans `.env`, que Git ignore.
+   l'écrit dans `.env`, que Git ignore, sauf si `.env` a déjà un sel.
 
 	```bash
-	echo "GTDP_PSEUDO_SALT=$(openssl rand -hex 16)" >> .env
+	grep -qs '^GTDP_PSEUDO_SALT=' .env || echo "GTDP_PSEUDO_SALT=$(openssl rand -hex 16)" >> .env
 	```
 
 	Silver enregistre l'empreinte du premier sel et refuse ensuite tout autre sel. Un autre sel
@@ -104,7 +108,8 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 	Gardez donc ce `.env`, et ne commitez jamais le sel réel.
 
 6. Déposez et traitez J1, J2 et J3 dans l'ordre des dates, chaque jour par `bronze`, `silver` puis
-   `gold`. Chacun des neuf jobs prend de 13 s à 77 s.
+   `gold`. Lors de la validation, chacun des neuf jobs a pris de 22 s à 61 s, et la boucle
+   7 min 33 s.
 
 	```bash
 	for d in 2026-01-01 2026-01-02 2026-01-03; do
@@ -126,8 +131,10 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 
 	Le rapport silver affiche `3 landed days, incomplete: []` et sort avec 0. Le rapport gold se
 	termine par `gold PUBLISHED, 0 order dates mismatched, 0 checks failed`. La requête d'audit
-	de [Traiter un jour](docs/runbook/exploitation.md#traiter-un-jour) montre une ligne `SUCCESS`
-	par job et par jour, et vérifie que propres + rejets + doublons = lignes lues.
+	de [Traiter un jour](docs/runbook/exploitation.md#traiter-un-jour) lit J1. Relancez-la avec
+	`2026-01-02`, puis `2026-01-03`, à la place de `2026-01-01`. Pour chaque jour, elle montre
+	une ligne `SUCCESS` pour `bronze`, `silver` et `gold`, et vérifie que propres + rejets +
+	doublons = lignes lues.
 
 8. Démarrez le flux des capteurs dans un premier terminal. Le job tourne jusqu'à son arrêt.
 
@@ -143,8 +150,9 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 		--dst hdfs://namenode:8020/datalake/landing/sensors/incoming --interval 3
 	```
 
-	Une minute après la ligne `published 180 files, 11772 events`, arrêtez le flux. Le premier
-	terminal rend la main avec le code 0. Lancez ensuite le rapport du flux.
+	Une minute après la ligne `published 180 files, 11772 events`, arrêtez le flux. Cette attente
+	a suffi lors de la validation. Le premier terminal rend la main avec le code 0. Lancez
+	ensuite le rapport du flux.
 
 	```bash
 	scripts/streaming/stop.sh
@@ -169,7 +177,8 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 	mesure les deux moteurs, 5 exécutions chacun.
 
 10. Arrêtez le cluster. `scripts/cluster/down.sh` garde les données HDFS dans les volumes Docker,
-    `scripts/cluster/reset.sh` les efface sans confirmation.
+    `scripts/cluster/reset.sh` les efface sans confirmation. Lors de la validation, `down.sh` a
+    pris 4 s, et `up.sh` a relancé le cluster avec ses données en 23 s.
 
 ## Documentation
 
@@ -177,6 +186,7 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 | --- | --- |
 | [Guide de démarrage et de la plateforme](docs/platform.md) | Relance en moins de 10 minutes, services et ports, budget mémoire, droits HDFS, soumission des jobs |
 | [Runbook d'exploitation](docs/runbook/exploitation.md) | Démarrer, arrêter, vérifier la santé, traiter un jour, lancer chaque job, réparer les incidents |
+| [Validation par un tiers](docs/validation/2026-11-27-validation-tiers.md) | Ce README suivi de bout en bout, relance chronométrée, quatre procédures du runbook exécutées, le 27 novembre 2026 |
 | [Runbooks par couche](docs/runbook/README.md) | Bronze, silver, gold, flux capteurs, MapReduce, HDFS : lancer, rejouer, vérifier, dépanner |
 | [Architecture](docs/architecture.md) | Schéma légendé, composants, arborescence HDFS, flux batch et streaming |
 | [Contrat de données](docs/data-contract.md) | Sources J1, J2, J3, anomalies injectées, manifeste |
