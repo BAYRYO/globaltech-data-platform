@@ -73,6 +73,8 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 ├── silver/rejects/<source>/ingestion_date=…/     lignes rejetées + motifs
 ├── silver/_days/ingestion_date=…/                <source>.json par source publiée, _SUCCESS si le jour est complet
 ├── gold/<table>/                                 modèle en étoile et indicateurs
+├── gold/_state.json                              état de publication de gold (PUBLISHING, PUBLISHED)
+├── _gold.lock                                    verrou d'une exécution gold, absent au repos
 ├── gold/sensor_aggregates/, gold/sensor_alerts/  agrégats et alertes du flux capteurs
 ├── streaming/sensors/checkpoints/, rejects/      checkpoints et lignes rejetées du flux capteurs
 ├── streaming/archive/sensors/arrival_date=…/     fichiers capteurs validés, jour courant et 2 jours précédents
@@ -147,9 +149,16 @@ Pour chaque jour d'ingestion `D` (J1 = 2026-01-01, J2 = 2026-01-02, J3 = 2026-01
    - produits historisés en SCD type 2, clients en SCD type 1 pseudonymisés, logs web parsés et
      pseudonymisés ;
    - un marqueur par source publiée, puis `_SUCCESS` quand le jour est complet.
-4. **Gold** : dimensions et indicateurs recalculés en entier ; fait des ventes au prix applicable
-   à la date de commande, dont seules les partitions `order_date` touchées par silver(`D`) sont
-   recalculées, à partir de toutes les lignes silver de ces dates.
+4. **Gold** ([modèle](data-model.md#gold--modèle-en-étoile)) :
+   - lit les seuls jours silver terminés, dont `D`, sous le verrou `/datalake/_gold.lock` tenu
+     pendant toute l'exécution ;
+   - recalcule tout depuis ces jours : dimensions, fait des ventes au prix applicable à la date
+     de commande, logs web, neuf indicateurs ;
+   - contrôle le grain, les clés, les colonnes obligatoires et les références avant toute
+     écriture ;
+   - réécrit les seules dates `order_date` dont le contenu change et supprime les dates sans
+     commande, échange les autres tables en entier, relit `fact_sales` ;
+   - `gold/_state.json` vaut `PUBLISHING` pendant l'écriture, puis `PUBLISHED`.
 5. **Audit** : chaque job ajoute une ligne à `/datalake/ops/audit` (identifiant d'exécution,
    application YARN, compteurs, durée, statut `SUCCESS`, `FAILED` ou `STOPPED`), même quand il
    échoue ou qu'un signal l'arrête ([interroger l'audit](runbook/README.md#interroger-laudit)).
@@ -234,7 +243,8 @@ src/gtdp/
 │                    days.py (marqueurs des jours complets), pseudonymize.py, reconcile.py, report.py
 ├── perf/            calcul Spark du Lot 6 et outil de comparaison avec MapReduce
 ├── streaming/       sensors.py (lecture, fenêtres, alertes), stream.py (requêtes, puits, arrêt), housekeeping.py
-├── gold/            lot 4, sur sa branche en cours de revue
+├── gold/            tables.py (schémas, clés, références), dimensions.py, facts.py, kpis.py,
+│                    checks.py (invariants, empreintes), state.py (_state.json), report.py
 └── jobs/            run.py (point d'entrée spark-submit), registry.py, catalog.py, un module par job
 mapreduce/           mapper et reducer Hadoop Streaming
 scripts/             exploitation du cluster
