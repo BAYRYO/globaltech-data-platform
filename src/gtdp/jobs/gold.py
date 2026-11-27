@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 from functools import reduce
 
@@ -15,6 +16,7 @@ from gtdp.audit import Layer
 from gtdp.config import ConfigError, GoldSettings
 from gtdp.gold import checks, dimensions, facts
 from gtdp.gold.kpis import KPIS, Star
+from gtdp.gold.state import State, Status, write_state
 from gtdp.gold.tables import (
     DIM_CUSTOMER,
     DIM_DATE,
@@ -61,6 +63,8 @@ def gold(ctx: JobContext) -> None:
     more is removed, and the other tables are replaced whole. ``fact_sales`` is read back: it must
     hold exactly the rows built. The run holds the lock of the whole gold layer (``_gold.lock``
     beside the gold directory) from start to end: a second run fails at once, before reading.
+    ``gold/_state.json`` says ``PUBLISHING`` from the first write until the read-back holds, then
+    ``PUBLISHED`` (``gtdp.gold.state``).
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -75,7 +79,7 @@ def gold(ctx: JobContext) -> None:
 
     with table_lock(ctx.spark, ctx.cfg.paths.gold):
         try:
-            _publish(ctx, _build(ctx, complete, settings))
+            _publish(ctx, _build(ctx, complete, settings), complete)
         finally:
             ctx.spark.catalog.clearCache()
 
@@ -127,8 +131,9 @@ def _build(ctx: JobContext, complete: list[date], settings: GoldSettings) -> dic
     return star | indicators
 
 
-def _publish(ctx: JobContext, tables: dict[str, DataFrame]) -> None:
-    """Write ``tables``: ``fact_sales`` for the order dates that changed, the others whole."""
+def _publish(ctx: JobContext, tables: dict[str, DataFrame], complete: list[date]) -> None:
+    """Write ``tables``, built from the ``complete`` days of silver: ``fact_sales`` for the order
+    dates that changed, the others whole, between a ``PUBLISHING`` and a ``PUBLISHED`` state."""
     spark, gold = ctx.spark, ctx.cfg.paths.gold
     path = table_path(gold, FACT_SALES.name)
     sales = tables[FACT_SALES.name]
@@ -144,6 +149,8 @@ def _publish(ctx: JobContext, tables: dict[str, DataFrame]) -> None:
     )
 
     _ensure_unlocked(spark, [table_path(gold, name) for name in tables])
+    publishing = State(Status.PUBLISHING, ctx.run.run_id, tuple(complete))
+    write_state(spark, gold, publishing)
     if rewritten:
         changed = sales.where(F.col(ORDER_DATE).isin(rewritten)).repartition(ORDER_DATE)
         write_partitions(changed, path, {ORDER_DATE: rewritten})
@@ -159,6 +166,7 @@ def _publish(ctx: JobContext, tables: dict[str, DataFrame]) -> None:
         day for day in built.keys() | after.keys() if built.get(day) != after.get(day)
     ):
         raise GoldCheckError(f"fact_sales differs from the rows built from silver on {differing}")
+    write_state(spark, gold, dataclasses.replace(publishing, status=Status.PUBLISHED))
 
 
 def _ensure_unlocked(spark: SparkSession, paths: list[str]) -> None:

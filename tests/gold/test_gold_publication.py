@@ -1,12 +1,17 @@
 """How a gold run publishes: one run at a time, all tables or a run marked as unfinished."""
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
-from gtdp.io import TableLockedError
+from gtdp.audit import Run
+from gtdp.gold.state import State, Status, read_state
+from gtdp.io import TableLockedError, replace_table
+from gtdp.jobs import gold as gold_job
+from gtdp.jobs.gold import GoldCheckError
 
-from .silver_lake import J1, customer, order, versions
+from .silver_lake import J1, J2, SilverLake, customer, order, versions
 from .test_gold_star import snapshot
 
 
@@ -29,3 +34,66 @@ def test_a_run_that_meets_the_lock_of_another_gold_run_modifies_nothing(silver_l
         silver_lake.run_gold(J1)
 
     assert snapshot(silver_lake) == before
+
+
+def published_j1(silver_lake) -> Run:
+    silver_lake.customers(customer("C1"))
+    silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
+    silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00"))
+    return silver_lake.run_gold(J1)
+
+
+def test_a_run_marks_gold_published_with_the_silver_days_it_read(silver_lake):
+    run = published_j1(silver_lake)
+    silver_lake.orders(J2, order("T2", "2026-01-01T09:00:00", day=J2), complete=False)
+
+    assert read_state(silver_lake.spark, silver_lake.cfg.paths.gold) == State(
+        Status.PUBLISHED, run.run_id, (J1,)
+    )
+
+
+def test_a_run_that_dies_while_writing_leaves_publishing_and_the_next_run_converges(
+    silver_lake, monkeypatch, tmp_path
+):
+    published_j1(silver_lake)
+    silver_lake.customers(customer("C1"), customer("C2", country="DE"))
+    silver_lake.orders(J2, order("T2", "2026-01-01T09:00:00", day=J2, customer="C2"))
+    writes = []
+
+    def dies_on_the_third_table(frame, path):
+        writes.append(path)
+        if len(writes) == 3:
+            raise RuntimeError("killed")
+        replace_table(frame, path)
+
+    monkeypatch.setattr(gold_job, "replace_table", dies_on_the_third_table)
+    with pytest.raises(RuntimeError, match="killed"):
+        silver_lake.run_gold(J2)
+    monkeypatch.undo()
+    killed = read_state(silver_lake.spark, silver_lake.cfg.paths.gold)
+
+    run = silver_lake.run_gold(J2)
+
+    assert killed is not None and killed.status is Status.PUBLISHING
+    assert read_state(silver_lake.spark, silver_lake.cfg.paths.gold) == State(
+        Status.PUBLISHED, run.run_id, (J1, J2)
+    )
+    once = dataclasses.replace(
+        silver_lake.cfg,
+        paths=dataclasses.replace(silver_lake.cfg.paths, gold=(tmp_path / "once").as_uri()),
+    )
+    fresh = SilverLake(silver_lake.spark, once)
+    fresh.run_gold(J2)
+    assert snapshot(silver_lake) == snapshot(fresh)
+
+
+def test_a_run_that_fails_a_check_leaves_the_state_of_the_previous_run(silver_lake):
+    run = published_j1(silver_lake)
+    silver_lake.orders(J2, order("T1", "2026-01-01T08:00:00", day=J2))
+
+    with pytest.raises(GoldCheckError):
+        silver_lake.run_gold(J2)
+
+    assert read_state(silver_lake.spark, silver_lake.cfg.paths.gold) == State(
+        Status.PUBLISHED, run.run_id, (J1,)
+    )
