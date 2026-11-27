@@ -1,0 +1,186 @@
+"""Taking a table lock over: the YARN state of the run that holds it, its age, racing takers."""
+
+import json
+import logging
+import os
+import socket
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+
+import pytest
+
+from gtdp.io import TableLockedError, path_exists, read_table, replace_table, table_lock
+
+pytestmark = pytest.mark.slow
+
+RM_ADDRESS = "yarn.resourcemanager.webapp.address"
+APP = "application_1795715756506_0007"
+DAY_OLD = 24 * 3600
+
+
+def lock_of(application_id):
+    return json.dumps(
+        {
+            "run_id": "run-dead",
+            "application_id": application_id,
+            "locked_at": "2026-11-27T00:57:40+00:00",
+            "token": "d613c746e8564759a20fec2e0e987470",
+        }
+    )
+
+
+def make_old(path):
+    old = time.time() - DAY_OLD
+    os.utime(path, (old, old))
+
+
+def closed_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+@pytest.fixture
+def table(tmp_path):
+    """The path of a table, and its lock file."""
+    return str(tmp_path / "orders"), tmp_path / "_orders.lock"
+
+
+@pytest.fixture
+def resource_manager(spark):
+    """The REST API of a ResourceManager on localhost, named by the Hadoop configuration.
+
+    ``states`` maps an application id to the state it reports, or to the raw body it answers.
+    Any other id is unknown (404). ``requests`` lists the paths it was asked for.
+    """
+    rm = SimpleNamespace(states={}, requests=[])
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self):
+            rm.requests.append(self.path)
+            application_id = self.path.rsplit("/", 1)[-1]
+            answer = rm.states.get(application_id)
+            if answer is None:
+                status, body = 404, {"RemoteException": {"exception": "NotFoundException"}}
+            else:
+                status, body = 200, {"app": {"id": application_id, "state": answer}}
+            data = answer if isinstance(answer, bytes) else json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    conf = spark.sparkContext._jsc.hadoopConfiguration()
+    previous = conf.get(RM_ADDRESS)
+    conf.set(RM_ADDRESS, f"127.0.0.1:{server.server_port}")
+    try:
+        yield rm
+    finally:
+        if previous is None:
+            conf.unset(RM_ADDRESS)
+        else:
+            conf.set(RM_ADDRESS, previous)
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize("state", ["FINISHED", "FAILED", "KILLED"])
+def test_the_lock_of_a_run_that_yarn_reports_ended_is_taken_over_at_once(
+    spark, table, resource_manager, caplog, state
+):
+    path, lock = table
+    lock.write_text(lock_of(APP))
+    resource_manager.states[APP] = state
+
+    with caplog.at_level(logging.WARNING, logger="gtdp.io"), table_lock(spark, path):
+        held = json.loads(lock.read_text())
+
+    assert held["application_id"] == spark.sparkContext.applicationId
+    assert set(resource_manager.requests) == {f"/ws/v1/cluster/apps/{APP}"}
+    assert APP in caplog.text
+    assert not lock.exists()
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "ACCEPTED"])
+def test_the_lock_of_a_run_that_yarn_reports_alive_holds_whatever_its_age(
+    spark, table, resource_manager, state
+):
+    path, lock = table
+    lock.write_text(lock_of(APP))
+    make_old(lock)
+    resource_manager.states[APP] = state
+
+    with pytest.raises(TableLockedError, match=APP), table_lock(spark, path):
+        pass
+
+    assert lock.read_text() == lock_of(APP)
+
+
+UNREACHABLE = "unreachable"
+
+
+@pytest.mark.parametrize("old", [False, True], ids=["fresh", "old"])
+@pytest.mark.parametrize(
+    ("application_id", "answer"),
+    [
+        ("local-1795715756506", None),
+        (APP, None),
+        (APP, b"<html>Service Unavailable</html>"),
+        (APP, UNREACHABLE),
+    ],
+    ids=["local-mode", "unknown-to-yarn", "not-json", "rm-unreachable"],
+)
+def test_without_a_state_from_yarn_a_lock_is_judged_by_its_age(
+    spark, table, resource_manager, caplog, application_id, answer, old
+):
+    path, lock = table
+    lock.write_text(lock_of(application_id))
+    if old:
+        make_old(lock)
+    if answer == UNREACHABLE:
+        spark.sparkContext._jsc.hadoopConfiguration().set(RM_ADDRESS, f"127.0.0.1:{closed_port()}")
+    elif answer is not None:
+        resource_manager.states[application_id] = answer
+
+    with caplog.at_level(logging.INFO, logger="gtdp.io"):
+        if old:
+            with table_lock(spark, path):
+                pass
+        else:
+            with pytest.raises(TableLockedError, match=application_id), table_lock(spark, path):
+                pass
+
+    assert application_id in caplog.text
+    assert lock.exists() is not old
+    if application_id.startswith("local-"):
+        assert resource_manager.requests == []
+
+
+@pytest.mark.parametrize(
+    ("state", "old", "put_back"),
+    [("FINISHED", False, True), ("RUNNING", True, False)],
+    ids=["writer-ended", "writer-running"],
+)
+def test_a_reader_finishes_an_interrupted_swap_once_yarn_reports_its_writer_ended(
+    spark, tmp_path, resource_manager, state, old, put_back
+):
+    gold = tmp_path / "gold"
+    path = str(gold / "dim")
+    replace_table(spark.createDataFrame([(1, "v1")], "id int, version string"), path)
+    os.rename(gold / "dim", gold / "_dim.old")  # the writer died between its two renames
+    lock = gold / "_dim.lock"
+    lock.write_text(lock_of(APP))
+    if old:
+        make_old(lock)
+    resource_manager.states[APP] = state
+
+    assert path_exists(spark, path) is put_back
+    if put_back:
+        assert [tuple(r) for r in read_table(spark, path).collect()] == [(1, "v1")]
