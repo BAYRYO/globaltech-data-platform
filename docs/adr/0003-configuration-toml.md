@@ -33,8 +33,13 @@ l'emporte sur la configuration gtdp. `build_spark` journalise chaque valeur effe
 origine (`spark-submit` ou `gtdp`).
 
 Secrets : le sel de pseudonymisation n'est jamais dans les fichiers, seulement dans la variable
-`GTDP_PSEUDO_SALT`. Il est obligatoire sur le cluster, et son absence rend le code de sortie 2.
-En local, un sel de développement fixe le remplace, avec un avertissement.
+`GTDP_PSEUDO_SALT`. Il est lu quand un job le lit, pas au chargement de la configuration. Il est
+obligatoire sur le cluster pour les jobs qui pseudonymisent (silver), et vérifié avant le
+démarrage de Spark : `@job(..., pseudonymizes=True)`, posé par le seul job `silver`, fait lire le
+sel à `run.py` juste après la configuration, et son absence rend le code de sortie 2. Les autres
+jobs (bronze, streaming, housekeeping, comparaison du Lot 6) et les rapports bronze et streaming
+n'en ont pas besoin. Le rapport silver ne le lit que pour `--customer` et `--explain`, après le
+démarrage de Spark. En local, un sel de développement fixe le remplace, avec un avertissement.
 
 ## Conséquences
 

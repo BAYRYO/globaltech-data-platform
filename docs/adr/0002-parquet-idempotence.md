@@ -60,6 +60,12 @@ prise.
 - Le détenteur du verrou supprime les répertoires `_<table>.staging-*` plus vieux que ce même
   délai, laissés par une exécution tuée.
 
+Le puits du flux capteurs fait exception : au lieu d'échouer, il attend un verrou tenu
+(`_write_waiting` de `gtdp.streaming.stream`). Il réessaie toutes les 2 s, pendant
+`stale_after_s` (300 s, section `[streaming]`) plus 60 s de marge, le temps qu'un housekeeping
+finisse la compaction d'un jour ou que le verrou d'un driver tué soit repris. Le job règle
+`spark.gtdp.io.staleAfterSeconds` sur la même valeur ([ADR-0008](0008-streaming.md)).
+
 ### Renommages et signaux d'arrêt
 
 Les renommages passent par `FileContext.rename` sans écrasement. Un renommage vers un chemin qui
@@ -118,7 +124,7 @@ est journalisé et ne remplace jamais l'erreur du job.
 - Une exécution interrompue avant l'échange ne modifie rien. Arrêtée par signal pendant
   l'échange, elle le termine d'abord.
 - Deux exécutions n'écrivent jamais la même table en même temps : la seconde échoue avec
-  `TableLockedError` et doit être relancée après la première.
+  `TableLockedError` et doit être relancée après la première. Seul le flux capteurs attend.
 - Limite connue : un `kill -9` entre la suppression et le renommage d'une partition laisse cette
   partition absente jusqu'au rejeu du jour. Le verrou de l'exécution tuée bloque ensuite la
   table pendant 6 h, sauf suppression à la main après avoir vérifié que l'application qu'il nomme
