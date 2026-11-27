@@ -31,8 +31,6 @@ def build_spark(
     conf = {
         "spark.sql.shuffle.partitions": str(cfg.spark.shuffle_partitions),
         "spark.sql.adaptive.enabled": str(cfg.spark.adaptive).lower(),
-        # A batch rewrites exactly the partitions it produces (ADR-0002).
-        "spark.sql.sources.partitionOverwriteMode": "dynamic",
         "spark.sql.session.timeZone": cfg.app.timezone,
         "spark.sql.parquet.compression.codec": "snappy",
         **(extra_conf or {}),
