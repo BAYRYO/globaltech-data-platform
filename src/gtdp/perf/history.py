@@ -11,6 +11,8 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from gtdp.perf.mr_compare import shs_ms
+
 STAGE_KEYS = (
     "numCompleteTasks",
     "executorRunTime",
@@ -56,9 +58,28 @@ def group_stage_ids(jobs: Iterable[Mapping], group: str) -> set[int]:
 
 
 def completed_stages(stages: Iterable[Mapping], ids: set[int]) -> list[Mapping]:
-    """The completed attempts of the stages ``ids`` in a ``/stages`` answer; skipped stages, whose
-    shuffle output an earlier stage already wrote, did no work."""
-    return [s for s in stages if s["stageId"] in ids and s["status"] == "COMPLETE"]
+    """The last completed attempt of each stage of ``ids`` in a ``/stages`` answer, by stage id.
+
+    Skipped stages, whose shuffle output an earlier stage already wrote, did no work. A stage
+    resubmitted after a fetch failure has several attempts: the last completed one is the work
+    the job kept, and a failed attempt never counts."""
+    last: dict[int, Mapping] = {}
+    for s in stages:
+        kept = last.get(s["stageId"])
+        if s["stageId"] in ids and s["status"] == "COMPLETE":
+            last[s["stageId"]] = s if kept is None or s["attemptId"] > kept["attemptId"] else kept
+    return [last[sid] for sid in sorted(last)]
+
+
+def missing_stages(stages: Iterable[Mapping], ids: set[int]) -> set[int]:
+    """The stages of ``ids`` that a ``/stages`` answer does not list in any state: the History
+    Server dropped them (``spark.ui.retainedStages``), so totals over the others would be short."""
+    return ids - {s["stageId"] for s in stages}
+
+
+def stage_wall_s(stage: Mapping) -> float:
+    """Seconds from the launch of the stage's first task to its completion."""
+    return (shs_ms(stage["completionTime"]) - shs_ms(stage["firstTaskLaunchedTime"])) / 1000
 
 
 def totals(stages: Iterable[Mapping]) -> dict[str, int]:
