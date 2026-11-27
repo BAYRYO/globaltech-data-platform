@@ -6,13 +6,18 @@ lecture au groupe `analysts` sur chaque table. L'exploitation (exécution, rejeu
 est décrite dans le [runbook gold](../runbook/gold.md), les choix de modèle dans le
 [modèle de données](../data-model.md#gold--modèle-en-étoile).
 
+Gold est une fonction des jours silver terminés : chaque exécution recalcule toutes les tables
+depuis ces jours, contrôle tout, puis publie. `_state.json`, à la racine de `/datalake/gold`, dit
+si les tables forment un tout publié (voir [plus bas](#_statejson)) : ne lisez gold que s'il
+vaut `PUBLISHED`.
+
 Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, les indicateurs dans
 `src/gtdp/gold/kpis.py` (une fonction pure par table). Les exemples sont des lignes du profil
 `dev` (graine 42) publiées sur le cluster après J1, J2 et J3.
 
 | Table | Grain | Clé (vérifiée à chaque exécution) | Partition | Écriture |
 | --- | --- | --- | --- | --- |
-| `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | les dates de commande du jour traité, recalculées depuis les commandes de ces dates de tous les jours silver terminés (`write_partitions`) |
+| `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | recalculée depuis toutes les commandes des jours silver terminés ; seules les dates dont le contenu change sont réécrites (`write_partitions`), les dates qui n'ont plus de commande sont supprimées (`drop_partitions`) |
 | `fact_web_events` | une requête valide des logs web | `log_id` | aucune | reconstruite depuis tout silver (`replace_table`) |
 | `dim_date` | un jour | `date_key` | aucune | reconstruite |
 | `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite |
@@ -30,36 +35,49 @@ Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, le
 | `fact_web_events.date_key` → `dim_date.date_key` | obligatoire, aucun orphelin |
 | `fact_web_events.customer_id` → `dim_customer.customer_id` | facultative (0 ou 1 client) : une valeur sans client est comptée (`unmatched`), pas refusée |
 
-Chaque exécution vérifie, dans cet ordre :
+Chaque exécution calcule toutes les tables, puis vérifie, avant d'écrire quoi que ce soit :
 
-1. avant d'écrire `fact_sales` : chaque commande des dates recalculées trouve exactement une
-   version `dim_product` valide à `event_time` et un client `dim_customer` ;
-2. après l'écriture : les partitions relues contiennent autant de lignes que de commandes silver
-   sur ces dates (aucune commande perdue) ;
-3. avant les indicateurs : clé unique de chaque table de l'étoile et aucun orphelin sur les
-   références obligatoires, sur toutes les partitions.
+1. chaque commande trouve exactement une version `dim_product` valide à `event_time`
+   (`metrics_json.build_violations` : `no_version`, `several_versions`) ;
+2. chaque table de l'étoile a une clé unique (`duplicate_key.<table>`) et aucune valeur nulle
+   dans une colonne obligatoire (`null_required.<table>`) ;
+3. aucune référence obligatoire n'a d'orphelin (`orphan.<table>.<colonne>`) : une commande sans
+   client dans `dim_customer` est un orphelin de `fact_sales.customer_id`.
 
-Une commande qui échoue au contrôle 1 est comptée dans `metrics_json.build_violations`
-(`no_version`, `several_versions`, `unknown_customer`) de la ligne d'audit, écrite aussi quand
-l'exécution échoue, puis l'exécution s'arrête sans écrire `fact_sales`. La garder sans prix
-applicable fausserait le chiffre d'affaires sans le signaler, et l'écarter ferait perdre une
-commande : gold préfère s'arrêter et nommer l'écart. Le rapport recalcule ces trois comptes
-depuis silver à chaque vérification (lignes `orders with ...`).
+Au premier écart, l'exécution s'arrête sans rien écrire et la ligne d'audit, écrite aussi en cas
+d'échec, donne les comptes. Garder une commande sans prix applicable fausserait le chiffre
+d'affaires sans le signaler, et l'écarter ferait perdre une commande : gold préfère s'arrêter et
+nommer l'écart. Après l'écriture, `fact_sales` relu doit avoir, date par date, le même nombre de
+lignes et la même empreinte de contenu que le calcul ; sinon l'exécution échoue et
+`_state.json` reste à `PUBLISHING`.
 
-Aucun membre `UNKNOWN` n'est nécessaire : silver ne publie une commande que si son client a une
-ligne silver et son produit une version SCD2 valide à sa date, et le contrôle 1 le confirme. Le
-pays `UNKNOWN` de `dim_customer` est celui d'un client sans région (drapeau `MISSING_REGION`), pas
-un membre technique.
+Aucun membre `UNKNOWN` n'est nécessaire. Silver ne publie une commande que si son client a une
+ligne silver et si son produit existe dans `products_scd2` ; silver ne vérifie pas qu'une version
+couvre la date de la commande (une commande datée d'avant la première version passerait). Le
+contrôle 1 le vérifie et échoue fermé (`no_version`). Le pays `UNKNOWN` de `dim_customer` est
+celui d'un client sans région (drapeau `MISSING_REGION`), pas un membre technique.
 
-Le rapport (`src/gtdp/gold/report.py`) montre aussi que le total de `revenue_eur` et de
-`invoiced_amount_eur` de `fact_sales` est égal au total recalculé depuis silver, et que
-`dim_date` couvre toutes les dates de commande sans trou.
+Le rapport (`src/gtdp/gold/report.py`) recalcule ces comptes depuis silver (lignes
+`orders with ...`), montre que le total de `revenue_eur` et de `invoiced_amount_eur` de
+`fact_sales` est égal au total recalculé depuis les jours silver dont gold est la fonction, et
+que `dim_date` couvre toutes les dates de commande sans trou.
+
+**Attributs du client.** `dim_customer` est de type SCD 1 : il ne garde que la dernière fiche
+de chaque client. `fact_sales` ne copie donc aucun attribut du client (pays, région, segment) :
+chaque indicateur qui regroupe par pays ou par segment joint `dim_customer` quand il est
+calculé, à chaque exécution. Le pays et le segment des indicateurs sont les valeurs actuelles du
+client, pas celles du jour de la commande : un client qui change de pays déplace tout son
+historique dans les indicateurs, sans réécrire `fact_sales`. Les attributs du produit, eux, sont
+versionnés : `product_sk` désigne la version appliquée à la commande, son prix et sa catégorie.
 
 ## `fact_sales`
 
 Une ligne par commande silver. Le prix catalogue est celui de la version `dim_product` telle que
 `valid_from <= event_time < valid_to` (jointure SCD2 par intervalle sur `product_id`). Les
-montants sont arrondis au centime, demi vers le haut.
+montants sont arrondis au centime, demi vers le haut. Ils sont en `decimal(20,2)` : une quantité
+`int` (10 chiffres) fois un prix `decimal(10,2)` (8 chiffres avant la virgule) tient en 18
+chiffres avant la virgule, aucune ligne acceptée par silver (9 et 8 chiffres au plus) ne
+déborde. Le pays et le segment du client sont dans `dim_customer`.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -69,15 +87,14 @@ montants sont arrondis au centime, demi vers le haut.
 | `customer_id` | string | Client de la commande, présent dans `dim_customer`. | `C003039` |
 | `product_sk` | string | Version catalogue valide à `event_time`, présente dans `dim_product`. | `P00042-20250925081903` |
 | `product_id` | string | Produit de la commande. | `P00042` |
-| `country` | string | `country` du client dans `dim_customer` (SCD 1 : pays actuel). | `FR` |
 | `channel` | string | `web`, `store` ou `partner`. | `partner` |
 | `status` | string | `COMPLETED`, `CANCELLED` ou `RETURNED`. | `CANCELLED` |
 | `quantity` | int | Quantité commandée. | `12` |
 | `unit_price_invoiced` | decimal(10,2) | Prix unitaire facturé sur la ligne (`unit_price_eur` silver). | `505.26` |
 | `applicable_unit_price` | decimal(10,2) | Prix catalogue de la version `product_sk`. | `530.97` |
 | `discount_pct` | decimal(4,3) | Remise de la ligne, `0.000` avant J3. | `0.000` |
-| `revenue_eur` | decimal(12,2) | `quantity × applicable_unit_price × (1 − discount_pct)`. | `6371.64` |
-| `invoiced_amount_eur` | decimal(12,2) | `quantity × unit_price_invoiced × (1 − discount_pct)`. | `6063.12` |
+| `revenue_eur` | decimal(20,2) | `quantity × applicable_unit_price × (1 − discount_pct)`. | `6371.64` |
+| `invoiced_amount_eur` | decimal(20,2) | `quantity × unit_price_invoiced × (1 − discount_pct)`. | `6063.12` |
 | `order_date` | date | Partition : jour UTC de `event_time`. | `2025-09-25` |
 
 L'exemple est la première commande de `P00042` après son changement de prix du
@@ -115,7 +132,8 @@ Tous les jours entre la première et la dernière date des commandes et des logs
 
 ## `dim_customer`
 
-Silver `customers` (SCD 1, déjà pseudonymisé) : la dernière fiche de chaque client.
+Silver `customers` (SCD 1, déjà pseudonymisé) : la dernière fiche de chaque client. Ses
+attributs sont joints par les indicateurs à chaque exécution : valeurs actuelles.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
@@ -146,7 +164,10 @@ Silver `products_scd2` : une ligne par version.
 ## Indicateurs
 
 Le chiffre d'affaires d'un indicateur ne compte que les lignes `COMPLETED`, au prix catalogue
-applicable (`revenue_eur`). Les taux sont des `double`, nuls quand leur dénominateur vaut 0.
+applicable (`revenue_eur`). Les taux sont des `double`, nuls quand leur dénominateur vaut 0. Le
+« pays du client » et le « segment du client » sont ceux de `dim_customer` au moment du calcul
+(valeurs actuelles, voir « Attributs du client ») ; chaque indicateur est recalculé en entier à
+chaque exécution.
 
 ### `kpi_revenue_daily`
 
@@ -155,10 +176,10 @@ Une ligne par date de commande et pays ayant au moins une commande `COMPLETED`.
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `order_date` | date | Date de commande. | `2025-07-26` |
-| `country` | string | Pays du client. | `DE` |
+| `country` | string | Pays actuel du client. | `DE` |
 | `orders` | bigint | Commandes `COMPLETED`. | `413` |
 | `quantity` | bigint | Somme des quantités. | `2684` |
-| `revenue_eur` | decimal(22,2) | Somme de `revenue_eur`. | `1988414.29` |
+| `revenue_eur` | decimal(30,2) | Somme de `revenue_eur`. | `1988414.29` |
 
 ### `kpi_top_products_country`
 
@@ -167,16 +188,18 @@ chaque pays, sur tout l'historique. `rank` est un `dense_rank` sur une fenêtre 
 pays et ordonnée par chiffre d'affaires décroissant : des produits à égalité partagent un rang et
 sont tous gardés, un pays peut donc lister plus de `top_n` produits, et les rangs se suivent sans
 trou. Le résultat ne dépend que des montants (décimaux exacts), jamais de l'ordre de lecture. Un
-test vérifie la règle d'égalité pour `top_n` = 1, 2 et 3, et le rapport remet à côté de
-l'indicateur le top `top_n` de FR recalculé par un `groupBy` et un `orderBy` simples.
+test vérifie la règle d'égalité pour `top_n` = 1, 2 et 3. Le rapport remet à côté de
+l'indicateur, jusqu'au rang `top_n`, les produits de FR dont le chiffre d'affaires est parmi les
+`top_n` plus élevés, classés en Python simple : des produits à égalité y partagent aussi un
+rang.
 
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
-| `country` | string | Pays du client. | `FR` |
+| `country` | string | Pays actuel du client. | `FR` |
 | `rank` | int | Rang dense, 1 = plus gros chiffre d'affaires. | `1` |
 | `product_id` | string | Produit. | `P00042` |
 | `product_name`, `category` | string | Nom et catégorie de la version courante. | `Security P00042`, `Lighting` |
-| `revenue_eur` | decimal(22,2) | Chiffre d'affaires du produit dans le pays. | `203874707.20` |
+| `revenue_eur` | decimal(30,2) | Chiffre d'affaires du produit dans le pays. | `203874707.20` |
 | `quantity`, `orders` | bigint | Quantités et commandes `COMPLETED`. | `398728`, `61252` |
 
 ### `kpi_revenue_moving_avg`
@@ -193,16 +216,18 @@ calendrier ont moins de `N` jours derrière eux : leur moyenne porte sur `window
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `order_date` | date | Jour du calendrier. | `2025-01-03` |
-| `country` | string | Pays. | `FR` |
-| `revenue_eur` | decimal(22,2) | Chiffre d'affaires `COMPLETED` du jour, 0 sans commande. | `5155128.61` |
-| `revenue_moving_avg_eur` | decimal(23,2) | Moyenne de `revenue_eur` sur la fenêtre, arrondie au centime. | `5055677.62` |
+| `country` | string | Pays actuel du client. | `FR` |
+| `revenue_eur` | decimal(30,2) | Chiffre d'affaires `COMPLETED` du jour, 0 sans commande. | `5155128.61` |
+| `revenue_moving_avg_eur` | decimal(31,2) | Moyenne de `revenue_eur` sur la fenêtre, arrondie au centime. | `5055677.62` |
 | `window_days` | bigint | Jours dans la fenêtre : `N`, sauf les `N - 1` premiers jours. | `3` |
 
 ### `kpi_price_deviation`
 
-Médiane du rapport prix facturé / prix catalogue applicable (`percentile_approx`, précision
-10 000), par mois et par catégorie de la version appliquée, sur toutes les lignes quel que soit
-leur statut. La médiane résiste aux lignes du kit dont le prix facturé ne dépend pas du
+Médiane exacte du rapport prix facturé / prix catalogue applicable (`median`, soit
+`percentile(…, 0.5)` : sur un nombre pair de lignes, la moyenne des deux rapports du milieu), par
+mois et par catégorie de la version appliquée, sur toutes les lignes quel que soit leur
+statut. Les groupes comptent au plus quelques dizaines de milliers de lignes : le calcul exact
+reste léger. La médiane résiste aux lignes du kit dont le prix facturé ne dépend pas du
 catalogue ; sur les lignes synthétiques, la remise commerciale tirée dans `[0 ; 0,10]` donne une
 médiane proche de 0,95.
 
@@ -223,7 +248,7 @@ s'additionnent vers un grain plus large : un taux par pays et par jour vaut
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `order_date` | date | Date de commande. | `2026-01-02` |
-| `country` | string | Pays du client. | `FR` |
+| `country` | string | Pays actuel du client. | `FR` |
 | `channel` | string | Canal. | `partner` |
 | `category` | string | Catégorie de la version appliquée. | `Lighting` |
 | `lines` | bigint | Lignes de commande, tous statuts. | `135` |
@@ -240,12 +265,12 @@ Pour un grain plus large (un pays par jour, par exemple), le panier moyen vaut
 | Colonne | Type | Règle | Exemple |
 | --- | --- | --- | --- |
 | `order_date` | date | Date de commande. | `2026-01-02` |
-| `country` | string | Pays du client. | `FR` |
-| `segment` | string | Segment du client dans `dim_customer`. | `SMB` |
+| `country` | string | Pays actuel du client. | `FR` |
+| `segment` | string | Segment actuel du client dans `dim_customer`. | `SMB` |
 | `orders` | bigint | Commandes `COMPLETED`. | `528` |
-| `revenue_eur` | decimal(22,2) | Somme de `revenue_eur`. | `2390096.37` |
-| `avg_basket_eur` | decimal(13,2) | Moyenne de `revenue_eur` (prix catalogue applicable). | `4526.70` |
-| `avg_invoiced_eur` | decimal(13,2) | Moyenne de `invoiced_amount_eur` (prix facturé). | `4309.14` |
+| `revenue_eur` | decimal(30,2) | Somme de `revenue_eur`. | `2390096.37` |
+| `avg_basket_eur` | decimal(21,2) | Moyenne de `revenue_eur` (prix catalogue applicable). | `4526.70` |
+| `avg_invoiced_eur` | decimal(21,2) | Moyenne de `invoiced_amount_eur` (prix facturé). | `4309.14` |
 
 ### `kpi_http_errors_hourly`
 
@@ -298,3 +323,14 @@ compte une fois sous chacun.
 | `code` | string | Motif de rejet silver, ou `ORDER_BEFORE_SIGNUP`. | `MALFORMED_LINE` |
 | `disposition` | string | `rejected` (dans `silver/rejects`) ou `kept` (en silver). | `rejected` |
 | `rows` | bigint | Lignes. | `500` |
+
+## `_state.json`
+
+Un fichier JSON à la racine de `/datalake/gold`, écrit par le job `gold` (`gtdp.gold.state`).
+Il couvre les tables du job `gold`, pas `sensor_aggregates` ni `sensor_alerts` du streaming.
+
+| Champ | Type | Règle | Exemple |
+| --- | --- | --- | --- |
+| `status` | string | `PUBLISHING` de la première écriture d'une exécution à la relecture de `fact_sales`, puis `PUBLISHED`. Une exécution échouée ou tuée en cours d'écriture laisse `PUBLISHING`. Une exécution qui échoue à un contrôle n'écrit rien et laisse l'état précédent. | `PUBLISHED` |
+| `run_id` | string | Exécution auditée qui a écrit l'état (`run_id` de l'audit). | `20261127T101500Z-1a2b3c4d` |
+| `silver_days` | array<string> | Jours silver terminés que cette exécution a lus : gold est leur fonction. | `["2026-01-01", "2026-01-02", "2026-01-03"]` |
