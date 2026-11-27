@@ -13,6 +13,7 @@ from datetime import date
 from enum import StrEnum
 from typing import Any
 
+from py4j.protocol import Py4JJavaError
 from pyspark.sql import SparkSession
 
 from gtdp.io import write_file
@@ -50,15 +51,16 @@ def read_state(spark: SparkSession, gold: str) -> State | None:
     fs, path = _filesystem(spark, f"{gold}/{STATE}")
     if not fs.exists(path):
         return None
-    stream = fs.open(path)
     try:
-        record = json.loads(bytes(stream.readAllBytes()).decode("utf-8"))
+        stream = fs.open(path)
+        try:
+            record = json.loads(bytes(stream.readAllBytes()).decode("utf-8"))
+        finally:
+            stream.close()
         days = tuple(date.fromisoformat(day) for day in record["silver_days"])
         return State(Status(record["status"]), record["run_id"], days)
-    except (ValueError, KeyError, TypeError):
+    except (Py4JJavaError, ValueError, KeyError, TypeError):
         return None
-    finally:
-        stream.close()
 
 
 def _filesystem(spark: SparkSession, path: str) -> tuple[Any, Any]:
