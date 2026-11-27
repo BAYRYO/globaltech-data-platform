@@ -155,7 +155,7 @@ def sample(hosts: Sequence[str]) -> dict[str, object]:
 def poll(out: Path, hosts: Sequence[str], interval: float, stop: Path, max_seconds: float) -> int:
     deadline = time.monotonic() + max_seconds
     with out.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=header(hosts))
+        writer = csv.DictWriter(file, fieldnames=header(hosts), lineterminator="\n")
         writer.writeheader()
         while not stop.exists() and time.monotonic() < deadline:
             started = time.monotonic()

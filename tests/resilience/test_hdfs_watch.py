@@ -94,6 +94,24 @@ def test_the_header_names_every_column_of_a_row(watch):
     assert watch.header(HOSTS) == ["time", *row, "error"]
 
 
+def test_poll_ends_lines_with_lf_so_shell_tools_read_the_last_column(watch, tmp_path, monkeypatch):
+    stop = tmp_path / "stop"
+
+    def one_sample(hosts):
+        stop.touch()
+        return sample(watch, "report-nominal.txt")
+
+    monkeypatch.setattr(watch, "sample", one_sample)
+    out = tmp_path / "timeline.csv"
+
+    watch.poll(out, HOSTS, interval=0, stop=stop, max_seconds=60)
+
+    lines = out.read_bytes().split(b"\n")
+    assert b"\r" not in out.read_bytes()
+    assert lines[0].endswith(b",error") and lines[1].endswith(b",")
+    assert lines[2] == b""
+
+
 def at(seconds: int) -> str:
     return f"2026-11-27T10:{seconds // 60:02d}:{seconds % 60:02d}Z"
 
