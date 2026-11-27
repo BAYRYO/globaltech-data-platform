@@ -32,6 +32,7 @@ est tué. La perte d'un DataNode pendant l'écriture de gold a été provoquée,
 | Format de stockage | même requête sur 9 843 644 commandes : CSV 5,08 s, Parquet 0,61 s, soit −87,9 % (p = 0,008) | [performance](performance.md#naïf-contre-optimisé-kan-44) |
 | Réplication contre erasure coding | XOR-2-1 : 50 % de surcoût contre 200 %, pas de différence de lecture détectable (p = 0,095) | [performance](performance.md#réplication-3-contre-erasure-coding-kan-47) |
 | Perte d'un DataNode | mort déclarée entre 86 et 91 s après le dernier battement de cœur (90 s attendues), 0 bloc perdu ; gold reconstruite pendant la panne, dans une zone vide hors de `/datalake`, identique à la gold publiée | [fiche d'incident](incidents/2026-11-27-perte-datanode.md) |
+| Relance par un tiers | image construite : 122 s depuis zéro jusqu'au smoke test, 67 s avec les données gardées et l'image reconstruite ; README suivi de bout en bout sur YARN, 10 étapes sur 10 en code 0 | [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 
 Limites principales, détaillées en [section 12](#12-limites-et-pistes-damélioration) :
 
@@ -42,8 +43,9 @@ Limites principales, détaillées en [section 12](#12-limites-et-pistes-damélio
 - Un seul NameNode, un seul ResourceManager et un seul rack : la perte du NameNode arrête HDFS,
   celle du ResourceManager arrête l'ordonnancement.
 - Gold se recalcule depuis tout l'historique silver à chaque exécution, et un rejeu silver
-  lancé pendant une exécution gold n'est pas encore détecté. Les règles de KAN-58 et KAN-59 ne
-  sont prouvées que par des tests locaux.
+  lancé pendant une exécution gold n'est pas encore détecté. Le refus de KAN-58 est prouvé sur
+  YARN. Le rejet des dates antérieures à 1900 (KAN-59) ne l'est que par des tests locaux, car les
+  données générées n'ont aucune date de ce genre.
 - La garantie du verrou de table tombe si le ResourceManager reste injoignable, ou si un driver en
   mode client écrit encore après un `yarn application -kill`.
 - L'authentification HDFS est simple : les droits protègent contre une erreur, pas contre un
@@ -145,14 +147,29 @@ chacune, ce qui permet de faire tourner le streaming à côté d'un batch
 ### Relance du cluster
 
 Les trois premières mesures ont été faites par l'équipe sur la machine de référence, en suivant
-le guide comme un tiers le ferait.
+le guide comme un tiers le ferait. Les trois suivantes viennent d'une validation par un tiers, le
+2026-11-27. Un agent qui n'a écrit aucune des pages a suivi le README et le runbook
+d'exploitation depuis un clone neuf. Il a travaillé sur la même machine, avec le code de `main`
+à `28cf5cb` et les pages de la PR #26. Son compte rendu,
+`docs/validation/2026-11-27-validation-tiers.md`, est versé par la PR #26. Le chemin est donné
+en texte tant que cette PR n'est pas fusionnée. Les chiffres sont repris dans les
+[preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486).
 
 | Mesure | Valeur | Source |
 | --- | --- | --- |
 | Premier build de l'image | 6 min 52 s, 1,04 Go d'archives Apache | [guide](platform.md#prérequis) |
 | Clone neuf, image construite : `reset.sh` (volumes vidés), `up.sh`, `init-hdfs.sh`, `smoke/run.sh` | 4 s + 15 s + 26 s + 54 s = 99 s | [guide](platform.md#démarrage-en-moins-de-10-minutes), [#3, preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/3#issuecomment-7200080928) |
 | Second `init-hdfs.sh` | 22 s, ne change rien | [guide](platform.md#démarrage-en-moins-de-10-minutes) |
-| Relance par un tiers en suivant le README depuis zéro | aucune relance par un tiers n'est documentée à cette version du rapport | |
+| Relance par le tiers, données gardées : `down.sh`, `up.sh --build`, puis les trois commandes de « Vérifier la santé » | 5 s + environ 31 s de construction + environ 24 s de démarrage + 7 s = 67 s ; lac inchangé, `fsck /` sain | [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
+| Relance par le tiers sans reconstruction : `down.sh`, `up.sh` | 4 s + 23 s = 27 s | idem |
+| Clone neuf par le tiers, image construite : `reset.sh`, `up.sh`, `init-hdfs.sh`, `smoke/run.sh` | 4 s + 20 s + 34 s + 64 s = 122 s | idem |
+
+La relance par un tiers tient donc sous les 10 minutes du sujet, image construite. Depuis zéro,
+le tiers mesure 122 s contre 99 s pour l'équipe. Chacune des trois dernières commandes prend
+de 5 à 10 s de plus, et aucune explication n'est publiée. La relance avec données gardées
+demandait `--build`. L'image en service datait d'avant la configuration `dfs.hosts.exclude`
+versée au dépôt, et un `up.sh` seul aurait démarré un cluster sain sur cette image (constat m1
+du compte rendu).
 
 Le smoke test lance un job Spark sur YARN visible dans le History Server, le job MapReduce `pi`
 et un job Hadoop Streaming. La CI le rejoue sur un cluster neuf quand une PR change la
@@ -169,6 +186,10 @@ construite. Spark 3.5.3 ne se télécharge plus que sur archive.apache.org, au d
 le téléchargement de Spark seul a pris 27 min sur GitHub Actions, puis 3 min 23 s le même jour,
 dans un job de build à froid de 10,1 min
 ([#24, tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/24#issuecomment-7218993274)).
+Il a pris 18,6 s pendant la validation par un tiers. Ce tiers a profité du cache Docker de la
+machine, qui n'a refait que l'étape de Spark
+([preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486)).
+Un tiers sans image ni cache dépend de ce débit.
 
 ## 4. Ingestion et couche bronze
 
@@ -280,6 +301,9 @@ Silver réel reconstruit sur le cluster, profil `dev`, lignes d'audit des exécu
 
 Source : [#11, preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7202378972)
 et [tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7204818441).
+Le tiers de la [section 3](#relance-du-cluster) a retrouvé ces comptes à l'unité sur YARN, avec le
+code courant, KAN-58 et KAN-59 compris. Il a aussi retrouvé les 108 mesures sans écart
+([preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486)).
 
 Le rapport silver compare chaque compte au manifeste, à l'audit et aux tables relues : 108
 mesures, 0 écart, dont 105 égales et 3 `info` pour le drapeau `FUTURE_SIGNUP` que le manifeste ne
@@ -307,7 +331,7 @@ Le rapport silver la refait ([annexe D](#d-reproduire-les-chiffres)).
 | Critère | Résultat | Source |
 | --- | --- | --- |
 | Rejeu de J2 | `content_sum` des 17 partitions et tables identique avant et après ; noms, tailles et dates des partitions de J1 inchangés | [#11, tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7204818441), [preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7202378972) |
-| J2 après J3 | refusé (`LaterPartitionError`) ; accepté avec `--force`, puis J3 rejoué donne le même contenu | [#11](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7202378972) |
+| J2 après J3 | refusé (`LaterPartitionError`) ; accepté avec `--force`, puis J3 rejoué donne le même contenu. Refait sur YARN par le tiers avec le code courant : même refus, puis tables de contenu silver et gold identiques octet pour octet, 0 date gold réécrite. Entre les deux rejeux, le rapport gold sort en code 1 : J3 est retiré et le contrôle `revenue_eur (applicable price)` est en `MISMATCH`, un écart que le runbook n'annonçait pas | [#11](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7202378972), [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 | Contrôle en échec après écriture, puis `kill -9` pendant l'écriture | jour incomplet, jour suivant refusé, rapport en échec ; réparation selon le runbook, contenu identique | [#11](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7204818441) |
 | SCD2 de `P00042` | 2 versions, 504,06 puis 530,97 EUR à partir du 2025-09-25 08:19:03 ; une commande de 08:11:51 prend 504,06, une de 08:19:09 prend 530,97 | [#11](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7202378972) |
 | Invariants SCD2 | 0 ligne en violation : clé, intervalle vide, recouvrement, trou, `is_current`, version 1 depuis 1900 | idem |
@@ -316,7 +340,7 @@ Le rapport silver la refait ([annexe D](#d-reproduire-les-chiffres)).
 | Confirmation de clients sans le sel | 0 sur 5 024 | idem |
 | Sel dans ce que sert le History Server | 0 occurrence (plans, environnement, jobs, étapes) | [#11](https://github.com/BAYRYO/globaltech-data-platform/pull/11#issuecomment-7204818441) |
 | Sel faible ou différent | sel de développement, sel de 15 caractères et autre sel refusés, rien d'écrit | idem |
-| Date antérieure à 1900 (KAN-59) | une commande, un log ou une version produit est rejeté (`ANCIENT_TIMESTAMP`), un client est gardé avec un drapeau. Avant le correctif, une commande, un log ou un client daté d'avant 1900 faisait échouer tout le job (`WRITE_ANCIENT_DATETIME`), et une version produit de 1899 passait sans contrôle. Prouvé par des tests locaux sur les dépôts `ci` ; pas d'exécution sur YARN, le cluster étant pris par l'exercice de KAN-52 | [#22, preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7214321020) |
+| Date antérieure à 1900 (KAN-59) | une commande, un log ou une version produit est rejeté (`ANCIENT_TIMESTAMP`), un client est gardé avec un drapeau. Avant le correctif, une commande, un log ou un client daté d'avant 1900 faisait échouer tout le job (`WRITE_ANCIENT_DATETIME`), et une version produit de 1899 passait sans contrôle. Le rejet est prouvé par des tests locaux sur les dépôts `ci` seulement. Les données générées n'ont aucune date antérieure à 1900, et l'exécution sur YARN du 2026-11-27 n'a produit aucune ligne `ANCIENT_*`. Elle prouve la non-régression : les 27 exécutions de jobs Spark journalisées écrivent avec le mode `CORRECTED` | [#22, preuves](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7214321020), [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 
 Coût des contrôles : les deux contrôles d'unicité de clé sur les 965 000 commandes de J1 prennent
 8,2 s par exécution de J2 (115 jobs Spark contre 96 avant). J2 a duré 53,5 s, contre 19,1 s pour
@@ -415,7 +439,7 @@ Une partition du 2025-12-30 recalculée à partir de J2 seul aurait 27 lignes au
 | Totaux gold contre silver recalculé | 970 262 commandes ; `revenue_eur` 4 632 664 974,40 ; `invoiced_amount_eur` 4 414 921 584,34 ; CA `COMPLETED` 4 353 641 385,18 = total de `kpi_revenue_daily` | idem |
 | Top 5 de la France recalculé en Python simple | égal à l'indicateur, `P00042` en tête à 203 874 707,20 EUR | [#15, tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/15#issuecomment-7207818096) |
 | Moyenne mobile de la France recalculée à la main | 367 jours, 0 différence | idem |
-| Silver incomplet (KAN-58) | gold refuse avant toute écriture. Les 14 tests de `tests/gold/test_gold_silver_days.py` passent ; 13 nouveaux tests échouaient sur la première version du correctif. Prouvé par des tests locaux sur les dépôts `ci` ; pas d'exécution sur YARN, le cluster étant pris par l'exercice de KAN-52 | [#22, tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7217275110) |
+| Silver incomplet (KAN-58) | gold refuse avant toute écriture. Les 14 tests de `tests/gold/test_gold_silver_days.py` passent ; 13 nouveaux tests échouaient sur la première version du correctif. Sur YARN, le 2026-11-27, un silver J3 a été arrêté par SIGTERM (code 143) après avoir publié `customers` seul. `gold --date 2026-01-02` sort alors en code 1 après 3,7 s, sur une `IncompleteSilverError` qui nomme le jour, les sources manquantes et la commande à lancer ; `_state.json` reste celui de l'exécution précédente. Après silver J3 puis gold J3, le rapport gold revient à `0 checks failed`. Le chemin d'acceptation a tourné dans le README : gold `PUBLISHED`, 0 contrôle en échec, `_built_for.json` écrits sur YARN | [#22, tour de correction](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7217275110), [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 
 Exécution gold de référence avant la panne, seule sur le cluster : 40,0 s. Reconstruction
 complète de gold dans une zone vide : 49,1 s
@@ -427,9 +451,11 @@ pas avec le jour, ce qui reste acceptable à un million de commandes par an. Un 
 jour complet lancé pendant une exécution gold n'est pas détecté : gold peut lire certaines tables
 avant la réécriture et d'autres après ([#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7217275110)).
 Sur une table écrite avant #22, sans `_built_for.json`, une version produit renvoyée sur un jour
-incomplet passe inaperçue jusqu'à la reconstruction suivante. C'est probablement le cas du lac de
-référence : aucune reconstruction de silver sur le cluster n'est publiée depuis #22 (inféré). Les
-correctifs KAN-58 et KAN-59 n'ont pas encore tourné sur YARN. Gold refuse une dimension
+incomplet passe inaperçue jusqu'à la reconstruction suivante. Le lac de référence n'est plus dans
+ce cas. Le tiers de la [section 3](#relance-du-cluster) l'a reconstruit depuis zéro avec le code
+courant, et `silver/customers` comme `silver/products_scd2` portent leur `_built_for.json`
+([preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486)).
+Gold refuse une dimension
 reconstruite pour un jour incomplet même quand son contenu n'a pas changé (#22). Le pays d'un
 indicateur est le pays actuel du client : un déménagement déplace tout son historique.
 
@@ -917,7 +943,10 @@ le dépôt compte 23 PR fusionnées (#1 à #24 sauf #12) et une PR fermée sans 
 **Limite.** La CI mesure la couverture sans seuil minimal (`fail_under` absent de
 `pyproject.toml`). Les preuves sur le cluster sont des exécutions publiées dans les PR, pas des
 tests automatiques. Le job `streaming-housekeeping` n'est lancé par aucun test local. KAN-58 et
-KAN-59 ont été fusionnées sans exécution sur YARN, contre la définition de « terminé ». Les
+KAN-59 ont été fusionnées sans exécution sur YARN, contre la définition de « terminé ».
+L'exécution est venue après la fusion, le 2026-11-27. Elle prouve les deux chemins de KAN-58,
+mais seulement la non-régression de KAN-59 ([section 5](#autres-preuves),
+[section 6](#6-couche-gold)). Les
 relecteurs sont des modèles : la règle « constat prouvé par une exécution » limite les faux
 constats, pas les angles morts communs aux modèles.
 
@@ -1000,8 +1029,8 @@ celui de la piste.
 | 2 | `XOR-2-1` seule politique possible ; `RS-6-3` refusée, `RS-3-2` demande 5 DataNodes | 1 panne tolérée par groupe, aucune réparation sans nœud libre | plus de DataNodes, puis `RS-3-2` | 1 280 Mio pour 2 DataNodes de plus : le pire cas passe de 13 824 à 15 104 Mio sur 15 444, soit 340 Mio de marge (calculé) | [ADR-0006](adr/0006-topologie-hdfs.md#mise-à-jour-du-2026-11-27) |
 | 3 | Fenêtre résiduelle du verrou de table | deux cas où deux exécutions écrivent la même table : le ResourceManager reste injoignable pendant qu'une exécution vivante garde un verrou plus de `staleAfterSeconds` (6 h pour les batchs, 300 s pour les tables du flux) ; un driver en mode client renomme encore après un `yarn application -kill`, que YARN rapporte `KILLED`, et son verrou est repris aussitôt | format de table transactionnel | hors programme du module (Delta Lake, Iceberg) | [ADR-0002](adr/0002-parquet-idempotence.md#garantie) |
 | 4 | Rejeu silver pendant une exécution gold (bord de KAN-58) | gold peut lire certaines tables avant la réécriture d'un jour et d'autres après | revérifier les jours complets avant `PUBLISHING`, en comparant les `run_id` des marqueurs à ceux lus au début : la seule liste des jours complets ne change pas quand un jour complet est rejoué (raisonnement, non testé) | une relecture des marqueurs avant la publication | [#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22#issuecomment-7217275110), [dictionnaire silver](data-dictionary/silver.md#jours-complets) |
-| 5 | Correctifs KAN-58 et KAN-59 prouvés par des tests locaux seulement | aucune exécution de silver ni de gold sur YARN n'est publiée depuis #22 ; le lac de référence n'a probablement pas de `_built_for.json` (inféré) | reconstruire silver de J1 à J3 puis gold sur YARN, et publier les comptes | quelques minutes de cluster | [#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22) |
-| 6 | Tables écrites avant #22, sans `_built_for.json` | une version produit renvoyée sur un jour incomplet passe jusqu'à la reconstruction ; seuls les marqueurs décident du contrôle des commandes contre les dimensions | reconstruire silver une fois | un rejeu de J1 à J3 | [#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22), [dictionnaire silver](data-dictionary/silver.md#silverorders) |
+| 5 | Rejet des dates antérieures à 1900 (KAN-59) prouvé par des tests locaux seulement | les données générées n'ont aucune date antérieure à 1900. L'exécution sur YARN du 2026-11-27 prouve la non-régression (écritures en mode `CORRECTED`), pas le rejet. KAN-58 est prouvée sur YARN, refus compris | traiter sur YARN un dépôt d'essai qui contient des dates de 1899 | un dépôt d'essai et une exécution silver | [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486), [#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22) |
+| 6 | Tables écrites avant #22, sans `_built_for.json` | une version produit renvoyée sur un jour incomplet passe jusqu'à la reconstruction ; seuls les marqueurs décident du contrôle des commandes contre les dimensions. Le lac de référence, reconstruit depuis zéro le 2026-11-27, n'est plus concerné | reconstruire silver une fois | un rejeu de J1 à J3 | [#22](https://github.com/BAYRYO/globaltech-data-platform/pull/22), [dictionnaire silver](data-dictionary/silver.md#silverorders), [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 | 7 | `kill -9` entre suppression et renommage d'une partition | partition absente jusqu'au rejeu du jour | rejouer le jour (procédure documentée) | aucun | [ADR-0002](adr/0002-parquet-idempotence.md#conséquences) |
 | 8 | Authentification simple | HDFS croit `HADOOP_USER_NAME` : un utilisateur qui se déclare `etl` lit les rejets, données personnelles en clair | Kerberos | non demandé par le sujet, non chiffré ici | [ADR-0011](adr/0011-exploitation-plateforme.md), [conteneur client](platform.md#conteneur-client) |
 | 9 | Risque résiduel de pseudonymisation | `user_agent`, requête de `path`, préfixe IP, quasi-identifiants | tronquer l'agent utilisateur et la requête | perte d'analyse sur ces champs | [ADR-0004](adr/0004-pseudonymisation.md) |
@@ -1023,7 +1052,7 @@ celui de la piste.
 | 20 | `_record_hash` en hexadécimal | 73,4 % des octets de `bronze/orders` | stocker les 32 octets en binaire | changement de schéma bronze et silver | [performance](performance.md#constat--_record_hash-en-bronze) |
 | 21 | Leviers mesurés non appliqués | `gold/fact_sales`, 367 dossiers sur le lac `dev`, est listée par un job Spark, qui coûtait +79,4 % sur la requête du banc (déduit, non mesuré sur gold) ; snappy et réplication 3 pour toutes les tables du lac | relever `spark.sql.sources.parallelPartitionDiscovery.threshold` ; zstd et `XOR-2-1` pour les tables froides | un réglage Spark à mesurer sur gold ; une politique de stockage par répertoire froid | [ADR-0010](adr/0010-moteur-et-reglages-spark.md) |
 | 22 | Ligne d'audit perdue quand le driver est tué | après un `kill -9`, la perte du conteneur client ou un Ctrl+C sur `submit.sh`, l'exécution n'a pas de ligne d'audit | lister dans les rapports batch les applications YARN sans ligne d'audit, comme le fait déjà le rapport du flux | une requête au ResourceManager par rapport | [ADR-0002](adr/0002-parquet-idempotence.md#table-daudit-et-arrêt-dune-exécution), [ADR-0008](adr/0008-streaming.md#conséquences) |
-| 23 | Relance par un tiers non documentée ; image à construire | un tiers sans image dépend d'archive.apache.org : téléchargement de Spark de 27 min mesuré sur GitHub Actions | relance chronométrée par un tiers en suivant le README ; image publiée dans un registre | une construction et une publication d'image | [section 3](#relance-du-cluster), [#24](https://github.com/BAYRYO/globaltech-data-platform/pull/24#issuecomment-7218993274) |
+| 23 | Image à construire depuis archive.apache.org | un tiers sans image ni cache dépend du débit d'archive.apache.org. Le téléchargement de Spark seul a pris 27 min sur GitHub Actions, 3 min 23 s le même jour, puis 18,6 s pendant la validation par un tiers. La relance elle-même est validée par ce tiers : 67 s avec les données gardées, 122 s depuis zéro, image construite | image publiée dans un registre | une construction et une publication d'image | [section 3](#relance-du-cluster), [#24](https://github.com/BAYRYO/globaltech-data-platform/pull/24#issuecomment-7218993274), [preuves sur YARN](https://github.com/BAYRYO/globaltech-data-platform/pull/25#issuecomment-7224839486) |
 | 24 | Mesures sur une machine, un tour d'échauffement, 5 exécutions | effets de quelques pour cent non détectables, cache de pages partagé | 2 tours d'échauffement (défaut actuel de l'outil), cluster multi-machines | temps de cluster exclusif | [performance](performance.md#protocole-commun) |
 | 25 | Couverture sans seuil en CI | une baisse de couverture ne bloque pas une PR | `fail_under` dans `pyproject.toml` | aucun | `pyproject.toml` |
 
@@ -1054,7 +1083,7 @@ KAN-52 ont rendues fausses.
 | Critère du sujet (niveau Excellent) | Section |
 | --- | --- |
 | Erasure coding comparé à la réplication avec chiffres, sortie `fsck` analysée | [9](#réplication-3-contre-erasure-coding) (colonnes « Blocs ou groupes » et « Unités », lecture des sorties `fsck`), [11](#11-résilience) |
-| Relance par un tiers en moins de 10 min | [3](#relance-du-cluster) : mesurée par l'équipe, aucune relance par un tiers documentée à cette version ; [12](#risques-pour-lexploitation), ligne 23 |
+| Relance par un tiers en moins de 10 min | [3](#relance-du-cluster) : par un tiers, 67 s avec les données gardées et 122 s depuis zéro, image construite ; [12](#risques-pour-lexploitation), ligne 23 : l'image à construire |
 | SCD2 correct (prix à la date de commande), changement de schéma, pseudonymisation justifiée | [5](#5-couche-silver), [6](#6-couche-gold) |
 | Propres + rejets + doublons = total, rejeu sans doublon | [4](#4-ingestion-et-couche-bronze), [5](#réconciliation-de-j1-à-j3) |
 | Deux corrections du skew comparées, partitions justifiées par la mesure, trois `explain` | [9](#déséquilibre-de-clé--deux-corrections-et-la-diffusion), [partitions](#nombre-de-partitions-de-shuffle), [plans](#trois-plans-commentés) |
@@ -1063,7 +1092,7 @@ KAN-52 ont rendues fausses.
 | Leviers classés par impact, limites et coûts, résultats reproductibles | [9](#leviers-classés-par-impact), [reproductibilité](#reproductibilité), [annexe D](#d-reproduire-les-chiffres) |
 | Revues visibles, journalisation et audit exploitables, tests des règles métier | [10](#10-industrialisation-et-qualité) |
 | Qualité logicielle : tests, CI, code propre, Git | [tests et CI](#tests-et-ci), [pratique Git](#pratique-git) |
-| Documentation utilisable par un tiers, décisions argumentées | [README](../README.md), [annexe A](#a-décisions-darchitecture), [runbooks](runbook/README.md), [dictionnaire](data-dictionary/README.md) |
+| Documentation utilisable par un tiers, décisions argumentées | [README](../README.md), [annexe A](#a-décisions-darchitecture), [runbooks](runbook/README.md), [dictionnaire](data-dictionary/README.md) ; validation par un tiers en [section 3](#relance-du-cluster) : README suivi de bout en bout, 4 procédures du runbook menées à leur état final |
 | Recul critique sur les limites | [12](#12-limites-et-pistes-damélioration) |
 
 ### C. Glossaire
