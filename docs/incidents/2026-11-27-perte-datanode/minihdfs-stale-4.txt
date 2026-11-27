@@ -1,0 +1,22 @@
+=== 4 DataNodes, replication 3, avoid.write.stale.datanode=true
+killed 127.0.0.1:19863 at 12:09:58; files written 45 s later
+first allocations naming the stale node: 0 of 8 files
+12:10:44,775 BLOCK* allocate blk_1073741825_1001, replicas=127.0.0.1:19861, 127.0.0.1:19864, 127.0.0.1:19862 for /after1._COPYING_
+12:10:46,092 BLOCK* allocate blk_1073741826_1002, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after2._COPYING_
+12:10:47,309 BLOCK* allocate blk_1073741827_1003, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after3._COPYING_
+12:10:48,463 BLOCK* allocate blk_1073741828_1004, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after4._COPYING_
+12:10:49,659 BLOCK* allocate blk_1073741829_1005, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after5._COPYING_
+12:10:50,864 BLOCK* allocate blk_1073741830_1006, replicas=127.0.0.1:19861, 127.0.0.1:19864, 127.0.0.1:19862 for /after6._COPYING_
+12:10:52,048 BLOCK* allocate blk_1073741831_1007, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after7._COPYING_
+12:10:53,220 BLOCK* allocate blk_1073741832_1008, replicas=127.0.0.1:19864, 127.0.0.1:19861, 127.0.0.1:19862 for /after8._COPYING_
+=== 4 DataNodes, replication 3, avoid.write.stale.datanode=false
+killed 127.0.0.1:19863 at 12:10:59; files written 45 s later
+first allocations naming the stale node: 6 of 8 files
+12:11:45,253 BLOCK* allocate blk_1073741825_1001, replicas=127.0.0.1:19862, 127.0.0.1:19864, 127.0.0.1:19863 for /after1._COPYING_
+12:11:46,591 BLOCK* allocate blk_1073741827_1003, replicas=127.0.0.1:19864, 127.0.0.1:19862, 127.0.0.1:19861 for /after2._COPYING_
+12:11:47,818 BLOCK* allocate blk_1073741828_1004, replicas=127.0.0.1:19863, 127.0.0.1:19864, 127.0.0.1:19861 for /after3._COPYING_
+12:11:48,995 BLOCK* allocate blk_1073741830_1006, replicas=127.0.0.1:19861, 127.0.0.1:19862, 127.0.0.1:19864 for /after4._COPYING_
+12:11:50,142 BLOCK* allocate blk_1073741831_1007, replicas=127.0.0.1:19863, 127.0.0.1:19861, 127.0.0.1:19864 for /after5._COPYING_
+12:11:51,459 BLOCK* allocate blk_1073741833_1009, replicas=127.0.0.1:19863, 127.0.0.1:19861, 127.0.0.1:19864 for /after6._COPYING_
+12:11:52,678 BLOCK* allocate blk_1073741835_1011, replicas=127.0.0.1:19861, 127.0.0.1:19863, 127.0.0.1:19862 for /after7._COPYING_
+12:11:53,852 BLOCK* allocate blk_1073741837_1013, replicas=127.0.0.1:19864, 127.0.0.1:19863, 127.0.0.1:19861 for /after8._COPYING_

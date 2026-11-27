@@ -1,0 +1,7 @@
+# rejeu sous panne (scratch /user/etl/gold-write-under-failure)
+|started_at                |ingestion_date|status |rows_in|rows_out|duration_s|yarn_app_id                   |rewritten|removed|unchanged|build_violations                     |error_message|
+|2026-11-27 11:43:23.020647|2026-01-03    |SUCCESS|970262 |970262  |159.265   |application_1795715756506_0447|367      |0      |0        |{"no_version":0,"several_versions":0}|NULL         |
+
+# même construction sans panne (scratch /user/etl/gold-write-baseline)
+|started_at                |ingestion_date|status |rows_in|rows_out|duration_s|yarn_app_id                   |rewritten|removed|unchanged|build_violations                     |error_message|
+|2026-11-27 11:52:31.067842|2026-01-03    |SUCCESS|970262 |970262  |49.142    |application_1795715756506_0449|367      |0      |0        |{"no_version":0,"several_versions":0}|NULL         |

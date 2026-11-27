@@ -1,0 +1,304 @@
+Container: container_1795715756506_0447_01_000003 on nodemanager1_35019
+Container: container_1795715756506_0447_01_000003 on nodemanager1_35019
+Container: container_1795715756506_0447_01_000003 on nodemanager1_35019
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794982_54246
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794983_54247
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794983_54247
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794982_54246
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794990_54255
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794990_54255
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794992_54257
+java.net.ConnectException: Connection refused
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794992_54257
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:05 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794998_54263
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:05 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794998_54263
+11:45:05 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:05 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795000_54265
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:05 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795000_54265
+11:45:05 WARN DataStreamer: Slow waitForAckedSeqno took 65075ms (threshold=30000ms). File being written: /user/etl/gold-write-under-failure/gold/_fact_sales.staging-98bee30bb2fa4f069a24433a7b55b4bf/_temporary/0/_temporary/attempt_202611271143562816174255350024178_0191_m_000002_508/order_date=2025-07-25/part-00002-39fbef9e-aa7a-47e2-aedb-b39a292992c9.c000.snappy.parquet, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073795021_54286, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]].
+11:45:05 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:05 WARN DataStreamer: Slow waitForAckedSeqno took 65084ms (threshold=30000ms). File being written: /user/etl/gold-write-under-failure/gold/_fact_sales.staging-98bee30bb2fa4f069a24433a7b55b4bf/_temporary/0/_temporary/attempt_202611271143562816174255350024178_0191_m_000000_506/order_date=2025-09-17/part-00000-39fbef9e-aa7a-47e2-aedb-b39a292992c9.c000.snappy.parquet, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073795022_54287, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]].
+11:45:06 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795024_54289
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:06 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795024_54289
+11:45:06 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:09 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795030_54295
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:09 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795030_54295
+11:45:09 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:17 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795023_54288
+java.net.NoRouteToHostException: No route to host
+11:45:17 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795033_54298
+java.net.NoRouteToHostException: No route to host
+11:45:17 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795023_54288
+11:45:17 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795033_54298
+11:45:17 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:17 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:19 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795051_54316
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:19 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795052_54317
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:19 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795051_54316
+11:45:19 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795052_54317
+11:45:19 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:19 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:20 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795057_54322
+java.net.NoRouteToHostException: No route to host
+11:45:20 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795057_54322
+11:45:20 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:22 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795058_54323
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:22 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795062_54327
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:22 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795062_54327
+11:45:22 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795058_54323
+11:45:22 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:22 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795069_54334
+java.net.NoRouteToHostException: No route to host
+11:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795067_54332
+java.net.NoRouteToHostException: No route to host
+11:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795069_54334
+11:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795067_54332
+11:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:28 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795075_54340
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:28 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795075_54340
+11:45:28 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:29 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795076_54341
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:29 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795082_54347
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:29 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795082_54347
+11:45:29 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795076_54341
+11:45:29 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:29 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:32 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795088_54353
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:32 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795088_54353
+11:45:32 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:32 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795087_54352
+java.net.NoRouteToHostException: No route to host
+11:45:32 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795087_54352
+11:45:32 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:34 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795096_54361
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:34 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795096_54361
+11:45:34 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:35 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795095_54360
+java.net.NoRouteToHostException: No route to host
+11:45:35 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795095_54360
+11:45:35 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:36 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795104_54369
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:36 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795100_54365
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:36 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795104_54369
+11:45:36 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795100_54365
+11:45:36 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:36 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:39 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795110_54375
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:39 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795110_54375
+11:45:39 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:39 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795112_54377
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:39 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795112_54377
+11:45:39 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:42 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795117_54382
+java.net.NoRouteToHostException: No route to host
+11:45:42 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795117_54382
+11:45:42 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:42 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795120_54385
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:42 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795120_54385
+11:45:42 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+Container: container_1795715756506_0447_01_000003 on nodemanager1_35019
+Container: container_1795715756506_0447_01_000001 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000001 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000001 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000001 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000002 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000002 on nodemanager2_40919
+Container: container_1795715756506_0447_01_000002 on nodemanager2_40919
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794984_54248
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794981_54245
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794984_54248
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794981_54245
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794989_54254
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794989_54254
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794991_54256
+java.net.ConnectException: Connection refused
+11:44:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794991_54256
+11:44:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:39 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794997_54262
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:39 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794997_54262
+11:44:39 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:39 WARN DataStreamer: Slow waitForAckedSeqno took 38632ms (threshold=30000ms). File being written: /user/etl/gold-write-under-failure/gold/_fact_sales.staging-98bee30bb2fa4f069a24433a7b55b4bf/_temporary/0/_temporary/attempt_202611271143562816174255350024178_0191_m_000001_507/order_date=2025-09-21/part-00001-39fbef9e-aa7a-47e2-aedb-b39a292992c9.c000.snappy.parquet, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073795001_54266, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]].
+11:44:47 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795002_54267
+java.net.NoRouteToHostException: No route to host
+11:44:47 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795002_54267
+11:44:47 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:50 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795004_54269
+java.net.NoRouteToHostException: No route to host
+11:44:50 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795004_54269
+11:44:50 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:53 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795006_54271
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:53 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795006_54271
+11:44:53 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:54 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795008_54273
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:54 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795008_54273
+11:44:54 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:44:57 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795010_54275
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:44:57 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795010_54275
+11:44:57 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795012_54277
+java.net.NoRouteToHostException: No route to host
+11:45:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795012_54277
+11:45:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:00 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794999_54264
+org.apache.hadoop.net.ConnectTimeoutException: 60000 millis timeout while waiting for channel to be ready for connect. ch : java.nio.channels.SocketChannel[connection-pending remote=/172.22.0.12:9866]
+11:45:00 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794999_54264
+11:45:00 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:00 WARN DataStreamer: Slow waitForAckedSeqno took 60041ms (threshold=30000ms). File being written: /user/etl/gold-write-under-failure/gold/_fact_sales.staging-98bee30bb2fa4f069a24433a7b55b4bf/_temporary/0/_temporary/attempt_202611271143562816174255350024178_0191_m_000003_509/order_date=2025-09-16/part-00003-39fbef9e-aa7a-47e2-aedb-b39a292992c9.c000.snappy.parquet, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073795015_54280, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]].
+11:45:03 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795014_54279
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:03 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795014_54279
+11:45:03 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:04 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795016_54281
+java.net.NoRouteToHostException: No route to host
+11:45:04 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795016_54281
+11:45:04 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:06 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795020_54285
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:06 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795018_54283
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:06 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795018_54283
+11:45:06 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795020_54285
+11:45:06 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:06 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:09 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795028_54293
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:09 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795028_54293
+11:45:09 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:09 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795029_54294
+java.net.NoRouteToHostException: No route to host
+11:45:09 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795029_54294
+11:45:09 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:10 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795036_54301
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:10 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795034_54299
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:10 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795034_54299
+11:45:10 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795036_54301
+11:45:10 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:10 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:13 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795039_54304
+java.net.NoRouteToHostException: No route to host
+11:45:13 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795039_54304
+11:45:13 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:13 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795040_54305
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:13 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795040_54305
+11:45:13 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:16 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795044_54309
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:16 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795044_54309
+11:45:16 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:16 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795043_54308
+java.net.NoRouteToHostException: No route to host
+11:45:16 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795043_54308
+11:45:16 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:19 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795046_54311
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:19 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795046_54311
+11:45:19 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:20 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795048_54313
+java.net.NoRouteToHostException: No route to host
+11:45:20 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795048_54313
+11:45:20 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:22 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795060_54325
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:22 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795056_54321
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:22 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795060_54325
+11:45:22 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795056_54321
+11:45:22 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:22 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795068_54333
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795070_54335
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795068_54333
+11:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795070_54335
+11:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:28 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795078_54343
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:28 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795078_54343
+11:45:28 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:29 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795077_54342
+java.net.NoRouteToHostException: No route to host
+11:45:29 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795077_54342
+11:45:29 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:31 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795081_54346
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:31 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795081_54346
+11:45:31 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:32 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795086_54351
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:32 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795086_54351
+11:45:32 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:34 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795093_54358
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:34 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795090_54355
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:34 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795090_54355
+11:45:34 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795093_54358
+11:45:34 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:34 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:36 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795101_54366
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:36 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795102_54367
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:36 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795101_54366
+11:45:36 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795102_54367
+11:45:36 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:36 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:39 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795111_54376
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:39 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795109_54374
+java.net.NoRouteToHostException: No route to host
+11:45:39 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795109_54374
+11:45:39 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795111_54376
+11:45:39 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:39 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:42 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795119_54384
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:42 WARN DataStreamer: Exception in createBlockOutputStream blk_1073795118_54383
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.12:9866
+11:45:42 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795119_54384
+11:45:42 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073795118_54383
+11:45:42 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+11:45:42 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.12:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+Container: container_1795715756506_0447_01_000002 on nodemanager2_40919
