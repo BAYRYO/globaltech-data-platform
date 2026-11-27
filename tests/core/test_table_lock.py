@@ -15,6 +15,7 @@ from pyspark import SparkContext
 
 import gtdp.io
 from gtdp.io import (
+    RUN_ID_PROPERTY,
     TableLockedError,
     path_exists,
     read_table,
@@ -287,3 +288,125 @@ def test_a_run_killed_at_any_step_never_blocks_the_next_one_once_yarn_says_it_en
 
     assert blocked == []
     assert most_steps < STEPS[-1], "the run always died: STEPS does not cover its steps"
+
+
+class Gate:
+    """The filesystem of one run, which waits before its first delete of the lock file."""
+
+    def __init__(self):
+        self.fs, self.armed = None, True
+        self.reached, self.resume = threading.Event(), threading.Event()
+
+    def delete(self, path, recursive):
+        if self.armed and path.getName().endswith(".lock"):
+            self.armed = False
+            self.reached.set()
+            assert self.resume.wait(60)
+        return self.fs.delete(path, recursive)
+
+    def __getattr__(self, name):
+        return getattr(self.fs, name)
+
+
+def gate(monkeypatch, *runs):
+    """Give each thread named in ``runs`` a ``Gate`` around the filesystem ``gtdp.io`` uses."""
+    real, gates = gtdp.io._filesystem, {run: Gate() for run in runs}
+
+    def filesystem(spark, path):
+        fs, hadoop_path = real(spark, path)
+        found = gates.get(threading.current_thread().name)
+        if found is None:
+            return fs, hadoop_path
+        found.fs = fs
+        return found, hadoop_path
+
+    monkeypatch.setattr(gtdp.io, "_filesystem", filesystem)
+    return gates
+
+
+class Run(threading.Thread):
+    """A run that takes the lock of ``path`` and holds it until ``leave`` is set."""
+
+    def __init__(self, spark, path, name):
+        super().__init__(name=name)
+        self.spark, self.path, self.outcome = spark, path, None
+        self.inside, self.leave = threading.Event(), threading.Event()
+
+    def run(self):
+        self.spark.sparkContext.setLocalProperty(RUN_ID_PROPERTY, self.name)
+        try:
+            with table_lock(self.spark, self.path):
+                self.outcome = "held"
+                self.inside.set()
+                assert self.leave.wait(60)
+        except TableLockedError:
+            self.outcome = "locked"
+        finally:
+            self.inside.set()
+
+
+def until(condition):
+    deadline = time.monotonic() + 60
+    while not condition():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+
+def test_the_release_of_a_run_taken_for_dead_never_deletes_the_lock_of_its_taker(
+    spark, table, monkeypatch
+):
+    """run-x is alive but outlives staleAfterSeconds and YARN gives no state (local mode): the age
+    rule takes it for dead, the documented limit. run-b takes its lock over while run-x
+    releases. run-x must leave run-b's lock alone, so that no third run walks in."""
+    path, lock = table
+    gates = gate(monkeypatch, "run-x", "run-b")
+    x, b = Run(spark, path, "run-x"), Run(spark, path, "run-b")
+    x.start()
+    assert x.inside.wait(60)
+    make_old(lock)
+    b.start()
+    assert gates["run-b"].reached.wait(60)  # run-b claimed run-x's lock, is about to delete it
+    x.leave.set()
+    until(lambda: gates["run-x"].reached.is_set() or not x.is_alive())
+    gates["run-b"].resume.set()
+    assert b.inside.wait(60)
+    assert b.outcome == "held"
+    gates["run-x"].resume.set()
+    x.join(60)
+    try:
+        assert lock.exists(), "run-x deleted the lock that run-b holds"
+        assert json.loads(lock.read_text())["run_id"] == "run-b"
+        with pytest.raises(TableLockedError), table_lock(spark, path):
+            pass
+    finally:
+        b.leave.set()
+        b.join(60)
+
+
+def test_a_taker_and_a_run_that_takes_the_released_lock_never_both_hold_it(
+    spark, table, monkeypatch
+):
+    """Same run-x. run-b has checked that the lock still holds what it judged dead when run-x
+    releases and run-a tries the lock: one of run-a and run-b holds it, never both."""
+    path, lock = table
+    gates = gate(monkeypatch, "run-b")
+    x, b, a = (Run(spark, path, name) for name in ("run-x", "run-b", "run-a"))
+    x.start()
+    assert x.inside.wait(60)
+    make_old(lock)
+    b.start()
+    assert gates["run-b"].reached.wait(60)  # run-b is between its check and its delete
+    x.leave.set()
+    x.join(60)
+    a.start()
+    assert a.inside.wait(60)
+    gates["run-b"].resume.set()
+    assert b.inside.wait(60)
+    holders = [run.name for run in (a, b) if run.outcome == "held"]
+    named = json.loads(lock.read_text())["run_id"] if lock.exists() else None
+    for run in (a, b):
+        run.leave.set()
+        run.join(60)
+
+    assert len(holders) == 1
+    assert named == holders[0]
