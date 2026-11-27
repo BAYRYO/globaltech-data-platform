@@ -60,11 +60,7 @@ def test_an_order_takes_the_price_of_the_version_valid_at_its_time(silver_lake):
         Decimal("162.00"),
         Decimal("153.00"),
     )
-    assert (sales["T3"].order_date, sales["T3"].date_key, sales["T3"].country) == (
-        date(2025, 7, 1),
-        20250701,
-        "FR",
-    )
+    assert (sales["T3"].order_date, sales["T3"].date_key) == (date(2025, 7, 1), 20250701)
 
 
 BROKEN_ORDERS = {
@@ -79,7 +75,7 @@ BROKEN_ORDERS = {
         ],
         order("T1", "2025-07-01T10:00:00"),
     ),
-    "unknown_customer": (
+    "orphan.fact_sales.customer_id": (
         versions("P1", ("1900-01-01", "10.00")),
         order("T1", "2025-07-01T10:00:00", customer="C9"),
     ),
@@ -99,6 +95,23 @@ def test_an_order_without_exactly_one_version_and_one_customer_fails_before_publ
         silver_lake.run_gold(J1)
 
     assert silver_lake.gold("fact_sales", FACT_SALES.schema).count() == 0
+
+
+def test_a_customer_who_moves_changes_the_indicators_not_fact_sales(silver_lake):
+    silver_lake.customers(customer("C1", country="FR"))
+    silver_lake.products(*versions("P1", ("1900-01-01", "10.00")))
+    silver_lake.orders(J1, order("T1", "2025-12-30T09:00:00"))
+    silver_lake.run_gold(J1)
+    fact = sorted(map(tuple, silver_lake.gold("fact_sales").collect()))
+
+    silver_lake.customers(customer("C1", country="DE"))
+    silver_lake.complete(J2)
+    run = silver_lake.run_gold(J2)
+
+    assert (run.metrics["dates_rewritten"], run.metrics["dates_unchanged"]) == (0, 1)
+    assert sorted(map(tuple, silver_lake.gold("fact_sales").collect())) == fact
+    daily = silver_lake.gold("kpi_revenue_daily").collect()
+    assert [(r.country, r.revenue_eur) for r in daily] == [("DE", Decimal("10.00"))]
 
 
 def test_an_order_with_a_null_required_column_fails_the_run(silver_lake):

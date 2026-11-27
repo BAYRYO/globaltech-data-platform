@@ -20,20 +20,19 @@ def _line_amount(unit_price: str) -> Column:
     return F.round(net, 2).cast(AMOUNT_EUR)
 
 
-def sales(orders: DataFrame, products: DataFrame, customers: DataFrame) -> DataFrame:
+def sales(orders: DataFrame, products: DataFrame) -> DataFrame:
     """One row per order line of ``orders`` (``silver/orders`` rows), priced from ``products``
-    (``dim_product``) and placed in the country of ``customers`` (``dim_customer``).
+    (``dim_product``).
 
     ``applicable_unit_price`` is the catalog price of the version valid at ``event_time``
     (``valid_from <= event_time < valid_to``): ``revenue_eur`` is computed at that price,
     ``invoiced_amount_eur`` at the price invoiced on the line, both after ``discount_pct``.
-    The joins keep every order: one without a version or a customer has a null ``product_sk`` or
-    ``country``, one matching several versions repeats. ``build_violations`` counts these rows.
+    The join keeps every order: one without a version has a null ``product_sk``, one matching
+    several versions repeats. ``build_violations`` counts these rows. The customer's attributes
+    are current values (SCD 1): they stay in ``dim_customer``, joined by the indicators.
     """
-    priced = with_applicable_price(orders, products)
-    located = priced.join(customers.select("customer_id", "country"), "customer_id", "left")
     return conform(
-        located.select(
+        with_applicable_price(orders, products).select(
             "*",
             F.col("unit_price_eur").alias("unit_price_invoiced"),
             _line_amount("applicable_unit_price").alias("revenue_eur"),
@@ -48,17 +47,16 @@ def sales(orders: DataFrame, products: DataFrame, customers: DataFrame) -> DataF
 def build_violations(sales_rows: DataFrame, orders: int) -> dict[str, int]:
     """Rows of ``sales(...)`` built from ``orders`` order lines that break the grain, per kind:
     no catalog version valid at the order's time, the rows beyond the first of an order valid in
-    several versions, no customer in ``dim_customer``."""
+    several versions. A customer missing from ``dim_customer`` is an orphan of ``fact_sales``,
+    which ``checks.violations`` counts."""
     row = sales_rows.agg(
         F.count(F.lit(1)).alias("rows"),
         F.sum(F.col("product_sk").isNull().cast("int")).alias("no_version"),
-        F.sum(F.col("country").isNull().cast("int")).alias("unknown_customer"),
     ).first()
     rows = row["rows"] if row else 0
     return {
         "no_version": int(row["no_version"] or 0) if row else 0,
         "several_versions": rows - orders,
-        "unknown_customer": int(row["unknown_customer"] or 0) if row else 0,
     }
 
 
