@@ -61,13 +61,7 @@ l'échange : chaque partition est soit l'ancienne, soit la nouvelle.
 	scripts/cluster/client.sh hdfs dfs -ls /datalake/landing/_manifests/ingestion_date=2026-01-01
 	```
 
-2. Exportez le sel, exigé par tout job `--env cluster` (valeur fournie hors dépôt) :
-
-	```bash
-	export GTDP_PSEUDO_SALT=<valeur>
-	```
-
-3. Lancez le job :
+2. Lancez le job (bronze ne pseudonymise rien : il n'a pas besoin de `GTDP_PSEUDO_SALT`) :
 
 	```bash
 	scripts/cluster/submit.sh bronze --date 2026-01-01
@@ -81,8 +75,8 @@ l'échange : chaque partition est soit l'ancienne, soit la nouvelle.
 		scripts/cluster/submit.sh bronze --date 2026-01-01
 	```
 
-4. Lisez le code de sortie. `0` signale un succès, `1` un échec du job, dont le motif est dans
-   `error_message` de l'audit, et `2` une configuration invalide ou un sel absent.
+3. Lisez le code de sortie. `0` signale un succès, `1` un échec du job, dont le motif est dans
+   `error_message` de l'audit, et `2` une configuration ou un usage invalide.
 
 Sur la machine de référence, profil `dev` et un exécuteur, `duration_s` de l'audit vaut 31,2 s
 pour J1 (1 106 403 lignes), 12,5 s pour J2 et 14,3 s pour J3 (3 075 lignes chacun). Le
@@ -178,7 +172,6 @@ commandes de J1. La colonne `_record_hash` en représente 62,8 Mo, car un hash h
 | `ReconciliationError: <fichier>: lines N, written M` | La partition relue après écriture n'a pas le nombre de lignes du landing. | La partition est publiée mais fausse. Cherchez la cause dans les journaux, puis rejouez le jour. |
 | `ValueError: bronze needs --date` | `--date` manque. | Relancez avec `--date AAAA-MM-JJ`. |
 | `ValueError: unknown source '...'` | `--source` n'est pas une source de `SOURCES`. | Utilisez `orders`, `customers`, `products` ou `weblogs`. |
-| Aucune ligne d'audit, code de sortie 2, journal `GTDP_PSEUDO_SALT is required` | Le sel n'est pas défini. | Exportez `GTDP_PSEUDO_SALT` ou ajoutez-le à `.env`. |
 
 Si l'écriture d'une source échoue (quota, panne d'un nœud), les sources écrites avant elle ont
 déjà leur nouvelle partition, les suivantes gardent l'ancienne. Rejouez le jour pour obtenir
