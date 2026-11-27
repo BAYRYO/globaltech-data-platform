@@ -1,11 +1,14 @@
-"""Fingerprint of the published gold: rows and the sum of ``xxhash64`` over every column of each
-gold table, and the rows of each ``order_date`` partition of ``fact_sales``. The sum does not
-depend on row order, so two runs that publish the same rows give the same JSON.
+"""Fingerprint of a gold: for each gold table, and for each ``order_date`` partition of
+``fact_sales``, the rows and the sum of one hash per row. The hash reads every column through an
+explicit encoding, ``to_json`` of the row with its nulls and microseconds, so a value that moves
+to a null neighbour column changes it. The sum does not depend on row order: two golds that hold
+the same rows give the same JSON.
 
     scripts/cluster/submit.sh scripts/resilience/gold_fingerprint.py --out FILE [--env cluster]
 
 FILE is written from the driver, relative to the repository root in client mode. The script also
-prints ``gold/_state.json`` and the last gold audit rows.
+prints ``gold/_state.json`` and the last gold audit rows. ``GTDP_PATHS__GOLD`` and
+``GTDP_PATHS__OPS`` point it at another gold and audit (``gtdp.config``).
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from gtdp.config import Env, load_config
@@ -27,22 +30,34 @@ from gtdp.gold.tables import FACT_SALES, ORDER_DATE, STAR, table_path
 from gtdp.io import read_table
 from gtdp.spark import build_spark
 
+ENCODING = {"ignoreNullFields": "false", "timestampFormat": "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX"}
+"""``to_json`` options: a null column is written ``null``, a timestamp to the microsecond."""
+
+
+def _totals(frame: DataFrame) -> list[Column]:
+    row = F.to_json(F.struct(*(F.col(name) for name in frame.columns)), ENCODING)
+    return [
+        F.count(F.lit(1)).alias("rows"),
+        F.sum(F.xxhash64(row).cast("decimal(38,0)")).cast("string").alias("xxhash64_sum"),
+    ]
+
 
 def checksum(frame: DataFrame) -> dict[str, object]:
-    total = frame.agg(
-        F.count(F.lit(1)).alias("rows"),
-        F.sum(F.xxhash64(*frame.columns).cast("decimal(38,0)")).cast("string").alias("xxhash64"),
-    ).first()
-    return {"rows": total["rows"], "xxhash64_sum": total["xxhash64"]}
+    total = frame.agg(*_totals(frame)).first()
+    return {"rows": total["rows"], "xxhash64_sum": total["xxhash64_sum"]}
 
 
 def fingerprint(spark: SparkSession, gold: str) -> dict[str, object]:
     names = [table.name for table in STAR] + list(KPIS)
     tables = {name: read_table(spark, table_path(gold, name)) for name in names}
-    per_date = tables[FACT_SALES.name].groupBy(ORDER_DATE).count().collect()
+    sales = tables[FACT_SALES.name]
+    partitions = sales.groupBy(ORDER_DATE).agg(*_totals(sales)).collect()
     return {
         "tables": {name: checksum(frame) for name, frame in tables.items()},
-        "fact_sales_rows_per_order_date": {str(r[ORDER_DATE]): r["count"] for r in per_date},
+        "fact_sales_partitions": {
+            str(r[ORDER_DATE]): {"rows": r["rows"], "xxhash64_sum": r["xxhash64_sum"]}
+            for r in partitions
+        },
     }
 
 
@@ -60,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.out.write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
         for name, values in result["tables"].items():
             print(f"{name:<28} {values['rows']:>9} rows  xxhash64_sum {values['xxhash64_sum']}")
-        print(f"fact_sales order_date partitions: {len(result['fact_sales_rows_per_order_date'])}")
+        print(f"fact_sales order_date partitions: {len(result['fact_sales_partitions'])}")
         runs(spark, cfg).orderBy(F.col("started_at").desc()).limit(3).show(truncate=False)
     finally:
         spark.stop()
