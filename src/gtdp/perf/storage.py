@@ -174,7 +174,7 @@ def markdown(result: Mapping) -> str:
             f"| `{path}` | {f['mode']} | {f['logical']:,} | {f['physical']:,} "
             f"| {f['overhead_pct']:.1f} % | {len(f['blocks'])} | {units} |".replace(",", " ")
         )
-    times = [(key, label) for key, label in TIMES if key in result]
+    times = [(key, label) for key, label in TIMES if result.get(key)]
     lines += [
         "",
         "| Mode | " + " | ".join(f"{label} : médiane, min à max (s)" for _, label in times) + " |",
