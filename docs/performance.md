@@ -6,7 +6,8 @@ d'exécution (KAN-46), réplication contre erasure coding (KAN-47). Chaque duré
 p bilatéral des tableaux sort d'un outil qu'on relance (voir [Reproduire](#reproduire)) ou se
 recalcule des preuves versionnées dans [`docs/perf-evidence/`](perf-evidence/). Les quelques
 lectures du History Server faites à la main donnent leur application, leur étape et leur
-exécution. Les tableaux sont faits pour être repris dans le rapport technique (KAN-56). La
+exécution. Les tableaux sont faits pour être repris dans le
+[rapport technique](rapport-technique.md) (KAN-56). La
 comparaison MapReduce contre Spark a son propre document,
 [MapReduce contre Spark](mapreduce-vs-spark.md), avec la campagne de mesure du même créneau.
 
