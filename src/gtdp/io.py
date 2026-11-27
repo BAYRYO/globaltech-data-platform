@@ -389,19 +389,21 @@ def _yarn_state(spark: SparkSession, application_id: str) -> str:
 def _create(fs: Any, path: Any, text: str) -> bool:
     """Create the file ``path`` holding ``text``; ``False`` if it already exists.
 
-    The file may be deleted again by the run that held it before ``exists`` looks: the error
-    class says it existed.
+    ``text`` is written to a file of its own, ``<path>.tmp-<id>``, then renamed onto ``path``
+    only if ``path`` is absent. A file at ``path`` therefore always holds all of ``text``, even if
+    the run dies while it writes.
     """
-    try:
-        stream = fs.create(path, False)
-    except Py4JJavaError as exc:
-        if exc.java_exception.getClass().getName() == _FILE_EXISTS or fs.exists(path):
-            return False
-        raise
+    staged = path.suffix(f".tmp-{uuid.uuid4().hex}")
+    stream = fs.create(staged, False)
     try:
         stream.write(bytearray(text.encode()))
     finally:
         stream.close()
+    try:
+        _rename(fs, staged, path)
+    except FileExistsError:
+        fs.delete(staged, False)
+        return False
     return True
 
 
@@ -431,12 +433,13 @@ def _stale_after_s(spark: SparkSession) -> float:
 
 
 def _remove_leftovers(fs: Any, target: Any, stale_after: float) -> None:
-    """Delete the staging directories and lock claims of ``target`` older than ``stale_after``.
+    """Delete the staging directories, lock claims and lock files being written of ``target``
+    older than ``stale_after``.
 
     The holder of the lock calls it: they belong to runs that were killed outright.
     """
     name = target.getName()
-    prefixes = (f"_{name}.staging-", f"_{name}.lock.takeover-")
+    prefixes = (f"_{name}.staging-", f"_{name}.lock.")
     for status in fs.listStatus(target.getParent()):
         path = status.getPath()
         age = time.time() - status.getModificationTime() / 1000
