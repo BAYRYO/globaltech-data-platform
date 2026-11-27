@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
+from pyspark import SparkContext
 
 import gtdp.io
 from gtdp.io import (
@@ -194,27 +195,53 @@ def test_a_reader_finishes_an_interrupted_swap_once_yarn_reports_its_writer_ende
         assert [tuple(r) for r in read_table(spark, path).collect()] == [(1, "v1")]
 
 
-# The takeover of a stale lock is a few calls on the lock and on files named after it (the steps).
-SPLITS = range(14)
+# A run takes and releases a lock in fewer steps than this: calls on the lock and on files named
+# after it, and writes and closes of the streams that create them.
+STEPS = range(40)
 
 
-class Steps:
-    """The filesystem of one taker, which calls ``pause`` before its step number ``at``."""
+class Killed(BaseException):
+    """The process of the run died."""
 
-    def __init__(self, fs, at, pause):
-        self._fs, self._at, self._pause, self.count = fs, at, pause, 0
+
+class Mortal:
+    """The filesystem of a run that dies at its step number ``at``: no call goes through after."""
+
+    def __init__(self, fs, at):
+        self._fs, self._at, self.steps, self.dead = fs, at, 0, False
+
+    def step(self):
+        if self.dead or self.steps == self._at:
+            self.dead = True
+            raise Killed
+        self.steps += 1
 
     def __getattr__(self, name):
         member = getattr(self._fs, name)
 
         def call(*args):
-            if args and ".lock" in str(args[0]).rsplit("/", 1)[-1]:
-                if self.count == self._at:
-                    self._pause()
-                self.count += 1
-            return member(*args)
+            if self.dead:
+                raise Killed
+            if not (args and ".lock" in str(args[0]).rsplit("/", 1)[-1]):
+                return member(*args)
+            self.step()
+            result = member(*args)
+            return MortalStream(result, self) if name == "create" else result
 
         return call
+
+
+class MortalStream:
+    def __init__(self, stream, fs):
+        self._stream, self._fs = stream, fs
+
+    def write(self, data):
+        self._fs.step()
+        self._stream.write(data)
+
+    def close(self):
+        self._fs.step()
+        self._stream.close()
 
 
 def hand_out(monkeypatch, *wrappers):
@@ -228,38 +255,35 @@ def hand_out(monkeypatch, *wrappers):
     monkeypatch.setattr(gtdp.io, "_filesystem", filesystem)
 
 
-class Killed(BaseException):
-    """The process of the taker died: it makes no more step."""
-
-
-def die():
-    raise Killed
-
-
-def test_a_taker_killed_at_any_step_never_blocks_the_next_run_for_good(spark, table, monkeypatch):
+def test_a_run_killed_at_any_step_never_blocks_the_next_one_once_yarn_says_it_ended(
+    spark, table, resource_manager, monkeypatch
+):
+    """No file is aged: the next run takes the lock at once, whatever step the killed run was at,
+    a stream it had not closed yet included."""
     path, lock = table
-    blocked, most_left = [], 0
-    for at in SPLITS:
-        lock.write_text(lock_of("local-1795715756506"))
-        make_old(lock)
+    killed = "application_1795715756506_0008"
+    resource_manager.states.update({APP: "FINISHED", killed: "FINISHED"})
+    blocked, most_steps, dying = [], 0, []
+    for at in STEPS:
+        lock.write_text(lock_of(APP))  # left by a run that died
+        dying.clear()
         with monkeypatch.context() as patch, suppress(Killed):
-            hand_out(patch, lambda fs, at=at: Steps(fs, at, die))
+            patch.setattr(SparkContext, "applicationId", property(lambda _self: killed))
+            hand_out(patch, lambda fs, at=at: dying.append(Mortal(fs, at)) or dying[-1])
             with table_lock(spark, path):
                 pass
-        left = [p for p in lock.parent.iterdir() if not p.name.endswith(".crc")]
-        most_left = max(most_left, len(left))
-        for leftover in lock.parent.iterdir():
-            make_old(leftover)
+        most_steps = max(most_steps, dying[0].steps)
 
         try:
             with table_lock(spark, path):
                 pass
-        except TableLockedError:
-            blocked.append((at, "locked"))
-        if leftovers := sorted(os.listdir(lock.parent)):
-            blocked.append((at, leftovers))
-            for leftover in lock.parent.iterdir():
-                leftover.unlink()
+        except TableLockedError as exc:
+            blocked.append((at, str(exc)))
+        left = sorted(p.name for p in lock.parent.iterdir() if not p.name.startswith("."))
+        if [name for name in left if not name.startswith("_orders.lock.")]:
+            blocked.append((at, left))
+        for leftover in lock.parent.iterdir():
+            leftover.unlink()
 
     assert blocked == []
-    assert most_left > 1, "no taker died leaving more than the lock behind"
+    assert most_steps < STEPS[-1], "the run always died: STEPS does not cover its steps"
