@@ -279,7 +279,8 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
     The lock is a file created only if absent (``_create``). It holds the run id, the application
     id, the time it was taken and a token, so that no two takings write the same content. While
     the run that holds it may be alive: ``TableLockedError`` at once, no wait. A lock left by a
-    run that died is taken over (``_acquire``).
+    run that died is taken over (``_acquire``). A stop signal received while the lock is taken
+    is raised once it is, and the lock is released.
     """
     lock, stale_after = _lock_path(target), _stale_after_s(spark)
     holder = json.dumps(
@@ -290,15 +291,18 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
             "token": uuid.uuid4().hex,
         }
     )
-    with _stop_signals_deferred():
-        if not _acquire(spark, fs, lock, holder):
-            raise TableLockedError(_locked_message(fs, target, lock))
+    acquired = False
     try:
+        with _stop_signals_deferred():
+            acquired = _acquire(spark, fs, lock, holder)
+            if not acquired:
+                raise TableLockedError(_locked_message(fs, target, lock))
         _remove_leftovers(fs, target, stale_after)
         yield
     finally:
-        with _stop_signals_deferred():
-            _release(spark, fs, lock, holder)
+        if acquired:
+            with _stop_signals_deferred():
+                _release(spark, fs, lock, holder)
 
 
 def _locked_message(fs: Any, target: Any, lock: Any) -> str:
