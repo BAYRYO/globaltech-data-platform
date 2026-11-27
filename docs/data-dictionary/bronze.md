@@ -19,16 +19,20 @@ toutes ses colonnes : une colonne absente d'une partition y est nulle, une colon
 | `bronze/<source>` | une ligne d'un fichier landing, en-tête exclu | aucune : deux lignes identiques d'un fichier donnent deux lignes bronze de même `_record_hash` | `ingestion_date` | partition du jour remplacée (`write_partitions`) |
 
 Bronze ne rejette aucune ligne : les règles de qualité s'appliquent en silver
-([dictionnaire silver](silver.md)). Ses contrôles portent sur le fichier entier, avant toute
-écriture, et un fichier qui en échoue un fait échouer le job sans rien écrire
-(`src/gtdp/bronze/landing.py`) :
+([dictionnaire silver](silver.md)). Les contrôles portent sur le fichier entier
+(`src/gtdp/bronze/landing.py`, `check_counts` de `src/gtdp/bronze/transform.py`). Un fichier qui
+échoue à un contrôle d'avant l'écriture fait échouer le job sans rien écrire. La relecture vient
+après l'écriture : quand elle échoue, le job échoue et la partition reste écrite. Rejouez alors le
+jour, comme le dit le [runbook bronze](../runbook/bronze.md#dépanner) : la même commande remplace
+la partition.
 
-| Contrôle | Règle |
-| --- | --- |
-| Manifeste | la partition landing de la source contient exactement les fichiers que liste `_MANIFEST.json`, chacun avec son SHA-256 et son nombre de lignes de données |
-| Encodage | texte en UTF-8 strict, sans octet NUL dans un fichier CSV |
-| En-tête | l'en-tête d'un fichier CSV nomme chaque colonne de `SOURCES` sauf les colonnes optionnelles (`discount_pct`) |
-| Lecture | le lecteur CSV rend autant de lignes que le fichier, et la relecture de la partition écrite redonne les lignes du landing |
+| Contrôle | Moment | Règle |
+| --- | --- | --- |
+| Manifeste | avant l'écriture | la partition landing de la source contient exactement les fichiers que liste `_MANIFEST.json`, chacun avec son SHA-256 et son nombre de lignes de données |
+| Encodage | avant l'écriture | texte en UTF-8 strict, sans octet NUL dans un fichier CSV |
+| En-tête | avant l'écriture | l'en-tête d'un fichier CSV nomme chaque colonne de `SOURCES` sauf les colonnes optionnelles (`discount_pct`) |
+| Lecture | avant l'écriture | le lecteur CSV rend autant de lignes que le fichier |
+| Relecture | après l'écriture | la partition relue redonne, fichier par fichier, les lignes du landing |
 
 ## Colonnes techniques de `bronze/<source>`
 

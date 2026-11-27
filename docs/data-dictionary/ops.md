@@ -2,19 +2,23 @@
 
 `/datalake/ops` tient ce que les jobs écrivent pour l'exploitation, pas pour l'analyse : la table
 d'audit, la table du job `smoke` et l'empreinte du sel de pseudonymisation. L'ACL par défaut donne
-la lecture au groupe `ops`. Les sorties du calcul du Lot 6 (`ops/mr_vs_spark/spark/`) sont des
-fichiers texte décrits dans le [dictionnaire MapReduce contre Spark](mapreduce.md).
+la lecture au groupe `ops`. Les sorties du calcul du Lot 6 (`ops/mr_vs_spark/spark/` et
+`ops/mr_vs_spark/mapreduce/`) sont des fichiers texte décrits dans le
+[dictionnaire MapReduce contre Spark](mapreduce.md).
 
 | Table ou fichier | Grain | Clé | Partition | Écriture |
 | --- | --- | --- | --- | --- |
-| `ops/audit` | une exécution de `run.py` | `run_id` | `run_date`, `run_id` | une partition par exécution, ajoutée à la fin de l'exécution, jamais réécrite |
+| `ops/audit` | un job lancé par `run.py` | `run_id` | `run_date`, `run_id` | une partition par exécution, ajoutée à la fin de l'exécution, jamais réécrite |
 | `ops/smoke` | un groupe de nombres | `bucket` | aucune | table remplacée par chaque exécution du job `smoke` (`replace_table`) |
 | `ops/pseudonymization/salt_fingerprint.json` | le sel de silver | aucune | aucune | écrit par la première exécution silver, jamais réécrit |
 
 ## `ops/audit`
 
-Chaque exécution de `run.py` écrit une ligne (`gtdp.audit.audited_run`), aussi quand le job échoue
-ou qu'un signal l'arrête. La ligne va dans son propre répertoire
+Chaque job que lance `run.py` écrit une ligne (`gtdp.audit.audited_run`), aussi quand il échoue,
+y compris sur une erreur de configuration qu'il lève lui-même (code de sortie 2), ou qu'un signal
+l'arrête. `run.py` n'écrit aucune ligne quand il s'arrête avant de démarrer Spark ou que Spark ne
+démarre pas (code 2 : usage, configuration invalide), ni pour la commande `list`. La ligne va dans
+son propre répertoire
 `run_date=<d>/run_id=<id>/` : deux jobs simultanés n'écrivent jamais dans le même répertoire.
 C'est la seule table en ajout seul. Les requêtes utiles sont dans
 [interroger l'audit](../runbook/README.md#interroger-laudit), les clés de `metrics_json` de chaque

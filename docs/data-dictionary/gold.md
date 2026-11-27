@@ -6,10 +6,16 @@ lecture au groupe `analysts` sur chaque table. L'exploitation (exécution, rejeu
 est décrite dans le [runbook gold](../runbook/gold.md), les choix de modèle dans le
 [modèle de données](../data-model.md#gold--modèle-en-étoile).
 
-Gold est une fonction des jours silver terminés : chaque exécution recalcule toutes les tables
-depuis ces jours, contrôle tout, puis publie. `_state.json`, à la racine de `/datalake/gold`, dit
-si les tables forment un tout publié (voir [`gold/_state.json`](#gold_statejson)) : ne lisez gold
-que s'il vaut `PUBLISHED`.
+Chaque exécution recalcule toutes les tables, contrôle tout, puis publie. Elle lit les commandes,
+les logs et les rejets des jours silver terminés, et les tables `silver/customers` et
+`silver/products_scd2` telles que silver les a publiées en dernier, que leur jour soit terminé ou
+non. `_state.json`, à la racine de `/datalake/gold`, dit si les tables forment un tout publié
+(voir [`gold/_state.json`](#gold_statejson)) : ne lisez gold que s'il vaut `PUBLISHED`.
+
+Limite connue (KAN-58) : un jour silver en cours qui a déjà republié `customers` ou
+`products_scd2` change `dim_customer`, `dim_product` et les indicateurs qui les joignent, sans
+changer `silver_days`. Deux exécutions gold sur les mêmes jours terminés peuvent donc publier des
+tables différentes.
 
 Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, les indicateurs dans
 `src/gtdp/gold/kpis.py` (une fonction pure par table). Les exemples sont des lignes du profil
@@ -18,11 +24,11 @@ Les schémas de l'étoile (`StructType`) sont dans `src/gtdp/gold/tables.py`, le
 | Table | Grain | Clé (vérifiée à chaque exécution) | Partition | Écriture |
 | --- | --- | --- | --- | --- |
 | `fact_sales` | une ligne de commande silver | `transaction_id` | `order_date` | recalculée depuis toutes les commandes des jours silver terminés ; seules les dates dont le contenu change sont réécrites (`write_partitions`), les dates qui n'ont plus de commande sont supprimées (`drop_partitions`) |
-| `fact_web_events` | une requête valide des logs web | `log_id` | aucune | reconstruite depuis tout silver (`replace_table`) |
+| `fact_web_events` | une requête valide des logs web | `log_id` | aucune | reconstruite depuis les logs des jours silver terminés (`replace_table`) |
 | `dim_date` | un jour | `date_key` | aucune | reconstruite |
-| `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite |
-| `dim_product` | une version catalogue (SCD 2) | `product_sk` | aucune | reconstruite |
-| `kpi_*` | ligne « Grain » de la formule de chaque indicateur | les colonnes du grain, uniques par construction (`groupBy`), non vérifiées | aucune | reconstruite |
+| `dim_customer` | un client (SCD 1) | `customer_id` | aucune | reconstruite depuis `silver/customers` tel que silver l'a publié en dernier (KAN-58) |
+| `dim_product` | une version catalogue (SCD 2) | `product_sk` | aucune | reconstruite depuis `silver/products_scd2` tel que silver l'a publié en dernier (KAN-58) |
+| `kpi_*` | ligne « Grain » de la formule de chaque indicateur | les colonnes du grain, uniques par construction (`groupBy`, ou calendrier croisé avec les pays pour `kpi_revenue_moving_avg`), non vérifiées | aucune | reconstruite |
 | `sensor_aggregates`, `sensor_alerts` | écrites par le job `streaming-sensors`, pas par `gold` | voir le [dictionnaire des capteurs](gold-sensors.md) | `window_date`, `batch_id` | partitions du micro-batch remplacées |
 
 ## Références et contrôles
@@ -61,14 +67,17 @@ lignes et la même empreinte de contenu que le calcul ; sinon l'exécution écho
 `_state.json` reste à `PUBLISHING`.
 
 Aucun membre `UNKNOWN` n'est nécessaire. Silver ne publie une commande que si son client a une
-ligne silver et si son produit existe dans `products_scd2` ; silver ne vérifie pas qu'une version
-couvre la date de la commande (une commande datée d'avant la première version passerait). Le
-contrôle 1 le vérifie et échoue fermé (`no_version`). Le pays `UNKNOWN` de `dim_customer` est
-celui d'un client sans région (drapeau `MISSING_REGION`), pas un membre technique.
+ligne silver et si son produit existe dans `products_scd2`. Silver ne vérifie pas qu'une version
+couvre la date de la commande, mais la version 1 vaut depuis le `1900-01-01` et silver ne sait
+pas encore écrire un horodatage antérieur : une telle commande fait échouer l'exécution silver
+(limite connue, KAN-59, voir le [dictionnaire silver](silver.md#disposition-dune-ligne-bronze)).
+Le contrôle 1 reste la défense de gold et échoue fermé (`no_version`). Le pays `UNKNOWN` de
+`dim_customer` est celui d'un client sans région (drapeau `MISSING_REGION`), pas un membre
+technique.
 
 Le rapport (`src/gtdp/gold/report.py`) recalcule ces comptes depuis silver (lignes
 `orders with ...`), montre que le total de `revenue_eur` et de `invoiced_amount_eur` de
-`fact_sales` est égal au total recalculé depuis les jours silver dont gold est la fonction, et
+`fact_sales` est égal au total recalculé depuis les jours silver terminés que gold a lus, et
 que `dim_date` couvre toutes les dates de commande sans trou.
 
 **Attributs du client.** `dim_customer` est de type SCD 1 : il ne garde que la dernière fiche
@@ -162,7 +171,7 @@ Silver `products_scd2` : une ligne par version.
 | --- | --- | --- | --- |
 | `product_sk` | string | Clé, `<product_id>-<valid_from yyyyMMddHHmmss>`. | `P00042-19000101000000` |
 | `product_id` | string | Clé métier. | `P00042` |
-| `product_name` | string | Nom de la version initiale. | `Security P00042` |
+| `product_name` | string | Nom de la version : chaque version garde le sien (attribut historisé). Nul si le champ du fichier est vide. | `Security P00042` |
 | `category` | string | Catégorie de la version. | `Security` |
 | `unit_price_eur` | decimal(10,2) | Prix catalogue de la version. | `504.06` |
 | `valid_from` | timestamp | Début inclus ; `1900-01-01` pour la version 1. | `1900-01-01 00:00:00` |
@@ -254,6 +263,7 @@ moins de `N` jours derrière eux : leur moyenne porte sur `window_days` jours (1
 | Formule | Règle |
 | --- | --- |
 | Calendrier | chaque jour de `min(order_date)` à `max(order_date)` des lignes de `fact_sales` de tout statut, croisé avec chaque pays ayant au moins une ligne de tout statut ; un pays sans commande `COMPLETED` a donc des lignes à 0 |
+| Grain | `order_date`, `country` : un jour du calendrier pour un pays |
 | `revenue_eur` | `revenue_eur` de `kpi_revenue_daily` pour le jour et le pays, `0` quand il n'y en a pas |
 | Fenêtre | `partition by country order by order_date rows between N - 1 preceding and current row` |
 | `revenue_moving_avg_eur` | `round(avg(revenue_eur), 2)` sur la fenêtre |
@@ -269,8 +279,8 @@ moins de `N` jours derrière eux : leur moyenne porte sur `window_days` jours (1
 
 ### `gold/kpi_price_deviation`
 
-Médiane exacte du rapport prix facturé / prix catalogue applicable, par mois et par catégorie de
-la version appliquée, sur toutes les lignes quel que soit leur statut. Les groupes comptent au
+Médiane exacte du rapport prix facturé / prix catalogue applicable, arrondi à 13 décimales, par
+mois et par catégorie de la version appliquée, sur toutes les lignes quel que soit leur statut. Les groupes comptent au
 plus quelques dizaines de milliers de lignes : le calcul exact reste léger. La médiane résiste
 aux lignes du kit dont le prix facturé ne dépend pas du catalogue ; sur les lignes synthétiques,
 la remise commerciale tirée dans `[0 ; 0,10]` donne une médiane proche de 0,95.
@@ -280,7 +290,7 @@ la remise commerciale tirée dans `[0 ; 0,10]` donne une médiane proche de 0,95
 | Lignes lues | toutes les lignes de `fact_sales`, tout statut |
 | Grain | `month = trunc(order_date, 'month')`, `category` |
 | `lines` | `count(*)` |
-| `median_price_ratio` | `median(unit_price_invoiced / applicable_unit_price)` en `double`, soit `percentile(…, 0.5)` : sur un nombre pair de lignes, la moyenne des deux rapports du milieu |
+| `median_price_ratio` | `median(unit_price_invoiced / applicable_unit_price)`, soit `percentile(…, 0.5)` : sur un nombre pair de lignes, la moyenne des deux rapports du milieu. Le rapport de deux `decimal(10,2)` est un `decimal(23,13)` : Spark l'arrondit à 13 décimales (demi vers le haut), puis le convertit en `double` avant la médiane |
 | Valeurs nulles | aucune : silver refuse un prix nul ou négatif, le rapport est toujours défini |
 
 | Colonne | Type | Règle | Exemple |
@@ -288,7 +298,7 @@ la remise commerciale tirée dans `[0 ; 0,10]` donne une médiane proche de 0,95
 | `month` | date | Premier jour du mois de commande. | `2025-07-01` |
 | `category` | string | Catégorie de la version appliquée. | `Electrical` |
 | `lines` | bigint | Lignes de commande. | `13044` |
-| `median_price_ratio` | double | Médiane de `unit_price_invoiced / applicable_unit_price`. | `0.9494675748273` |
+| `median_price_ratio` | double | Médiane de `unit_price_invoiced / applicable_unit_price`, chaque rapport arrondi à 13 décimales. | `0.9494675748273` |
 
 ### `gold/kpi_cancel_return_rate`
 
@@ -427,4 +437,4 @@ Il couvre les tables du job `gold`, pas `sensor_aggregates` ni `sensor_alerts` d
 | --- | --- | --- | --- |
 | `status` | string | `PUBLISHING` de la première écriture d'une exécution à la relecture de `fact_sales`, puis `PUBLISHED`. Une exécution échouée ou tuée en cours d'écriture laisse `PUBLISHING`. Une exécution qui échoue à un contrôle n'écrit rien et laisse l'état précédent. | `PUBLISHED` |
 | `run_id` | string | Exécution auditée qui a écrit l'état (`run_id` de l'audit). | `20261127T101500Z-1a2b3c4d` |
-| `silver_days` | array<string> | Jours silver terminés que cette exécution a lus : gold est leur fonction. | `["2026-01-01", "2026-01-02", "2026-01-03"]` |
+| `silver_days` | array<string> | Jours silver terminés dont cette exécution a lu les commandes, les logs et les rejets. `customers` et `products_scd2` sont lus tels que silver les a publiés en dernier (limite connue, KAN-58). | `["2026-01-01", "2026-01-02", "2026-01-03"]` |
