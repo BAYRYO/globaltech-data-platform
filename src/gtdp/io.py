@@ -54,11 +54,11 @@ def write_partitions(
     ``_<name>.staging-<id>``. Only after that write succeeds is each named partition deleted and
     replaced by its staged copy, so a failed write leaves the table as it was. SIGTERM and SIGINT
     wait for the end of that swap: a stopped run leaves each partition old or new, never missing.
-    A named partition without rows becomes an empty directory holding a ``_SUCCESS`` marker: it
-    still counts as produced for ``ensure_no_later_partition``, and ``read_table`` reads it as
-    empty. A row outside the named partitions raises ``ValueError`` and publishes nothing. Writing
-    the same ``df`` again gives the same table (ADR-0002). A process killed outright between the
-    delete and the rename of a partition leaves that partition missing until the day is replayed.
+    A named partition without rows becomes an empty directory holding a ``_SUCCESS`` marker,
+    which ``read_table`` reads as empty. A row outside the named partitions raises ``ValueError``
+    and publishes nothing. Writing the same ``df`` again gives the same table (ADR-0002). A
+    process killed outright between the delete and the rename of a partition leaves that
+    partition missing until the day is replayed.
     """
     spark = df.sparkSession
     named = [
@@ -194,32 +194,6 @@ def list_partition_values(spark: SparkSession, path: str, column: str) -> list[s
         for name in names
         if name.startswith(prefix)
     )
-
-
-def latest_partition_after(
-    spark: SparkSession, path: str, column: str, value: PartitionValue
-) -> str | None:
-    """The greatest ``column`` partition of ``path`` above ``value``, or ``None``."""
-    later = [v for v in list_partition_values(spark, path, column) if v > str(value)]
-    return later[-1] if later else None
-
-
-def ensure_no_later_partition(
-    spark: SparkSession, path: str, column: str, value: PartitionValue, *, force: bool = False
-) -> None:
-    """Refuse to produce partition ``value`` while ``path`` holds a later one.
-
-    Silver deduplicates day D against the days before it (ADR-0005): processing D after D+1
-    leaves keys duplicated in D+1. With ``force``, log a warning and let the caller replay the
-    later days afterwards.
-    """
-    later = latest_partition_after(spark, path, column, value)
-    if later is None:
-        return
-    message = f"{path} already holds {column}={later}, later than {value}"
-    if not force:
-        raise LaterPartitionError(f"{message}; replay the days in order or force it")
-    logger.warning("%s; forced: replay the later days afterwards", message)
 
 
 def _partition_dir(

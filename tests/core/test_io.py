@@ -1,4 +1,3 @@
-import logging
 import os
 import shutil
 from datetime import date, datetime
@@ -12,9 +11,6 @@ from pyspark.sql.types import DateType, IntegerType, StringType, StructField, St
 from gtdp.config import load_config
 from gtdp.io import (
     INGESTION_DATE,
-    LaterPartitionError,
-    ensure_no_later_partition,
-    latest_partition_after,
     list_partition_values,
     path_exists,
     read_table,
@@ -212,34 +208,6 @@ def test_list_partition_values_reads_partition_directories(spark, tmp_path):
     assert list_partition_values(spark, str(tmp_path / "absent"), INGESTION_DATE) == []
 
 
-@pytest.fixture
-def days_1_and_3(spark, tmp_path):
-    path = str(tmp_path / "silver_orders")
-    df = spark.createDataFrame([(1, "2026-01-01"), (3, "2026-01-03")], SCHEMA)
-    write_partitions(df, path, {INGESTION_DATE: [JAN_1, JAN_3]})
-    return path
-
-
-def test_latest_partition_after(spark, days_1_and_3, tmp_path):
-    assert latest_partition_after(spark, days_1_and_3, INGESTION_DATE, JAN_2) == "2026-01-03"
-    assert latest_partition_after(spark, days_1_and_3, INGESTION_DATE, JAN_3) is None
-    assert latest_partition_after(spark, str(tmp_path / "absent"), INGESTION_DATE, JAN_1) is None
-
-
-def test_producing_a_day_before_an_existing_later_day_is_refused(spark, days_1_and_3):
-    with pytest.raises(LaterPartitionError, match="ingestion_date=2026-01-03"):
-        ensure_no_later_partition(spark, days_1_and_3, INGESTION_DATE, JAN_2)
-
-
-def test_replaying_the_latest_day_or_forcing_is_allowed(spark, days_1_and_3, caplog):
-    ensure_no_later_partition(spark, days_1_and_3, INGESTION_DATE, JAN_3)
-
-    with caplog.at_level(logging.WARNING):
-        ensure_no_later_partition(spark, days_1_and_3, INGESTION_DATE, JAN_2, force=True)
-
-    assert "2026-01-03" in caplog.text
-
-
 def test_a_table_whose_only_day_had_no_row_reads_as_empty(spark, tmp_path):
     path = str(tmp_path / "rejects")
     write_partitions(spark.createDataFrame([], SCHEMA), path, {INGESTION_DATE: [JAN_1]})
@@ -312,10 +280,9 @@ def make_bronze(spark, path, data):
     write_partitions(df, path, {INGESTION_DATE: sorted({row[2] for row in data})})
 
 
-def silver_day(spark, lake, day, force=False):
+def silver_day(spark, lake, day):
     """ADR-0005 reduced to its shape: validate day D, drop keys known before D, rewrite D."""
     bronze, silver, rejects = (str(lake / name) for name in ("bronze", "silver", "rejects"))
-    ensure_no_later_partition(spark, silver, INGESTION_DATE, day, force=force)
     deposit = read_table(spark, bronze, SILVER).where(F.col(INGESTION_DATE) == F.lit(day))
     known = read_table(spark, silver, SILVER).where(F.col(INGESTION_DATE) < F.lit(day))
     valid = (
@@ -416,16 +383,6 @@ def test_partition_values_that_name_other_directories_are_refused(spark, publish
 
     assert rows(spark, published) == PUBLISHED
     assert list_partition_values(spark, published, INGESTION_DATE) == ["2026-01-01", "2026-01-02"]
-
-
-def test_a_later_day_without_new_row_still_blocks_an_earlier_replay(spark, tmp_path):
-    bronze = [("a", 1, "2026-01-01"), ("b", 1, "2026-01-02"), ("b", 1, "2026-01-03")]
-    make_bronze(spark, str(tmp_path / "bronze"), bronze)
-    for day in (JAN_1, JAN_2, JAN_3):  # day 3 only re-sends b, so silver day 3 gets no row
-        silver_day(spark, tmp_path, day)
-
-    with pytest.raises(LaterPartitionError, match="ingestion_date=2026-01-03"):
-        silver_day(spark, tmp_path, JAN_2)
 
 
 def test_a_lake_under_a_space_and_an_accent_is_written_where_configured(spark, tmp_path):
