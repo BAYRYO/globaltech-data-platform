@@ -2,6 +2,7 @@
 counters every few seconds, a wait on a JSON state file, and the milestones of a run.
 
     hdfs_watch.py poll --out timeline.csv --hosts datanode1,datanode2 --stop-file stop
+    hdfs_watch.py state datanode4
     hdfs_watch.py wait-state /datalake/gold/_state.json PUBLISHING --timeout 600
     hdfs_watch.py summarize timeline.csv events.csv --victim datanode1 --spare datanode4
 
@@ -12,7 +13,8 @@ two NameNode counters the report does not show (``pending_reconstruction``: repl
 DataNode and not yet confirmed, ``excess``: replicas above the replication factor, waiting for
 deletion), then for each host its state (``live``, ``dead``, ``live/decommissioning``,
 ``dead/decommissioned``, ``absent``...) and its block count. A sample that fails fills ``error``
-only. It stops when the stop file exists or after ``--max-seconds``.
+only. It stops when the stop file exists or after ``--max-seconds``. ``state`` prints that state
+for one host from one report.
 
 ``summarize`` reads that timeline and the ``time,event`` lines of the scenario
 (``scripts/resilience/datanode-failure.sh``) and prints when each milestone was first sampled.
@@ -113,10 +115,16 @@ def parse_report(text: str) -> Report:
     return Report(counters, nodes)
 
 
+def listed(report: Report, host: str) -> Node | None:
+    """The entry of ``host`` in the report; its live one when the report lists it live and dead,
+    re-registered under a new address."""
+    entries = [node for node in report.nodes if node.hostname == host]
+    return max(entries, key=lambda node: node.live, default=None)
+
+
 def row(report: Report, metrics: dict[str, int], hosts: Sequence[str]) -> dict[str, object]:
-    """The timeline columns of one sample, ``hosts`` in that order. A host listed live and dead,
-    re-registered under a new address, counts as live."""
-    nodes = {node.hostname: node for node in sorted(report.nodes, key=lambda n: n.live)}
+    """The timeline columns of one sample, ``hosts`` in that order. A host listed live and dead
+    counts as live."""
     values: dict[str, object] = {
         "live": sum(node.live for node in report.nodes),
         "dead": sum(not node.live for node in report.nodes),
@@ -125,7 +133,7 @@ def row(report: Report, metrics: dict[str, int], hosts: Sequence[str]) -> dict[s
         **{column: metrics[name] for column, name in NAMENODE_METRICS.items()},
     }
     for host in hosts:
-        node = nodes.get(host)
+        node = listed(report, host)
         values[host] = node.state if node else "absent"
         values[f"{host}_blocks"] = node.blocks if node else ""
     return values
@@ -139,15 +147,21 @@ def now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def sample(hosts: Sequence[str]) -> dict[str, object]:
-    try:
-        report = subprocess.run(
+def dfsadmin_report() -> Report:
+    return parse_report(
+        subprocess.run(
             ["hdfs", "dfsadmin", "-report"], capture_output=True, text=True, check=True, timeout=60
         ).stdout
+    )
+
+
+def sample(hosts: Sequence[str]) -> dict[str, object]:
+    try:
+        report = dfsadmin_report()
         url = f"{NAMENODE_HTTP}/jmx?qry={FSNAMESYSTEM}"
         with urllib.request.urlopen(url, timeout=10) as resp:
             metrics = json.load(resp)["beans"][0]
-        return row(parse_report(report), metrics, hosts)
+        return row(report, metrics, hosts)
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError) as exc:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
@@ -281,6 +295,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--interval", type=float, default=5.0)
     p.add_argument("--stop-file", type=Path, required=True)
     p.add_argument("--max-seconds", type=float, default=4 * 3600)
+    h = commands.add_parser("state", help="print the state of one DataNode in the report")
+    h.add_argument("host")
     w = commands.add_parser("wait-state", help="wait for a status in a JSON file of HDFS")
     w.add_argument("path")
     w.add_argument("status")
@@ -294,6 +310,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "poll":
         hosts = args.hosts.split(",")
         return poll(args.out, hosts, args.interval, args.stop_file, args.max_seconds)
+    if args.command == "state":
+        node = listed(dfsadmin_report(), args.host)
+        print(node.state if node else "absent")
+        return 0
     if args.command == "wait-state":
         return wait_state(args.path, args.status, args.timeout)
     with args.timeline.open(newline="") as file:
