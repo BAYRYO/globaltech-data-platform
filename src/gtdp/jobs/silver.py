@@ -126,7 +126,7 @@ def silver(ctx: JobContext) -> None:
     if day is None:
         raise ConfigError("silver needs --date")
     if ctx.run.source and ctx.run.source not in PIPELINES:
-        raise ValueError(f"unknown source {ctx.run.source!r}, expected one of {sorted(PIPELINES)}")
+        raise ConfigError(f"unknown source {ctx.run.source!r}, expected one of {sorted(PIPELINES)}")
     sources = [ctx.run.source] if ctx.run.source else list(PIPELINES)
     spark, paths, salt = ctx.spark, ctx.cfg.paths, ctx.cfg.pseudonymization.salt
 

@@ -207,7 +207,7 @@ entre jobs simultanés. La ligne porte un statut :
 | Statut | Cause | Code de sortie de `run.py` |
 | --- | --- | --- |
 | `SUCCESS` | le job s'est terminé | 0 |
-| `FAILED` | exception du job, message dans `error_message` (2 000 caractères au plus) | 1, ou 2 pour une `ConfigError` levée par le job (section de configuration absente, `--date` manquant d'un job qui l'exige : `bronze`, `silver`, `gold`, `revenue-by-country-spark`) |
+| `FAILED` | exception du job, message dans `error_message` (2 000 caractères au plus) | 1, ou 2 pour une `ConfigError` levée par le job (section de configuration absente, `--date` manquant d'un job qui l'exige : `bronze`, `silver`, `gold`, `revenue-by-country-spark` ; `--source` inconnue de `bronze` ou `silver`, seuls jobs qui la lisent) |
 | `STOPPED` | SIGTERM ou SIGINT reçu par le driver | 128 + numéro du signal, soit 143 ou 130 |
 
 Sur `STOPPED`, les jobs Spark de l'exécution sont annulés jusqu'à l'écriture de la ligne. Un
