@@ -14,7 +14,7 @@ tables du lake passent donc par `src/gtdp/io.py`.
 ### Tables partitionnées : `write_partitions`
 
 Toute écriture batch cible des partitions dérivées de l'entrée (`ingestion_date` en bronze et
-silver, `order_date` touchées en gold). Le job **nomme** les partitions qu'il produit, par
+silver, `order_date` dont le contenu change en gold). Le job **nomme** les partitions qu'il produit, par
 exemple `{"ingestion_date": [D]}`, et `write_partitions(df, chemin, partitions)` procède en deux
 temps :
 
@@ -94,9 +94,14 @@ Lot 0, Spark 3.5.3) :
 - posé seulement dans la session, il dépend de la configuration ambiante : en mode statique, le
   même `overwrite` efface sans erreur toutes les autres partitions.
 
-En gold, le traitement de `D` recalcule chaque partition `order_date` présente dans silver(`D`) à
-partir de toutes les lignes silver de ces dates : une commande retardataire ne fait pas
-disparaître les commandes déjà publiées pour sa date.
+En gold, chaque exécution recalcule `fact_sales` depuis toutes les commandes des jours silver
+terminés, compare une empreinte par `order_date` avec la table publiée, réécrit les dates qui
+diffèrent (`write_partitions`) et supprime celles qui n'ont plus de commande
+(`drop_partitions`). Une commande retardataire, retirée ou déplacée par un rejeu silver ne laisse
+donc ni perte ni fantôme. Tout est calculé et contrôlé avant la première écriture. Une seule
+exécution gold tourne à la fois : `io.table_lock` sur le répertoire gold tient le verrou
+`/datalake/_gold.lock` pendant toute l'exécution. `gold/_state.json` marque la publication
+(`PUBLISHING`, puis `PUBLISHED`).
 
 ### Table d'audit et arrêt d'une exécution
 
@@ -108,7 +113,7 @@ entre jobs simultanés. La ligne porte un statut :
 | Statut | Cause | Code de sortie de `run.py` |
 | --- | --- | --- |
 | `SUCCESS` | le job s'est terminé | 0 |
-| `FAILED` | exception du job, message dans `error_message` (2 000 caractères au plus) | 1 |
+| `FAILED` | exception du job, message dans `error_message` (2 000 caractères au plus) | 1, ou 2 pour une `ConfigError` levée par le job (section de configuration absente, `--date` manquant en gold) |
 | `STOPPED` | SIGTERM ou SIGINT reçu par le driver | 128 + numéro du signal, soit 143 ou 130 |
 
 Sur `STOPPED`, les jobs Spark de l'exécution sont annulés jusqu'à l'écriture de la ligne. Un

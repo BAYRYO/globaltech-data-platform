@@ -79,7 +79,8 @@ Une table silver absente se lit comme une table vide (`read_table`), sans erreur
   d'unicité de J2 prennent 8,2 s pour les 965 000 commandes de J1 (mesure du runbook silver).
 - Un lecteur qui doit voir des jours entiers, comme gold, ne lit des tables partitionnées que les
   partitions de `complete_days(spark, silver)`.
-- Gold repartitionne par `order_date` et recalcule les dates touchées (voir ADR-0002).
+- Gold se recalcule en entier depuis les jours complets et ne réécrit que les dates
+  `order_date` dont le contenu change (voir ADR-0002).
 - Corriger un jour passé passe par `--force` puis le rejeu des jours suivants. Entre les deux,
   `customers` et `products_scd2` reflètent l'état du jour forcé.
 
