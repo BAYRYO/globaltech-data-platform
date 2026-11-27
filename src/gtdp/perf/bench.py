@@ -26,7 +26,8 @@ application besides its own and records the check; afterwards it lists any appli
 overlapped the run, and the report leaves that run out. It tags the Spark jobs of each run with a
 job group, from which the History Server gives the stages, the bytes they read, the task
 quantiles of the run's key stage and how long its scan and key stages took. ``runs.json`` holds
-every run at full precision; ``report.md`` gives the medians and, for each comparison the
+every run at full precision, written before the History Server is read so that ``remeasure``
+can finish a reading that failed; ``report.md`` gives the medians and, for each comparison the
 experiment declares, the change and the exact two-sided Mann-Whitney p, with and without the
 first measured run. Folders default to the ``[perf]`` section of the configuration.
 """
@@ -148,11 +149,17 @@ def timed(
 
 
 def yarn_idle(cluster: Cluster, own: str, max_wait_s: int = 1800) -> str:
-    """Wait until YARN runs no application but ``own``; return the evidence of the last check."""
+    """Wait until YARN runs no application but ``own``; return the evidence of the last check.
+    A ResourceManager that does not answer, such as a failed name resolution, is asked again."""
     deadline = time.monotonic() + max_wait_s
     while True:
-        apps = (cluster.get(f"{RM}/apps?states={ACTIVE_STATES}").get("apps") or {}).get("app", [])
-        others = sorted(app["id"] for app in apps if app["id"] != own)
+        try:
+            answer = cluster.get(f"{RM}/apps?states={ACTIVE_STATES}")
+        except OSError as unreachable:
+            others = [f"the ResourceManager did not answer: {unreachable}"]
+        else:
+            apps = (answer.get("apps") or {}).get("app", [])
+            others = sorted(app["id"] for app in apps if app["id"] != own)
         stamp = datetime.now(UTC).isoformat(timespec="seconds")
         if not others:
             return f"{stamp}: {len(others)} other application {ACTIVE_STATES.replace(',', '/')}"
@@ -944,7 +951,6 @@ def experiment(args: argparse.Namespace, name: str, cfg: AppConfig, perf: PerfSe
     cluster = Cluster(args.out)
     runs = timed(spark, name, variants, args.runs, args.warmup, cluster)
     spark.stop()
-    measure(app_id, runs, {v.name: v.metric for v in variants}, cluster)
     header |= {
         "warmup": args.warmup,
         "variants": [
@@ -954,6 +960,8 @@ def experiment(args: argparse.Namespace, name: str, cfg: AppConfig, perf: PerfSe
     }
     if args.experiment == "formats":
         header["stored"] = {lay.name: du(f"{args.root}/{lay.name}") for lay in ds.LAYOUTS}
+    save_runs(args.out / "runs.json", header, runs)
+    measure(app_id, runs, {v.name: v.metric for v in variants}, cluster)
     save_runs(args.out / "runs.json", header, runs)
     return write_report(args.out, header, runs, perf.history_ui)
 
