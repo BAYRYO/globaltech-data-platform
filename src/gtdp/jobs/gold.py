@@ -1,5 +1,5 @@
-"""Gold job: ``fact_sales`` refreshed for the order dates of ``--date``, then the dimensions,
-``fact_web_events`` and the indicators rebuilt whole from silver."""
+"""Gold job: ``fact_sales`` built from every day silver completed, published for the order dates
+whose rows changed; the dimensions, ``fact_web_events`` and the indicators rebuilt whole."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from datetime import date
 from functools import reduce
 
 from pyspark import StorageLevel
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import DataType, StructType
 
 from gtdp.audit import Layer
 from gtdp.config import ConfigError
@@ -24,7 +25,7 @@ from gtdp.gold.tables import (
     Table,
     table_path,
 )
-from gtdp.io import INGESTION_DATE, read_table, replace_table, write_partitions
+from gtdp.io import INGESTION_DATE, drop_partitions, read_table, replace_table, write_partitions
 from gtdp.jobs.registry import JobContext, job
 from gtdp.schemas import SILVER_REJECTS
 from gtdp.silver.days import complete_days
@@ -39,19 +40,20 @@ class GoldCheckError(RuntimeError):
 @job(
     "gold",
     Layer.GOLD,
-    "Refresh fact_sales for the order dates in silver orders of --date; rebuild the dimensions,"
-    " fact_web_events and the indicators",
+    "Rebuild gold from every day silver completed, --date among them: fact_sales published for"
+    " the order dates that changed, the dimensions, fact_web_events and the indicators whole",
 )
 def gold(ctx: JobContext) -> None:
     """Publish the gold tables for ``--date``.
 
     Gold reads the days that silver completed (``gtdp.silver.days``) and needs ``--date`` among
-    them. Every ``order_date`` present in ``silver/orders`` of ``--date`` is rebuilt from the
-    silver orders of that date in every complete day, so a late order never drops the orders
-    already published for its date (ADR-0002); other dates keep their rows. Dimensions,
-    ``fact_web_events`` and indicators are rebuilt from the whole of silver. Fails before writing
-    ``fact_sales`` when an order matches no catalog version, several, or no customer; fails after
-    writing when the star breaks a key or a reference, before the indicators are rebuilt.
+    them. ``fact_sales`` is built from every silver order of those days: an order date whose rows
+    differ from the published ones is rewritten, a published date that no order holds any more is
+    removed, the others stay as they are. Whatever the order of the runs, the same complete days
+    give the same gold. Dimensions, ``fact_web_events`` and indicators are rebuilt from the whole
+    of silver. Fails before writing ``fact_sales`` when an order matches no catalog version,
+    several, or no customer; fails after writing when the star breaks a key or a reference,
+    before the indicators are rebuilt.
     """
     day = ctx.run.ingestion_date
     if day is None:
@@ -81,7 +83,7 @@ def gold(ctx: JobContext) -> None:
         weblogs.select(F.to_date("event_ts").alias("date"))
     )
     calendar = publish(DIM_DATE, dimensions.calendar(days))
-    sales = _refresh_sales(ctx, day, orders, products, customers)
+    sales = _publish_sales(ctx, orders, products, customers)
     web_events = publish(FACT_WEB_EVENTS, facts.web_events(weblogs))
 
     star = {
@@ -118,35 +120,59 @@ def _of_days(table: DataFrame, days: list[date]) -> DataFrame:
     return table.where(F.col(INGESTION_DATE).isin(days))
 
 
-def _refresh_sales(
-    ctx: JobContext, day: date, orders: DataFrame, products: DataFrame, customers: DataFrame
+def _publish_sales(
+    ctx: JobContext, orders: DataFrame, products: DataFrame, customers: DataFrame
 ) -> DataFrame:
-    """Rebuild the ``fact_sales`` partitions of the order dates of ``day``; return the table."""
-    path = table_path(ctx.cfg.paths.gold, FACT_SALES.name)
-    of_day = orders.where(F.col(INGESTION_DATE) == F.lit(day))
-    dates = sorted(
-        row[ORDER_DATE]
-        for row in of_day.select(facts.order_date().alias(ORDER_DATE)).distinct().collect()
-    )
-    ctx.run.metrics["partitions_refreshed"] = len(dates)
-    ctx.run.metrics["order_dates"] = [str(d) for d in dates]
-    of_dates = orders.where(facts.order_date().isin(dates))
-    rows = facts.sales(of_dates, products, customers).persist(StorageLevel.MEMORY_AND_DISK)
+    """Build ``fact_sales`` from every order of ``orders``, publish the order dates whose rows
+    differ from the published table, remove the dates no order holds any more; return the table.
+    """
+    spark, path = ctx.spark, table_path(ctx.cfg.paths.gold, FACT_SALES.name)
+    rows = facts.sales(orders, products, customers).persist(StorageLevel.MEMORY_AND_DISK)
     try:
-        ctx.run.counters.rows_in = orders_in = of_dates.count()
+        ctx.run.counters.rows_in = orders_in = orders.count()
         ctx.run.metrics["build_violations"] = broken = facts.build_violations(rows, orders_in)
         if failed := {kind: count for kind, count in broken.items() if count}:
-            raise GoldCheckError(f"orders of {day} break the grain of fact_sales: {failed}")
-        if dates:
-            write_partitions(rows.repartition(ORDER_DATE), path, {ORDER_DATE: dates})
+            raise GoldCheckError(f"silver orders break the grain of fact_sales: {failed}")
+        built, published = checks.fingerprints(rows), _published_fingerprints(spark, path)
+        rewritten = sorted(day for day, print_ in built.items() if published.get(day) != print_)
+        removed = sorted(published.keys() - built.keys())
+        ctx.run.metrics.update(
+            {
+                "dates_rewritten": len(rewritten),
+                "dates_removed": len(removed),
+                "dates_unchanged": len(built) - len(rewritten),
+            }
+        )
+        if rewritten:
+            changed = rows.where(F.col(ORDER_DATE).isin(rewritten)).repartition(ORDER_DATE)
+            write_partitions(changed, path, {ORDER_DATE: rewritten})
+        if removed:
+            drop_partitions(spark, path, {ORDER_DATE: removed})
     finally:
         rows.unpersist()
 
-    sales = read_table(ctx.spark, path, FACT_SALES.schema)
-    ctx.run.counters.rows_out = sales.where(F.col(ORDER_DATE).isin(dates)).count()
-    if ctx.run.counters.rows_out != ctx.run.counters.rows_in:
-        raise GoldCheckError(
-            f"{ctx.run.counters.rows_in} silver orders on the refreshed dates, "
-            f"{ctx.run.counters.rows_out} rows in their fact_sales partitions"
-        )
+    sales = read_table(spark, path, FACT_SALES.schema)
+    after = checks.fingerprints(sales)
+    ctx.run.counters.rows_out = sum(count for count, _ in after.values())
+    if differing := sorted(
+        day for day in built.keys() | after.keys() if built.get(day) != after.get(day)
+    ):
+        raise GoldCheckError(f"fact_sales differs from the rows built from silver on {differing}")
     return sales
+
+
+def _published_fingerprints(spark: SparkSession, path: str) -> dict[date, object]:
+    """``checks.fingerprints`` of ``fact_sales`` as published. Every date of a table written with
+    other columns or types than ``FACT_SALES`` (an earlier version of gold) gets ``None``, a
+    fingerprint no build matches."""
+    try:
+        published = read_table(spark, path)
+    except FileNotFoundError:
+        return {}
+    if _columns(published.schema) != _columns(FACT_SALES.schema):
+        return {row[0]: None for row in published.select(ORDER_DATE).distinct().collect()}
+    return checks.fingerprints(published)
+
+
+def _columns(schema: StructType) -> list[tuple[str, DataType]]:
+    return [(field.name, field.dataType) for field in schema.fields]

@@ -133,10 +133,10 @@ def test_the_runbook_repair_of_an_order_moved_to_another_date_works(silver_lake)
         order("T1", "2025-12-31T09:00:00"),
         order("T2", "2025-12-31T10:00:00"),
     )
-    with pytest.raises(Exception):  # noqa: B017
-        silver_lake.run_gold(J1)
-
-    silver_lake.run_gold(J1)  # The repair the runbook gives.
+    # Adapted in the fix round: gold rebuilds every order date from the complete silver days, so
+    # the first run follows the move instead of failing; replaying it changes nothing.
+    silver_lake.run_gold(J1)
+    silver_lake.run_gold(J1)
 
     dates = {r.transaction_id: str(r.order_date) for r in silver_lake.gold("fact_sales").collect()}
     assert dates == {"T0": "2025-12-29", "T1": "2025-12-31", "T2": "2025-12-31"}
