@@ -92,7 +92,7 @@ def test_the_report_finds_every_order_date_built_and_the_star_sound(generated):
 
 
 def test_the_explain_shows_the_broadcast_and_the_sort_merge_interval_join(generated, capsys):
-    report.explain(generated.spark, generated.cfg, date(2026, 1, 2))
+    report.explain(generated.spark, generated.cfg)
 
     default, disabled = capsys.readouterr().out.split("== the same build")
     assert "BroadcastHashJoin" in default

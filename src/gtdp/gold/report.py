@@ -1,25 +1,31 @@
-"""Print the gold checks and samples, to verify a run or a replay; exit 1 on any mismatch.
+"""Print the gold checks and samples, to verify a run or a replay; exit 1 unless gold is
+published and agrees with silver.
 
-    scripts/cluster/submit.sh src/gtdp/gold/report.py [--env local] [--explain YYYY-MM-DD]
+    scripts/cluster/submit.sh src/gtdp/gold/report.py [--env local] [--explain]
 
-1. Orders per ``order_date``: the silver orders of each complete drop (``ingestion_date``) and
-   the rows of ``fact_sales``. ``ok`` when the counts are equal, ``not built`` when no gold run
-   covered the date yet, ``MISMATCH`` otherwise. Shown for the last 7 order dates, the dates
-   whose orders came in several drops (late orders) and every date that is not ``ok``.
-2. The invariants of the star (unique keys, no orphan fact) and the optional references.
-3. Gold against silver recomputed in one pass: orders, revenue at the applicable price, invoiced
-   amount, orders without exactly one valid version or without customer, calendar coverage,
+0. The publication state of ``gold/_state.json``: ``PUBLISHED`` or not, the run and the silver
+   days that gold was built from. A day silver completed after that run is ``pending`` (gold is
+   behind silver, run gold), a day that silver no longer marks complete is ``withdrawn``: neither
+   is a mismatch. Gold that is not ``PUBLISHED`` fails the report.
+1. Orders per ``order_date``: the silver orders of each drop (``ingestion_date``) gold was built
+   from and the rows of ``fact_sales``. ``ok`` when the counts are equal, ``MISMATCH``
+   otherwise. Shown for the last 7 order dates, the dates whose orders came in several drops
+   (late orders) and every date that is not ``ok``.
+2. The invariants of the star (unique keys, required columns, no orphan fact) and the optional
+   references.
+3. Gold against the same silver days recomputed in one pass: orders, revenue at the applicable
+   price, invoiced amount, orders without exactly one valid version, calendar coverage,
    completed revenue of ``kpi_revenue_daily``, and a funnel that never increases.
-4. The top products of FR recomputed with a plain ``groupBy`` and ``orderBy``, beside the
-   indicator.
+4. The top products of FR ranked in plain Python from ``fact_sales`` and the current country of
+   ``dim_customer``, beside the indicator: products tied on revenue share a rank.
 5. Rows and content checksum of each gold table: a replay that rewrites the same rows keeps the
    same ``content_sum``.
 6. The versions of P00042 and its ``fact_sales`` rows on either side of its first price change.
 7. Samples of the indicators: top products per country, moving average of the first and last
    days of FR, price deviation of P00042's categories, and every other indicator.
 8. The audit rows of the gold runs.
-9. With ``--explain``, the physical plan of the ``fact_sales`` build for the order dates of that
-   drop, with the default join selection, then with broadcast joins disabled.
+9. With ``--explain``, the physical plan of the ``fact_sales`` build from those silver days,
+   with the default join selection, then with broadcast joins disabled.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from functools import reduce
 from itertools import zip_longest
@@ -38,6 +45,7 @@ from gtdp.audit import audit_path
 from gtdp.config import AppConfig, Env, load_config
 from gtdp.gold import checks, dimensions, facts
 from gtdp.gold.kpis import COMPLETED, KPIS, with_customer
+from gtdp.gold.state import State, Status, read_state
 from gtdp.gold.tables import DIM_CUSTOMER, DIM_PRODUCT, FACT_SALES, ORDER_DATE, STAR, table_path
 from gtdp.io import INGESTION_DATE, read_table
 from gtdp.silver.days import complete_days
@@ -54,10 +62,37 @@ def _gold(spark: SparkSession, cfg: AppConfig, name: str, schema=None) -> DataFr
     return read_table(spark, table_path(cfg.paths.gold, name), schema)
 
 
+@dataclass(frozen=True)
+class Publication:
+    """``gold/_state.json`` beside the days silver completed."""
+
+    state: State | None
+    pending: list[date]
+    """Days silver completed that the gold of ``state`` was not built from: gold is behind."""
+    withdrawn: list[date]
+    """Days that gold was built from and silver no longer marks complete."""
+
+    @property
+    def published(self) -> bool:
+        return self.state is not None and self.state.status is Status.PUBLISHED
+
+
+def publication(spark: SparkSession, cfg: AppConfig) -> Publication:
+    state = read_state(spark, cfg.paths.gold)
+    complete = complete_days(spark, cfg.paths.silver)
+    built = list(state.silver_days) if state else []
+    return Publication(
+        state, [d for d in complete if d not in built], [d for d in built if d not in complete]
+    )
+
+
 def _silver_orders(spark: SparkSession, cfg: AppConfig) -> DataFrame:
-    """The silver orders of the days silver completed, the only ones gold reads."""
+    """The silver orders of the days gold was built from (``gold/_state.json``), or of the days
+    silver completed while no gold run has written a state."""
+    state = read_state(spark, cfg.paths.gold)
+    days = state.silver_days if state else complete_days(spark, cfg.paths.silver)
     orders = read_table(spark, silver_path(cfg.paths.silver, "orders"), PIPELINES["orders"].schema)
-    return orders.where(F.col(INGESTION_DATE).isin(complete_days(spark, cfg.paths.silver)))
+    return orders.where(F.col(INGESTION_DATE).isin(list(days)))
 
 
 def order_dates(spark: SparkSession, cfg: AppConfig) -> DataFrame:
@@ -74,11 +109,7 @@ def order_dates(spark: SparkSession, cfg: AppConfig) -> DataFrame:
         .groupBy(ORDER_DATE)
         .agg(F.count(F.lit(1)).alias("fact_sales"))
     )
-    status = (
-        F.when(F.col("fact_sales").isNull(), "not built")
-        .when(F.col("silver") == F.col("fact_sales"), "ok")
-        .otherwise("MISMATCH")
-    )
+    status = F.when(F.col("silver").eqNullSafe(F.col("fact_sales")), "ok").otherwise("MISMATCH")
     return (
         per_drop.join(totals, ORDER_DATE, "full")
         .join(built, ORDER_DATE, "full")
@@ -162,48 +193,39 @@ def reconciliation(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, str, 
 
 
 def top_products_check(spark: SparkSession, cfg: AppConfig, country: str) -> list[tuple]:
-    """``(position, product, revenue)`` of a plain ``groupBy``/``orderBy`` beside ``(rank,
-    product, revenue)`` of ``kpi_top_products_country``, and whether the two agree."""
+    """``(rank, product, revenue)`` of the products of ``country`` whose completed revenue is
+    among its ``top_n`` highest revenues, ranked in plain Python (tied products share a rank),
+    beside the rows of ``kpi_top_products_country`` up to rank ``top_n``, and whether the two
+    agree."""
     n = cfg.gold.top_n if cfg.gold else 0
     sales = _gold(spark, cfg, FACT_SALES.name, FACT_SALES.schema)
     customers = _gold(spark, cfg, DIM_CUSTOMER.name, DIM_CUSTOMER.schema)
-    plain = (
+    totals = (
         with_customer(sales, customers)
         .where((F.col("status") == COMPLETED) & (F.col("country") == country))
         .groupBy("product_id")
         .agg(F.sum("revenue_eur").alias("revenue_eur"))
-        .orderBy(F.col("revenue_eur").desc(), "product_id")
-        .limit(n)
         .collect()
     )
-    indicator = (
-        _gold(spark, cfg, "kpi_top_products_country")
-        .where(F.col("country") == country)
+    highest = sorted({row["revenue_eur"] for row in totals}, reverse=True)[:n]
+    plain = sorted(
+        (highest.index(row["revenue_eur"]) + 1, row["product_id"], row["revenue_eur"])
+        for row in totals
+        if row["revenue_eur"] in highest
+    )
+    indicator = [
+        (row["rank"], row["product_id"], row["revenue_eur"])
+        for row in _gold(spark, cfg, "kpi_top_products_country")
+        .where((F.col("country") == country) & (F.col("rank") <= n))
         .orderBy("rank", "product_id")
         .collect()
-    )
+    ]
 
-    def agree(mine, kept) -> bool:
-        if kept is None:
-            return False
-        if mine is None:  # a product tied with the last one the plain top N keeps
-            return bool(plain) and kept["revenue_eur"] == plain[-1]["revenue_eur"]
-        return (mine["product_id"], mine["revenue_eur"]) == (
-            kept["product_id"],
-            kept["revenue_eur"],
-        )
+    def shown(line: tuple | None) -> tuple:
+        return (line[0], line[1], str(line[2])) if line else (None, None, None)
 
     return [
-        (
-            position,
-            mine["product_id"] if mine else None,
-            str(mine["revenue_eur"]) if mine else None,
-            kept["rank"] if kept else None,
-            kept["product_id"] if kept else None,
-            str(kept["revenue_eur"]) if kept else None,
-            agree(mine, kept),
-        )
-        for position, (mine, kept) in enumerate(zip_longest(plain, indicator), start=1)
+        (*shown(mine), *shown(kept), mine == kept) for mine, kept in zip_longest(plain, indicator)
     ]
 
 
@@ -362,20 +384,17 @@ def runs(spark: SparkSession, cfg: AppConfig) -> DataFrame:
     )
 
 
-def explain(spark: SparkSession, cfg: AppConfig, day: date) -> None:
-    """The plan of the ``fact_sales`` build of the job for drop ``day``."""
+def explain(spark: SparkSession, cfg: AppConfig) -> None:
+    """The plan of the ``fact_sales`` build of the job, from the silver days gold reads."""
     orders = _silver_orders(spark, cfg)
-    of_day = orders.where(F.col(INGESTION_DATE) == F.lit(day))
-    dates = [row[0] for row in of_day.select(facts.order_date()).distinct().collect()]
-    of_dates = orders.where(facts.order_date().isin(dates))
     products = _gold(spark, cfg, DIM_PRODUCT.name, DIM_PRODUCT.schema)
-    print(f"== fact_sales build for the {len(dates)} order dates of {day}, default join selection")
-    facts.sales(of_dates, products).explain()
+    print("== fact_sales build, default join selection")
+    facts.sales(orders, products).explain()
     previous = spark.conf.get(BROADCAST_THRESHOLD)
     spark.conf.set(BROADCAST_THRESHOLD, "-1")
     try:
         print(f"== the same build with {BROADCAST_THRESHOLD}=-1")
-        facts.sales(of_dates, products).explain()
+        facts.sales(orders, products).explain()
     finally:
         spark.conf.set(BROADCAST_THRESHOLD, previous)
 
@@ -383,11 +402,17 @@ def explain(spark: SparkSession, cfg: AppConfig, day: date) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--env", choices=[env.value for env in Env], default=Env.CLUSTER.value)
-    parser.add_argument("--explain", type=date.fromisoformat, help="a drop whose build to explain")
+    parser.add_argument("--explain", action="store_true", help="explain the fact_sales build")
     args = parser.parse_args(argv)
     cfg = load_config(args.env)
     spark = build_spark(cfg, f"{cfg.app.name}-gold-report")
     try:
+        published = publication(spark, cfg)
+        status = published.state.status if published.state else "ABSENT"
+        print(f"== gold/_state.json: {published.state}")
+        print(f"pending (silver completed, not in gold yet): {[str(d) for d in published.pending]}")
+        print(f"withdrawn (no longer complete in silver): {[str(d) for d in published.withdrawn]}")
+        violated: list[tuple] = [] if published.published else [("gold/_state.json", status)]
         dates = order_dates(spark, cfg)
         recent = F.col(ORDER_DATE) > F.date_sub("_last", 7)
         shown = (F.col("drops") > 1) | (F.col("status") != "ok") | recent
@@ -405,17 +430,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         spark.createDataFrame(lines, "check string, rows long, status string").show(
             50, truncate=False
         )
-        violated = [line for line in lines if line[2] == "VIOLATED"]
+        violated += [line for line in lines if line[2] == "VIOLATED"]
         totals = reconciliation(spark, cfg)
         spark.createDataFrame(
             totals, "check string, silver string, gold string, status string"
         ).show(50, truncate=False)
         violated += [line for line in totals if line[3] != "ok"]
         top = top_products_check(spark, cfg, SAMPLE_COUNTRY)
-        print(f"== top products of {SAMPLE_COUNTRY}: plain groupBy/orderBy beside the indicator")
+        print(f"== top products of {SAMPLE_COUNTRY}: ranked in plain Python beside the indicator")
         spark.createDataFrame(
             top,
-            "position int, plain_product string, plain_revenue string, kpi_rank int,"
+            "plain_rank int, plain_product string, plain_revenue string, kpi_rank int,"
             " kpi_product string, kpi_revenue string, same boolean",
         ).show(50, truncate=False)
         violated += [line for line in top if not line[-1]]
@@ -426,9 +451,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"== {title}")
             frame.show(60, truncate=False)
         runs(spark, cfg).show(100, truncate=False)
-        print(f"{mismatches} order dates mismatched, {len(violated)} checks failed")
+        print(f"gold {status}, {mismatches} order dates mismatched, {len(violated)} checks failed")
         if args.explain:
-            explain(spark, cfg, args.explain)
+            explain(spark, cfg)
     finally:
         spark.stop()
     return 1 if mismatches or violated else 0
