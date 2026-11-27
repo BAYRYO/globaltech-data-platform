@@ -208,8 +208,29 @@ class GoldSettings:
 
 
 @dataclass(frozen=True)
+class PerfSettings:
+    """``[perf]``: where the Lot 7 benchmarks read and write (docs/performance.md)."""
+
+    landing: str
+    """Root of the generator landings: ``<landing>/<profile>/landing``."""
+    tables: str
+    """Root of the benchmark tables: ``<tables>/<profile>``."""
+    storage: str
+    """Root of the storage benchmark runs: ``<storage>/<run>/{rep3,ec}``."""
+    history_ui: str
+    """Spark History Server UI, linked from the reports."""
+    warmup_rounds: int
+    """Rounds run before the measured ones of a timed benchmark, left out of the statistics."""
+
+    def __post_init__(self) -> None:
+        if self.warmup_rounds < 0:
+            raise ConfigError(f"[perf] warmup_rounds must be >= 0, got {self.warmup_rounds}")
+
+
+@dataclass(frozen=True)
 class AppConfig:
-    """``streaming`` and ``gold`` are ``None`` when the configuration has no such section."""
+    """``streaming``, ``gold`` and ``perf`` are ``None`` when the configuration has no such
+    section."""
 
     env: Env
     app: AppSettings
@@ -219,6 +240,7 @@ class AppConfig:
     git_sha: str | None
     streaming: StreamingSettings | None = None
     gold: GoldSettings | None = None
+    perf: PerfSettings | None = None
 
 
 _SECTIONS: dict[str, type] = {
@@ -227,6 +249,7 @@ _SECTIONS: dict[str, type] = {
     "paths": _PathsSection,
     "streaming": StreamingSettings,
     "gold": GoldSettings,
+    "perf": PerfSettings,
 }
 
 
@@ -278,6 +301,7 @@ def load_config(
         git_sha=os.environ.get(GIT_SHA_VAR) or None,
         streaming=_section("streaming", StreamingSettings, raw) if "streaming" in raw else None,
         gold=_section("gold", GoldSettings, raw) if "gold" in raw else None,
+        perf=_section("perf", PerfSettings, raw) if "perf" in raw else None,
     )
 
 

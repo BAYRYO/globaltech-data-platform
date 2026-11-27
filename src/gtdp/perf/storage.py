@@ -1,17 +1,25 @@
 """KAN-47: the same files stored with replication 3 and with erasure coding XOR-2-1-1024k.
 
-    python3 -m gtdp.perf.storage --source HDFS_FILE [--small HDFS_FILE] [--runs N] [--out DIR]
+    python3 -m gtdp.perf.storage --source HDFS_FILE [--small HDFS_FILE] [--runs N]
+                                 [--root HDFS_DIR] [--run NAME] [--out DIR]
+    python3 -m gtdp.perf.storage --report DIR
     (scripts/perf/storage.sh runs it in the cluster image)
 
-The tool copies each file into ``/benchmarks/rep3`` (replication 3) and ``/benchmarks/ec``
-(erasure coding), alternating the modes, ``--runs`` times, and times each copy. Then, for each
-mode, it records the directory's policy (``hdfs ec -getPolicy``), the logical and physical bytes
+Each run writes to its own area, ``<root>/<run>/rep3`` and ``<root>/<run>/ec`` (``--root``
+defaults to ``[perf] storage``), and refuses an area that already exists: it never overwrites a
+file, such as the copies kept for the DataNode failure test (KAN-52). It sets the policy
+``XOR-2-1-1024k`` on ``ec`` and checks it, and that ``rep3`` has none, before the first copy.
+
+The tool copies the source into each folder ``--runs`` times, alternating the modes, and times
+each copy; a copy is removed before the next one, and the last stays. Then, for each mode, it
+records the folder's policy (``hdfs ec -getPolicy``), the logical and physical bytes
 (``hdfs dfs -du -s``), the blocks and their locations (``hdfs fsck -files -blocks -locations``)
 and a composite CRC (``hdfs dfs -checksum``), equal in both modes when the bytes are equal. It
 times the full read of each copy (``hdfs dfs -cat``), one warm-up read then ``--runs`` reads per
 mode, alternating; the read of the small file gives the fixed cost of the client JVM. It writes
-``result.json``, ``report.md`` and the fsck outputs to ``--out``. The copies stay in place for
-the DataNode failure test (KAN-52).
+``result.json``, ``report.md`` (with the exact two-sided Mann-Whitney p of each time, rep3
+against ec) and the fsck outputs to ``--out``. ``--report`` rebuilds ``report.md`` from the
+``result.json`` of a directory.
 """
 
 from __future__ import annotations
@@ -25,11 +33,17 @@ import statistics
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-MODES = {"rep3": "/benchmarks/rep3", "ec": "/benchmarks/ec"}
+from gtdp.config import ConfigError, load_config
+from gtdp.perf.mr_compare import mann_whitney
+
+POLICY = "XOR-2-1-1024k"
+MODES = ("rep3", "ec")
+NO_POLICY = "is unspecified"
 BLOCK = re.compile(r"^\d+\. \S+ len=(\d+) Live_repl=(\d+)\s+\[(.*)\]\s*$", re.MULTILINE)
 NODE = re.compile(r"DatanodeInfoWithStorage\[([^,\]]+)")
 
@@ -76,38 +90,57 @@ def copy_of(source: str, folder: str) -> str:
     return posixpath.join(folder, posixpath.basename(source))
 
 
-def spread(values: Sequence[float]) -> dict[str, float]:
-    return {"median": statistics.median(values), "min": min(values), "max": max(values)}
+class Refused(Exception):
+    """The run area cannot be used: it exists, or a folder does not have the expected policy."""
 
 
-def measure(sources: Sequence[str], runs: int, out: Path) -> dict:
-    copies = {mode: [] for mode in MODES}
-    for _ in range(runs):
-        for mode, folder in MODES.items():
-            copies[mode].append(timed("dfs", "-cp", "-f", sources[0], folder))
-            for small in sources[1:]:
-                hdfs("dfs", "-cp", "-f", small, folder)
-    reads = {mode: [] for mode in MODES}
-    small_reads = {mode: [] for mode in MODES}
+def run_area(root: str, run: str) -> dict[str, str]:
+    """Create ``<root>/<run>/rep3`` and ``<root>/<run>/ec``, set ``POLICY`` on ``ec``, and check
+    both policies; refuse an area that already exists."""
+    area = posixpath.join(root, run)
+    if subprocess.run(["hdfs", "dfs", "-test", "-e", area], check=False).returncode == 0:
+        raise Refused(f"{area} exists: each run writes to a new area, pass another --run")
+    folders = {mode: posixpath.join(area, mode) for mode in MODES}
+    hdfs("dfs", "-mkdir", "-p", *folders.values())
+    hdfs("ec", "-setPolicy", "-path", folders["ec"], "-policy", POLICY, admin=True)
+    for mode, folder in folders.items():
+        policy = hdfs("ec", "-getPolicy", "-path", folder, admin=True).strip()
+        if not (policy == POLICY if mode == "ec" else policy.endswith(NO_POLICY)):
+            raise Refused(f"{folder} has the policy {policy!r}")
+    return folders
+
+
+def measure(sources: Sequence[str], runs: int, folders: Mapping[str, str], out: Path) -> dict:
+    source, smalls = sources[0], sources[1:]
+    copies: dict[str, list[float]] = {mode: [] for mode in folders}
+    for run in range(runs):
+        for mode, folder in folders.items():
+            if run:
+                hdfs("dfs", "-rm", "-skipTrash", copy_of(source, folder))
+            copies[mode].append(timed("dfs", "-cp", source, folder))
+            for small in smalls if not run else ():
+                hdfs("dfs", "-cp", small, folder)
+    reads: dict[str, list[float]] = {mode: [] for mode in folders}
+    small_reads: dict[str, list[float]] = {mode: [] for mode in folders}
     for run in range(runs + 1):
-        for mode, folder in MODES.items():
-            seconds = timed("dfs", "-cat", copy_of(sources[0], folder))
-            small = [timed("dfs", "-cat", copy_of(source, folder)) for source in sources[1:2]]
+        for mode, folder in folders.items():
+            seconds = timed("dfs", "-cat", copy_of(source, folder))
+            small = [timed("dfs", "-cat", copy_of(path, folder)) for path in smalls[:1]]
             if run:
                 reads[mode].append(seconds)
                 small_reads[mode] += small
     files = {}
-    for mode, folder in MODES.items():
+    for mode, folder in folders.items():
         policy = hdfs("ec", "-getPolicy", "-path", folder, admin=True).strip()
-        for source in sources:
-            path = copy_of(source, folder)
-            fsck = hdfs("fsck", path, "-files", "-blocks", "-locations", admin=True)
-            (out / f"fsck-{mode}-{posixpath.basename(source)}.txt").write_text(fsck)
-            logical, physical, _ = hdfs("dfs", "-du", "-s", path).split(maxsplit=2)
+        for path in sources:
+            copy = copy_of(path, folder)
+            fsck = hdfs("fsck", copy, "-files", "-blocks", "-locations", admin=True)
+            (out / f"fsck-{mode}-{posixpath.basename(path)}.txt").write_text(fsck)
+            logical, physical, _ = hdfs("dfs", "-du", "-s", copy).split(maxsplit=2)
             checksum = hdfs(
-                "dfs", "-Ddfs.checksum.combine.mode=COMPOSITE_CRC", "-checksum", path
+                "dfs", "-Ddfs.checksum.combine.mode=COMPOSITE_CRC", "-checksum", copy
             ).split()[1:]
-            files[path] = {
+            files[copy] = {
                 "mode": mode,
                 "policy": policy,
                 "logical": int(logical),
@@ -117,18 +150,20 @@ def measure(sources: Sequence[str], runs: int, out: Path) -> dict:
                 "checksum": checksum,
             }
     return {
+        "folders": dict(folders),
         "files": files,
-        "copy_s": {mode: spread(values) | {"runs": values} for mode, values in copies.items()},
-        "read_s": {mode: spread(values) | {"runs": values} for mode, values in reads.items()},
-        "small_read_s": {
-            mode: spread(values) | {"runs": values}
-            for mode, values in small_reads.items()
-            if values
-        },
+        "copy_s": {mode: {"runs": values} for mode, values in copies.items()},
+        "read_s": {mode: {"runs": values} for mode, values in reads.items()},
+        "small_read_s": {mode: {"runs": values} for mode, values in small_reads.items() if values},
     }
 
 
-def markdown(result: dict) -> str:
+TIMES = (("copy_s", "copie"), ("read_s", "lecture"), ("small_read_s", "lecture du petit fichier"))
+
+
+def markdown(result: Mapping) -> str:
+    """The volumes per file, and per mode the median, min and max of each time, with the exact
+    two-sided Mann-Whitney p of rep3 against ec."""
     lines = [
         "| Fichier | Mode | Logique | Physique | Surcoût | Blocs ou groupes | Unités par bloc |",
         "| --- | --- | ---: | ---: | ---: | ---: | --- |",
@@ -139,30 +174,57 @@ def markdown(result: dict) -> str:
             f"| `{path}` | {f['mode']} | {f['logical']:,} | {f['physical']:,} "
             f"| {f['overhead_pct']:.1f} % | {len(f['blocks'])} | {units} |".replace(",", " ")
         )
-    lines += ["", "| Mode | Copie médiane (s) | Lecture médiane (s) | Min à max (s) |"]
-    lines.append("| --- | ---: | ---: | ---: |")
+    times = [(key, label) for key, label in TIMES if key in result]
+    lines += [
+        "",
+        "| Mode | " + " | ".join(f"{label} : médiane, min à max (s)" for _, label in times) + " |",
+        "| --- |" + " ---: |" * len(times),
+    ]
     for mode in MODES:
-        read, copy = result["read_s"][mode], result["copy_s"][mode]
-        lines.append(
-            f"| {mode} | {copy['median']:.2f} | {read['median']:.2f} "
-            f"| {read['min']:.2f} à {read['max']:.2f} |"
-        )
+        cells = []
+        for key, _ in times:
+            values = result[key][mode]["runs"]
+            cells.append(f"{statistics.median(values):.2f}, {min(values):.2f} à {max(values):.2f}")
+        lines.append(f"| {mode} | " + " | ".join(cells) + " |")
+    p = [
+        mann_whitney(result[key]["rep3"]["runs"], result[key]["ec"]["runs"])[2] for key, _ in times
+    ]
+    lines.append("| p bilatéral (rep3 contre ec) | " + " | ".join(f"{v:.3f}" for v in p) + " |")
     return "\n".join(lines)
+
+
+def write_report(out: Path, result: Mapping) -> str:
+    report = markdown(result)
+    (out / "report.md").write_text(report + "\n")
+    return report
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="storage", description=__doc__.split("\n\n")[0])
-    parser.add_argument("--source", required=True, help="HDFS file measured in both modes")
+    parser.add_argument("--source", help="HDFS file measured in both modes")
     parser.add_argument("--small", help="HDFS file smaller than a 1 MiB cell")
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--root", help="HDFS root of the run areas (default: [perf] storage)")
+    parser.add_argument("--run", default=f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}", help="run area")
     parser.add_argument("--out", type=Path, default=Path("build/perf/storage"))
+    parser.add_argument("--report", type=Path, help="rebuild DIR/report.md from DIR/result.json")
     args = parser.parse_args(argv)
+    if args.report:
+        print(write_report(args.report, json.loads((args.report / "result.json").read_text())))
+        return 0
+    if not args.source:
+        parser.error("--source is required unless --report is given")
+    root = args.root or perf_storage()
+    try:
+        folders = run_area(root, args.run)
+    except Refused as refused:
+        print(f"error: {refused}", file=sys.stderr)
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
     sources = [args.source, *([args.small] if args.small else [])]
-    result = measure(sources, args.runs, args.out)
+    result = measure(sources, args.runs, folders, args.out)
     (args.out / "result.json").write_text(json.dumps(result, indent=2))
-    (args.out / "report.md").write_text(markdown(result) + "\n")
-    print(markdown(result))
+    print(write_report(args.out, result))
     checksums: dict[str, set[str]] = {}
     for path, f in result["files"].items():
         checksums.setdefault(posixpath.basename(path), set()).add(f["checksum"][-1])
@@ -170,6 +232,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if differ:
         print(f"CHECK FAILED: the two copies of {differ} differ", file=sys.stderr)
     return 1 if differ else 0
+
+
+def perf_storage() -> str:
+    perf = load_config("cluster").perf
+    if perf is None:
+        raise ConfigError("the configuration has no [perf] section")
+    return perf.storage
 
 
 if __name__ == "__main__":

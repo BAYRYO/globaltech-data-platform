@@ -51,7 +51,7 @@ class FakeHdfs:
     Each ``-cat`` advances a fake clock by the next scripted duration of its mode."""
 
     def __init__(self, existing=(), read_s=None, policy_answer=None):
-        self.paths = set(existing) | {posixpath.dirname(p) for p in existing}
+        self.paths = set(existing)
         self.policies: dict[str, str] = {}
         self.commands: list[list[str]] = []
         self.clock = 0.0
@@ -65,7 +65,9 @@ class FakeHdfs:
         self.commands.append(command)
         args, out, code = command[1:], "", 0
         if args[:2] == ["dfs", "-test"]:
-            code = 0 if args[-1] in self.paths else 1
+            code = (
+                0 if any(p == args[-1] or p.startswith(args[-1] + "/") for p in self.paths) else 1
+            )
         elif args[:2] == ["dfs", "-mkdir"]:
             self.paths.update(a for a in args[2:] if a != "-p")
         elif args[:2] == ["dfs", "-cp"]:
@@ -94,8 +96,17 @@ class FakeHdfs:
         return subprocess.CompletedProcess(command, code, out, "")
 
     def writes(self):
-        mutating = ("-cp", "-mkdir", "-rm", "-setPolicy")
-        return [c for c in self.commands if any(flag in c for flag in mutating)]
+        """The paths that the commands created, removed or changed."""
+        found = []
+        for command in self.commands:
+            args = command[1:]
+            if args[:2] in (["dfs", "-cp"], ["dfs", "-rm"]):
+                found.append(args[-1])
+            elif args[:2] == ["dfs", "-mkdir"]:
+                found += [a for a in args[2:] if a != "-p"]
+            elif args[:2] == ["ec", "-setPolicy"]:
+                found.append(args[args.index("-path") + 1])
+        return found
 
 
 @pytest.fixture
@@ -124,7 +135,8 @@ def test_rerunning_the_storage_benchmark_leaves_the_kan52_files_alone(hdfs, tmp_
     assert run_tool(tmp_path, "--run", "r1") == 0
     rewrites = [c for c in fake.commands if "-cp" in c and c[-1].rstrip("/") in KAN52]
     assert rewrites == []
-    assert all("/benchmarks/storage/r1/" in c[-1] + "/" for c in fake.writes()), fake.writes()
+    assert fake.writes()
+    assert all(path.startswith("/benchmarks/storage/r1/") for path in fake.writes())
 
 
 def test_a_run_area_that_exists_is_refused_before_any_write(hdfs, tmp_path):

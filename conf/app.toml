@@ -63,3 +63,17 @@ top_n = 5
 # Days of the moving average of daily revenue per country in kpi_revenue_moving_avg, the day
 # included, over a calendar where a day without sales counts as 0.
 moving_average_days = 7
+
+[perf]
+# Lot 7 benchmarks (docs/performance.md), on the cluster only. Root of the generator landings that
+# scripts/perf/bench.sh land writes and bench.sh prepare reads: <landing>/<profile>/landing.
+landing = "hdfs://namenode:8020/benchmarks/mr-vs-spark"
+# Root of the benchmark tables that bench.sh prepare writes: <tables>/<profile>.
+tables = "hdfs://namenode:8020/benchmarks/perf"
+# Root of the runs of scripts/perf/storage.sh: each run writes <storage>/<run>/rep3 and
+# <storage>/<run>/ec, and refuses a run area that already exists.
+storage = "/benchmarks/storage"
+# Spark History Server UI, linked from the key stage of each run in the reports.
+history_ui = "http://localhost:18080/history"
+# Rounds run before the measured ones of a timed benchmark and left out of its statistics.
+warmup_rounds = 2
