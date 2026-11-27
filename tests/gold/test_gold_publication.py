@@ -60,11 +60,11 @@ def test_a_run_that_dies_while_writing_leaves_publishing_and_the_next_run_conver
     silver_lake.orders(J2, order("T2", "2026-01-01T09:00:00", day=J2, customer="C2"))
     writes = []
 
-    def dies_on_the_third_table(frame, path):
+    def dies_on_the_third_table(frame, path, *args):
         writes.append(path)
         if len(writes) == 3:
             raise RuntimeError("killed")
-        replace_table(frame, path)
+        replace_table(frame, path, *args)
 
     monkeypatch.setattr(publish_module, "replace_table", dies_on_the_third_table)
     with pytest.raises(RuntimeError, match="killed"):
