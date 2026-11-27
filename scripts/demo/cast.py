@@ -7,8 +7,9 @@
 writes each chunk with its time since the start: what COMMAND prints, nothing else.
 
 `render` replays the cast on a line-based screen (ANSI codes dropped, carriage returns
-honoured), shortens every wait longer than --max-idle seconds to --max-idle and says so on screen,
-writes the screens as ASS subtitles over a dark background and encodes them with ffmpeg.
+honoured), shortens to --max-idle every wait that exceeds it by a second or more and says so on
+screen, writes the screens as ASS subtitles over a dark background, with the real and the video
+clocks at the bottom, and encodes them with ffmpeg.
 Standard library only.
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import codecs
 import json
+import math
 import os
 import re
 import subprocess
@@ -96,16 +98,19 @@ class Screen:
 
 
 def frames(events: list[tuple[float, str]], max_idle: float) -> list[Frame]:
-    screen, result, video, last = Screen(), [], 0.0, 0.0
+    """The screens to show. A wait is shortened only when that saves at least one second, so the
+    notice never reads "20 s shortened to 20 s". The first frame is the empty screen, so a wait
+    before the first output is shortened with its notice too."""
+    screen, video, last = Screen(), 0.0, 0.0
+    result = [Frame(0.0, 0.0, screen.rows(), 0.0, 0.0)]
     for t, text in events:
         gap = t - last
-        skipped = gap - max_idle if gap > max_idle else 0.0
+        skipped = gap - max_idle if gap - max_idle >= 1.0 else 0.0
         video += gap - skipped
-        if result:
-            result[-1].end = video
-            result[-1].skipped = skipped
+        result[-1].end = video
+        result[-1].skipped = skipped
         screen.feed(text)
-        if result and round(result[-1].start * FPS) == round(video * FPS):
+        if round(result[-1].start * FPS) == round(video * FPS):
             result[-1].lines = screen.rows()
         else:
             result.append(Frame(video, video, screen.rows(), t, 0.0))
@@ -120,16 +125,25 @@ def ass_time(seconds: float) -> str:
 
 
 def ass_text(line: str) -> str:
-    return line.replace("\\", "\\⁠").replace("{", "\\{").replace("}", "\\}")
+    """Escape the ASS override characters. Leading spaces become hard spaces: libass drops them."""
+    text = line.replace("\\", "\\⁠").replace("{", "\\{").replace("}", "\\}")
+    body = text.lstrip(" ")
+    return "\\h" * (len(text) - len(body)) + body
 
 
 def clock(seconds: float) -> str:
     return f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
 
 
+def ticks(start: float, end: float) -> list[tuple[float, float]]:
+    """Split [start, end) at each whole second of video."""
+    cuts = [start, *range(int(start) + 1, math.ceil(end)), end]
+    return [(a, b) for a, b in zip(cuts, cuts[1:]) if b > a]
+
+
 def write_ass(path: Path, shots: list[Frame], title: str, max_idle: float) -> None:
     head = (
-        f"{title}. Les attentes de plus de {max_idle:g} s sont raccourcies à {max_idle:g} s, "
+        f"{title}. Les attentes d'au moins {max_idle + 1:g} s sont raccourcies à {max_idle:g} s, "
         "et la durée réelle reste affichée en bas."
     )
     lines = [
@@ -151,8 +165,8 @@ def write_ass(path: Path, shots: list[Frame], title: str, max_idle: float) -> No
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     end = shots[-1].end
-    lines.append(f"Dialogue: 0,{ass_time(0)},{ass_time(end)},Head,,0,0,0,,{{\\pos({LEFT},12)}}{head}")
-    for shot in shots:
+    lines.append(f"Dialogue: 0,{ass_time(0)},{ass_time(end)},Head,,0,0,0,,{{\\pos({LEFT},12)}}{ass_text(head)}")
+    for i, shot in enumerate(shots):
         if shot.end <= shot.start:
             continue
         span = f"{ass_time(shot.start)},{ass_time(shot.end)}"
@@ -160,10 +174,16 @@ def write_ass(path: Path, shots: list[Frame], title: str, max_idle: float) -> No
             style = "Step" if text.startswith("== ") else "Term"
             pos = f"{{\\pos({LEFT},{TOP + row * LINE_H})}}"
             lines.append(f"Dialogue: 0,{span},{style},,0,0,0,,{pos}{ass_text(text)}")
-        footer = f"durée réelle {clock(shot.real)}   vidéo {clock(shot.start)}"
-        lines.append(
-            f"Dialogue: 0,{span},Head,,0,0,0,,{{\\an9\\pos({VIDEO_W - LEFT},{VIDEO_H - 30})}}{footer}"
-        )
+        # The clocks tick every second. Over a shortened wait the real clock runs faster; after the
+        # last output it stops.
+        next_real = shots[i + 1].real if i + 1 < len(shots) else shot.real
+        for a, b in ticks(shot.start, shot.end):
+            real = shot.real + (next_real - shot.real) * (a - shot.start) / (shot.end - shot.start)
+            footer = f"durée réelle {clock(real)}   vidéo {clock(a)}"
+            lines.append(
+                f"Dialogue: 0,{ass_time(a)},{ass_time(b)},Head,,0,0,0,,"
+                f"{{\\an9\\pos({VIDEO_W - LEFT},{VIDEO_H - 30})}}{footer}"
+            )
         if shot.skipped:
             notice = f"attente de {shot.skipped + max_idle:.0f} s raccourcie à {max_idle:g} s"
             wait = f"{ass_time(shot.end - max_idle)},{ass_time(shot.end)}"

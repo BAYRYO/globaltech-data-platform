@@ -121,10 +121,10 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
     <p style="font-size: 28px; margin-top: 14px; color: var(--muted)">Prototype de plateforme Big Data sur Hadoop et Spark : un lac HDFS en trois couches, des pipelines Spark sur YARN, un flux capteurs</p>
   </div>
   <div class="cards" style="margin-top: 56px">
-    <div class="card ap"><h3>Architecte plateforme</h3><p>Lots 1, 2 et volet HDFS du 7 : cluster, HDFS, bronze, réplication contre erasure coding, panne d'un DataNode</p></div>
+    <div class="card ap"><h3>Architecte plateforme</h3><p>Lots 1, 2 et volet HDFS du 7 : cluster, HDFS, bronze, réplication contre erasure coding ; présente la panne d'un DataNode</p></div>
     <div class="card deb"><h3>Data engineer batch</h3><p>Lots 3 et 4 : silver, gold, SCD type 2, pseudonymisation, indicateurs</p></div>
     <div class="card desp"><h3>Data engineer streaming et performance</h3><p>Lots 5, 6 et 7 : flux capteurs, MapReduce contre Spark, benchmarks</p></div>
-    <div class="card rqd"><h3>Responsable qualité et delivery</h3><p>Lots 0, 8 et 9 : cadrage, tests, CI, revues, suivi Jira, rendu</p></div>
+    <div class="card rqd"><h3>Responsable qualité et delivery</h3><p>Lots 0, 8 et 9 : cadrage, tests, CI, revues, fiche d'incident, suivi Jira, rendu</p></div>
   </div>
   <p class="key" style="margin-top: 28px">Contexte · architecture · bronze · silver · gold · streaming · MapReduce contre Spark · performance · stockage et panne · qualité · démonstration · limites · retour d'expérience</p>
   <footer><span>Rôles et lots : pilotage du projet</span><span>1 / 15</span></footer>
@@ -145,7 +145,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
         <li>Une chaîne logistique pilotée par des fichiers Excel et des exports isolés, sans historique fiable.</li>
         <li>Le kit fourni est propre. Notre générateur à graine fixe en tire trois dépôts avec des anomalies volontaires.</li>
         <li>Chaque dépôt porte un manifeste qui compte les anomalies injectées : chaque compte attendu est exact et testable.</li>
-        <li><code>P00042</code> porte 20 % des lignes : le déséquilibre de clé du sujet. Ratio max/médiane par produit : 244,6 sur <code>full</code>.</li>
+        <li><code>P00042</code> porte 20 % des lignes synthétiques : le déséquilibre de clé du sujet. Ratio max/médiane par produit : 244,6 sur <code>full</code>.</li>
       </ul>
     </div>
     <div class="col">
@@ -168,7 +168,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 2 -->
 <aside class="notes">
 <p class="who">responsable qualité et delivery · 45 s</p>
-<p>GlobalTech pilote sa chaîne logistique avec des fichiers Excel et des exports isolés, sans historique fiable. Le sujet demande une plateforme qui collecte, nettoie, historise et expose des indicateurs fiables. Le kit fourni est propre. Notre générateur à graine fixe en tire trois dépôts, J1, J2 et J3, avec des anomalies volontaires et un manifeste qui les compte. Chaque compte attendu est donc exact et testable. J2 apporte des retardataires et des renvois de J1, J3 une nouvelle colonne. Le produit P00042 porte vingt pour cent des lignes : c'est le déséquilibre de clé du sujet. La plateforme répond à neuf questions métier et surveille les capteurs.</p>
+<p>GlobalTech pilote sa chaîne logistique avec des fichiers Excel et des exports isolés, sans historique fiable. Le sujet demande une plateforme qui collecte, nettoie, historise et expose des indicateurs fiables. Le kit fourni est propre. Notre générateur à graine fixe en tire trois dépôts, J1, J2 et J3, avec des anomalies volontaires et un manifeste qui les compte. Chaque compte attendu est donc exact et testable. J2 apporte des retardataires et des renvois de J1, J3 une nouvelle colonne. Le produit P00042 porte vingt pour cent des lignes synthétiques : c'est le déséquilibre de clé du sujet. La plateforme répond à neuf questions métier et surveille les capteurs.</p>
 <p class="src">Sources : docs/rapport-technique.md section 2 ; docs/data-contract.md (profils de volume, commandes)</p>
 </aside>
 <!-- /notes 2 -->
@@ -277,12 +277,12 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
     <span>Mémoire au pire cas : 13 824 Mio sur 15 444</span>
     <span>DataNode mort déclaré en 90 s</span>
   </div>
-  <footer><span>Source : architecture (vue d'ensemble) ; rapport technique, section 3 ; ADR-0001, ADR-0006, ADR-0011</span><span>3 / 15</span></footer>
+  <footer><span>Source : architecture (vue d'ensemble) ; rapport technique, section 3 ; ADR-0001, ADR-0006, ADR-0011 ; plateforme (budget mémoire)</span><span>3 / 15</span></footer>
 <!-- notes 3 -->
 <aside class="notes">
 <p class="who">architecte plateforme · 50 s</p>
 <p>Le cluster tourne sous Docker Compose, à partir d'une seule image construite par le projet : Hadoop 3.3.6, Spark 3.5.3 et Python 3.11. HDFS a un NameNode et trois DataNodes, le minimum pour la réplication 3 et pour l'erasure coding. YARN a deux NodeManagers de 2 560 Mio, ce qui laisse le streaming tourner à côté d'un batch. Nous avons fixé la mémoire service par service. Au pire cas, avec deux drivers, le cluster demande 13 824 Mio sur les 15 444 dont dispose Docker. Le lac a une racine par couche, pour y poser droits et quotas. Les rejets gardent des données personnelles en clair : ils sont fermés aux analystes.</p>
-<p class="src">Sources : docs/architecture.md (vue d'ensemble) ; docs/rapport-technique.md section 3 ; docs/adr/0001-image-hadoop-spark.md ; docs/adr/0011-exploitation-plateforme.md ; docs/platform.md (budget mémoire)</p>
+<p class="src">Sources : docs/architecture.md (vue d'ensemble) ; docs/rapport-technique.md section 3 ; docs/adr/0001-image-hadoop-spark.md ; docs/adr/0006-topologie-hdfs.md ; docs/adr/0011-exploitation-plateforme.md ; docs/platform.md (budget mémoire)</p>
 </aside>
 <!-- /notes 3 -->
 </section>
@@ -322,7 +322,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <aside class="notes">
 <p class="who">architecte plateforme · 45 s</p>
 <p>Bronze garde la donnée brute, sans perte. Avant toute écriture, le job vérifie chaque fichier contre son manifeste : empreinte SHA-256, nombre de lignes, UTF-8 strict et colonnes obligatoires. Chaque fichier est lu avec son propre en-tête, tout en texte, donc la colonne ajoutée par J3 ne casse rien. Pour rejouer sans doublon, le job écrit dans un répertoire de transit, puis remplace chaque partition nommée par un renommage. Sur J1, 1 106 403 lignes lues, autant d'écrites. Rejouer J2 redonne les douze mêmes sommes de contrôle. Un verrou de table empêche deux écritures simultanées.</p>
-<p class="src">Sources : docs/rapport-technique.md section 4 ; docs/adr/0012-bronze-controle-manifeste.md ; docs/adr/0002-parquet-idempotence.md ; docs/adr/0007-evolution-schema.md ; PR #7 (tour de correction)</p>
+<p class="src">Sources : docs/rapport-technique.md section 4 ; docs/adr/0012-bronze-controle-manifeste.md ; docs/adr/0002-parquet-idempotence.md ; docs/adr/0007-evolution-schema.md ; PR #7 (tour de correction) ; PR #18 (verrous des exécutions terminées)</p>
 </aside>
 <!-- /notes 4 -->
 </section>
@@ -410,7 +410,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <aside class="notes">
 <p class="who">data engineer batch · 55 s</p>
 <p>Gold est un schéma en étoile : une table de faits, une ligne par ligne de commande, et les dimensions date, client et produit. La dimension produit est historisée en SCD type 2, et chaque commande prend le prix de la version valide à son heure. Le prix de P00042 passe de 504,06 à 530,97 euros le 25 septembre à 8 h 19. Une commande de 8 h 11 garde l'ancien prix, une de 8 h 19 et 9 secondes prend le nouveau. Gold calcule neuf indicateurs, dont un top 5 par pays et une moyenne mobile sur 7 jours. Chaque exécution recalcule tout depuis les jours silver complets et ne réécrit que les dates qui changent : un rejeu réécrit zéro date sur 367.</p>
-<p class="src">Sources : docs/rapport-technique.md section 6 ; docs/adr/0009-gold-etoile-recalcul.md ; docs/data-model.md (gold, modèle en étoile) ; PR #11 (SCD2 de P00042) ; PR #15 (preuves, tour de correction)</p>
+<p class="src">Sources : docs/rapport-technique.md section 6 ; docs/adr/0009-gold-etoile-recalcul.md ; docs/data-model.md (gold, modèle en étoile) ; PR #11 (SCD2 de P00042) ; PR #15 (preuves, tour de correction) ; PR #22 (jours silver complets)</p>
 </aside>
 <!-- /notes 6 -->
 </section>
@@ -570,7 +570,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 9 -->
 <aside class="notes">
 <p class="who">data engineer streaming et performance · 55 s</p>
-<p>Chaque levier est mesuré sur YARN, cinq exécutions par variante, en alternance. Une différence n'est retenue que si le test de Mann-Whitney donne p inférieur à 0,05. Parquet au lieu de CSV gagne 88 % sur la même requête. Diffuser la dimension produit gagne 48 % et supprime le shuffle. L'élagage par date gagne 43 % une fois la table listée, mais quand Spark liste ses 396 dossiers par un job, la requête est 79 % plus lente. P00042 donne un rapport de 4,16 entre la tâche la plus longue et la médiane. AQE et le salage ramènent ce rapport vers 1,5, sans gain de durée retenu, et le salage ralentit de 20 %.</p>
+<p>Chaque levier est mesuré sur YARN, cinq exécutions par variante, en alternance. Une différence n'est retenue que si le test de Mann-Whitney donne p inférieur à 0,05. Parquet au lieu de CSV gagne 88 % sur la même requête. Diffuser la dimension produit gagne 48 % et supprime le shuffle. L'élagage par date gagne 43 % une fois la table listée, mais quand Spark liste ses 396 dossiers par un job, la requête est 79 % plus lente. P00042 donne un rapport de 4,16 entre la tâche la plus longue et la médiane. AQE le ramène à 1,5, le salage entre 1,6 et 1,8, sans gain de durée retenu, et le salage ralentit de 20 %.</p>
 <p class="src">Sources : docs/rapport-technique.md section 9 (leviers classés par impact) ; docs/performance.md (protocole commun, naïf contre optimisé, déséquilibre de clé, cache, partitions) ; docs/perf-evidence/formats/report.md ; docs/perf-evidence/skew-4slots/report.md ; docs/perf-evidence/cache/report.md ; docs/perf-evidence/partitions/report.md</p>
 </aside>
 <!-- /notes 9 -->
@@ -593,11 +593,11 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
       </svg>
       <p class="key">Lecture complète : 1,77 s contre 1,69 s, pas de différence détectable (p 0,095). Le lac reste en réplication 3 : ses blocs font 167 748 octets en moyenne, et un fichier sous 1 Mio paie 100 % en XOR-2-1.</p>
       <div class="box" style="margin-top: auto">
-        <p style="font-size: 19px"><b>Pendant la panne</b> : <code>fsck /</code> <code>HEALTHY</code>, 5 568 blocs à 2 répliques, 0 bloc manquant. Gold reconstruite en 159,3 s au lieu de 49,1 s, identique à la gold publiée : 14 tables, 367 partitions.</p>
+        <p style="font-size: 19px"><b>Premier exercice</b> : <code>fsck /</code> <code>HEALTHY</code>, 5 568 blocs à 2 répliques, 0 bloc manquant. <b>Second exercice</b> : gold reconstruite en 159,3 s au lieu de 49,1 s, identique à la gold publiée : 14 tables, 367 partitions.</p>
       </div>
     </div>
     <div class="col narrow" style="flex-basis: 430px">
-      <p style="font-size: 20px"><b>Chronologie, arrêt de <code>datanode1</code> pendant l'écriture de gold</b></p>
+      <p style="font-size: 20px"><b>Premier exercice : arrêt de <code>datanode1</code> pendant l'écriture de gold</b></p>
       <ul class="timeline">
         <li style="--c: var(--loss)"><b>0 s</b> arrêt du conteneur</li>
         <li><b>86 à 91 s</b> après le dernier battement : déclaré mort, 90 s attendues</li>
@@ -613,7 +613,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 10 -->
 <aside class="notes">
 <p class="who">architecte plateforme · 55 s</p>
-<p>Sur le même fichier de 713 Mo, la réplication 3 coûte 200 % de volume en plus, l'erasure coding XOR-2-1 50 %, sans différence de lecture détectable. Mais XOR-2-1 ne tolère qu'une panne par groupe : le lac reste en réplication 3. Nous avons arrêté un DataNode pendant que gold écrivait. Le NameNode l'a déclaré mort entre 86 et 91 secondes après son dernier battement de cœur, pour 90 attendues. Fsck est resté sain : 5 568 blocs à deux répliques, zéro bloc manquant. Gold reconstruite pendant la panne est identique à la gold publiée. La limite est la topologie : avec trois DataNodes, les répliques perdues n'avaient aucune cible avant le démarrage manuel d'un secours.</p>
+<p>Sur le même fichier de 713 Mo, la réplication 3 coûte 200 % de volume en plus, l'erasure coding XOR-2-1 50 %, sans différence de lecture détectable. Mais XOR-2-1 ne tolère qu'une panne par groupe : le lac reste en réplication 3. Nous avons arrêté deux fois un DataNode pendant que gold écrivait. La première fois, le NameNode l'a déclaré mort entre 86 et 91 secondes après son dernier battement de cœur, pour 90 attendues, et fsck est resté sain : 5 568 blocs à deux répliques, zéro bloc manquant. La seconde, gold reconstruite pendant la panne est identique à la gold publiée. La limite est la topologie : avec trois DataNodes, les répliques perdues n'avaient aucune cible avant le démarrage manuel d'un secours.</p>
 <p class="src">Sources : docs/rapport-technique.md sections 9 (réplication 3 contre erasure coding) et 11 ; docs/performance.md (réplication 3 contre erasure coding) ; docs/incidents/2026-11-27-perte-datanode.md ; docs/adr/0006-topologie-hdfs.md</p>
 </aside>
 <!-- /notes 10 -->
@@ -622,9 +622,9 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <section class="slide" id="s11">
   <header><h2>Industrialisation et qualité</h2><span class="role rqd">Responsable qualité et delivery</span></header>
   <div class="tiles">
-    <div class="tile"><div class="big">911</div><p>tests pytest, tous verts</p></div>
+    <div class="tile"><div class="big">911</div><p>tests pytest, tous verts, au relevé du rapport</p></div>
     <div class="tile"><div class="big">91,2 %</div><p>couverture du paquet <code>gtdp</code>, lignes et branches</p></div>
-    <div class="tile"><div class="big">295 / 295</div><p>commits au format Conventional Commits, 293 avec leur clé Jira</p></div>
+    <div class="tile"><div class="big">295 / 295</div><p>commits Conventional Commits au relevé du rapport, 293 avec leur clé Jira</p></div>
     <div class="tile"><div class="big">67 s</div><p>relance par un tiers, données gardées ; 122 s depuis zéro</p></div>
   </div>
   <div class="body" style="margin-top: 18px">
@@ -651,20 +651,20 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 11 -->
 <aside class="notes">
 <p class="who">responsable qualité et delivery · 50 s</p>
-<p>Le code est découpé en transformations pures et en jobs minces, avec une configuration TOML, des journaux JSON et une table d'audit, une ligne par exécution. La suite compte 911 tests pytest, tous verts, pour 91,2 % de couverture. La CI lance lint et tests à chaque PR, et démarre un cluster neuf quand la plateforme change. Chaque story Jira a sa branche et sa PR. Il n'y a pas eu de relecture humaine : chaque livrable passe deux revues adverses, et un constat n'est retenu que s'il est prouvé par une exécution. La revue de gold a trouvé un bloquant, le pays du client figé dans le fait. Enfin, un tiers a suivi le README de bout en bout : la relance avec les données gardées a pris 67 secondes.</p>
-<p class="src">Sources : docs/rapport-technique.md sections 3 (relance du cluster) et 10 ; docs/validation/2026-11-27-validation-tiers.md (relance par un tiers, chronométrages) ; docs/project-management.md (revues, définition de « terminé ») ; docs/reviews/2026-11-26-revue-adverse-lot0.md ; PR #15 (revue) ; PR #25 (preuves sur YARN)</p>
+<p>Le code est découpé en transformations pures et en jobs minces, avec une configuration TOML, des journaux JSON et une table d'audit, une ligne par exécution. Au relevé du rapport, la suite comptait 911 tests pytest, tous verts, pour 91,2 % de couverture. La CI lance lint et tests à chaque PR, et démarre un cluster neuf quand la plateforme change. Chaque story Jira a sa branche et sa PR. Il n'y a pas eu de relecture humaine : chaque livrable passe deux revues adverses, et un constat n'est retenu que s'il est prouvé par une exécution. La revue de gold a trouvé un bloquant, le pays du client figé dans le fait. Enfin, un tiers a suivi le README de bout en bout : la relance avec les données gardées a pris 67 secondes.</p>
+<p class="src">Sources : docs/rapport-technique.md sections 3 (relance du cluster) et 10 ; docs/validation/2026-11-27-validation-tiers.md (relance par un tiers, chronométrages) ; docs/project-management.md (revues, définition de « terminé ») ; docs/reviews/2026-11-26-revue-adverse-lot0.md ; PR #11 (revue de silver) ; PR #15 (revue de gold) ; PR #18 (revue des verrous) ; PR #25 (preuves sur YARN)</p>
 </aside>
 <!-- /notes 11 -->
 </section>
 
 <section class="slide" id="s12">
   <header><h2>Démonstration sur le cluster</h2><span class="role">Trois rôles, dans l'ordre des étapes</span></header>
-  <p style="font-size: 20px; color: var(--muted); margin-bottom: 14px"><code>scripts/demo/soutenance.sh live</code> : lit <code>/datalake</code>, n'écrit que sous <code>/user/etl/soutenance</code></p>
+  <p style="font-size: 20px; color: var(--muted); margin-bottom: 14px"><code>scripts/demo/soutenance.sh live</code> : lit <code>/datalake</code> sans y écrire, écrit sous <code>/user/etl/soutenance</code></p>
   <div class="steps">
     <div class="step"><p>Flux capteurs en arrière-plan : 30 fichiers de 5 s de mesures, déclenchement à 10 s, driver tué au micro-batch 2, puis relancé</p><span class="tag role desp">en direct</span></div>
     <div class="step"><p>Santé du cluster : 9 services sains, 3 DataNodes vivants, 2 NodeManagers</p><span class="tag role ap">en direct</span></div>
     <div class="step"><p>Gold <code>PUBLISHED</code> pour J1 à J3 ; réconciliation silver tirée de la table d'audit</p><span class="tag role deb">en direct</span></div>
-    <div class="step"><p>Rapport gold : gold contre silver recalculé, prix applicable de <code>P00042</code>, 0 contrôle en échec</p><span class="tag role deb">en direct, 90 s à côté du flux</span></div>
+    <div class="step"><p>Rapport gold : gold contre silver recalculé, prix applicable de <code>P00042</code>, 0 contrôle en échec</p><span class="tag role deb">en direct, 89 s à côté du flux</span></div>
     <div class="step"><p>Reprise du flux sur checkpoint, comparaison avec l'exécution de référence : <code>IDENTICAL</code></p><span class="tag role desp">référence préparée avant</span></div>
     <div class="step"><p>Applications YARN : l'application tuée, puis sa relance ; interface <code>http://localhost:8088</code></p><span class="tag role ap">en direct</span></div>
   </div>
@@ -675,10 +675,10 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 12 -->
 <aside class="notes">
 <p class="who">data engineer streaming et performance, architecte plateforme, data engineer batch, dans l&#x27;ordre des étapes · 3 min 50 s</p>
-<p><strong>Data engineer streaming et performance.</strong> Je lance d'abord le flux capteurs en arrière-plan, sur une racine de test : trente fichiers de cinq secondes de mesures. Le déclenchement passe de trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au deuxième micro-batch, puis relancera le job.</p>
+<p><strong>Data engineer streaming et performance.</strong> Je lance d'abord le flux capteurs en arrière-plan, sur une racine de test : trente fichiers de cinq secondes de mesures. Le déclenchement passe de trente à dix secondes pour tenir dans la démonstration. Le script tuera le driver au micro-batch numéro 2, puis relancera le job.</p>
 <p><strong>Architecte plateforme.</strong> Pendant ce temps, l'état du cluster : neuf services sains, trois DataNodes vivants, aucun mort, deux NodeManagers en marche.</p>
-<p><strong>Data engineer batch.</strong> Gold est publiée pour les trois jours silver complets. La table d'audit redonne la réconciliation de chaque jour : pour J1, 1 106 403 lignes bronze égalent propres, rejets et doublons, comme sur la diapositive silver. Le rapport gold recalcule silver et compare : 970 262 commandes, le même chiffre d'affaires des deux côtés, et le prix de P00042 qui change à 8 h 19. Dernière ligne : zéro contrôle en échec.</p>
-<p><strong>Data engineer streaming et performance.</strong> Le journal du flux montre le driver tué au micro-batch 2 : planifié, pas validé. Le job relancé reprend à son checkpoint et rejoue ce micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt, préparée avant la soutenance sur les mêmes fichiers : identique, sans clé en double.</p>
+<p><strong>Data engineer batch.</strong> Gold est publiée pour les trois jours silver complets. La table d'audit redonne la réconciliation de chaque jour : pour J1, 1 106 403 lignes bronze égalent propres, rejets et doublons, comme sur la diapositive silver. Le rapport gold recalcule silver et compare : 970 262 commandes et le même chiffre d'affaires des deux côtés, zéro contrôle en échec. Puis le prix de P00042, qui change à 8 h 19, appliqué à chaque commande selon son heure.</p>
+<p><strong>Data engineer streaming et performance.</strong> Le journal du flux montre le driver tué au micro-batch 2 : planifié, pas validé. Le job relancé reprend à son checkpoint et rejoue ce micro-batch. Le rapport compare avec l'exécution de référence, sans arrêt, préparée avant la soutenance sur les mêmes fichiers : identique, sans clé en double. L'échantillon est petit, 23 agrégats et 14 rejets : la reprise sur la journée entière est dans le runbook du flux.</p>
 <p><strong>Architecte plateforme.</strong> Dans YARN, l'application tuée est terminée avec succès : en mode client, YARN ne voit pas la mort du driver. Le rapport la repère donc à l'absence de sa ligne d'audit.</p>
 <p class="src">Sources : docs/soutenance/demo.md ; scripts/demo/soutenance.sh ; docs/runbook/README.md (interroger l'audit) ; docs/runbook/gold.md (vérifier gold) ; docs/runbook/streaming.md (test de reprise)</p>
 </aside>
@@ -724,7 +724,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
       <h3>Ce que nous ferions autrement</h3>
       <ul>
         <li>Quatre DataNodes dès le départ : l'exercice de panne l'a montré.</li>
-        <li>Prouver chaque story sur YARN avant de la fusionner : KAN-58 et KAN-59 l'ont été après.</li>
+        <li>Prouver chaque story sur YARN avant de la fusionner : KAN-58 et KAN-59 ne l'ont pas été ; KAN-59 n'y est prouvée que pour la non-régression.</li>
         <li>Archiver toutes les revues dans <code>docs/reviews/</code> : seul le Lot 0 y est.</li>
         <li>Un seuil de couverture en CI, et l'image publiée dans un registre.</li>
       </ul>
@@ -734,7 +734,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
 <!-- notes 14 -->
 <aside class="notes">
 <p class="who">responsable qualité et delivery · 45 s</p>
-<p>Ce qui a marché. Des manifestes qui comptent chaque anomalie : chaque compte devient un test exact. Mesurer avant de décider : nous avons gardé Spark pour sa plomberie, et écarté le salage, plus lent. Des revues qui doivent prouver leurs constats : elles ont trouvé le pays figé dans le fait et le sel visible dans un plan d'exécution. Ce que nous ferions autrement. Quatre DataNodes dès le départ. Prouver chaque story sur YARN avant de la fusionner : deux l'ont été après. Archiver toutes les revues dans le dépôt, mettre un seuil de couverture, et publier l'image dans un registre.</p>
+<p>Ce qui a marché. Des manifestes qui comptent chaque anomalie : chaque compte devient un test exact. Mesurer avant de décider : nous avons gardé Spark pour sa plomberie, et écarté le salage, plus lent. Des revues qui doivent prouver leurs constats : elles ont trouvé le pays figé dans le fait et le sel visible dans un plan d'exécution. Ce que nous ferions autrement. Quatre DataNodes dès le départ. Prouver chaque story sur YARN avant de la fusionner : deux ne l'ont pas été, et l'une n'y est prouvée que pour sa non-régression. Archiver toutes les revues dans le dépôt, mettre un seuil de couverture, et publier l'image dans un registre.</p>
 <p class="src">Sources : docs/rapport-technique.md sections 5, 8, 10 et 12 ; docs/data-contract.md ; docs/project-management.md (définition de « terminé »)</p>
 </aside>
 <!-- /notes 14 -->
@@ -811,8 +811,10 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
     popup.addEventListener("keydown", onKey);
     render();
   };
+  const start = () => { if (!started) started = Date.now(); };
   function onKey(event) {
-    if (!started && ["ArrowRight", "PageDown", " ", "Enter"].includes(event.key)) started = Date.now();
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (["ArrowRight", "PageDown", " ", "Enter"].includes(event.key)) start();
     switch (event.key) {
       case "ArrowRight": case "PageDown": case " ": case "Enter": show(index + 1); break;
       case "ArrowLeft": case "PageUp": case "Backspace": show(index - 1); break;
@@ -831,7 +833,7 @@ body.notes-view #panel { display: block; position: fixed; right: 0; top: 0; bott
   addEventListener("mousemove", showHint);
   addEventListener("keydown", onKey);
   addEventListener("resize", fit);
-  document.getElementById("deck").addEventListener("click", () => show(index + 1));
+  document.getElementById("deck").addEventListener("click", () => { start(); show(index + 1); });
   setInterval(() => { if (started) render(); }, 1000);
   fit();
   show((parseInt(location.hash.slice(1), 10) || 1) - 1);
