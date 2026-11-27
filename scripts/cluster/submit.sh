@@ -50,7 +50,7 @@ if [[ $target == *.py ]]; then
   app=("$target" "$@")
 else
   [[ -n ${GTDP_PSEUDO_SALT:-} ]] ||
-    echo "warning: GTDP_PSEUDO_SALT is not set (.env or export): --env cluster jobs exit with code 2" >&2
+    echo "warning: GTDP_PSEUDO_SALT is not set (.env or export): silver, the job that pseudonymizes, exits with code 2" >&2
   app=(src/gtdp/jobs/run.py "$target" --env cluster "$@")
 fi
 
