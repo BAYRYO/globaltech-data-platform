@@ -1,0 +1,124 @@
+Configured Capacity: 3243303530496 (2.95 TB)
+Present Capacity: 2291837304649 (2.08 TB)
+DFS Remaining: 2285892788498 (2.08 TB)
+DFS Used: 5944516151 (5.54 GB)
+DFS Used%: 0.26%
+Replicated Blocks:
+	Under replicated blocks: 0
+	Blocks with corrupt replicas: 0
+	Missing blocks: 0
+	Missing blocks (with replication factor 1): 0
+	Low redundancy blocks with highest priority to recover: 0
+	Pending deletion blocks: 0
+Erasure Coded Block Groups: 
+	Low redundancy block groups: 0
+	Block groups with corrupt internal blocks: 0
+	Missing block groups: 0
+	Low redundancy blocks with highest priority to recover: 0
+	Pending deletion blocks: 0
+
+-------------------------------------------------
+Live datanodes (4):
+
+Name: 172.22.0.12:9866 (gtdp-datanode1-1.gtdp)
+Hostname: datanode1
+Decommission Status : Normal
+Configured Capacity: 1081101176832 (1006.85 GB)
+DFS Used: 2587649462 (2.41 GB)
+Non DFS Used: 261512354378 (243.55 GB)
+DFS Remaining: 762008817664 (709.68 GB)
+DFS Used%: 0.24%
+DFS Remaining%: 70.48%
+Configured Cache Capacity: 0 (0 B)
+Cache Used: 0 (0 B)
+Cache Remaining: 0 (0 B)
+Cache Used%: 100.00%
+Cache Remaining%: 0.00%
+Xceivers: 0
+Last contact: Fri Nov 27 08:58:12 UTC 2026
+Last Block Report: Fri Nov 27 08:57:36 UTC 2026
+Num of Blocks: 5448
+
+
+Name: 172.22.0.4:9866 (gtdp-datanode4-1.gtdp)
+Hostname: datanode4
+Decommission Status : Decommission in progress
+Configured Capacity: 1081101176832 (1006.85 GB)
+DFS Used: 2943972635 (2.74 GB)
+Non DFS Used: 261156047589 (243.22 GB)
+DFS Remaining: 762008801280 (709.68 GB)
+DFS Used%: 0.27%
+DFS Remaining%: 70.48%
+Configured Cache Capacity: 0 (0 B)
+Cache Used: 0 (0 B)
+Cache Remaining: 0 (0 B)
+Cache Used%: 100.00%
+Cache Remaining%: 0.00%
+Xceivers: 0
+Last contact: Fri Nov 27 08:58:12 UTC 2026
+Last Block Report: Fri Nov 27 07:47:36 UTC 2026
+Num of Blocks: 5574
+
+
+Name: 172.22.0.5:9866 (gtdp-datanode2-1.gtdp)
+Hostname: datanode2
+Decommission Status : Normal
+Configured Capacity: 1081101176832 (1006.85 GB)
+DFS Used: 410290305 (391.28 MB)
+Non DFS Used: 263689996159 (245.58 GB)
+DFS Remaining: 761875365888 (709.55 GB)
+DFS Used%: 0.04%
+DFS Remaining%: 70.47%
+Configured Cache Capacity: 0 (0 B)
+Cache Used: 0 (0 B)
+Cache Remaining: 0 (0 B)
+Cache Used%: 100.00%
+Cache Remaining%: 0.00%
+Xceivers: 0
+Last contact: Fri Nov 27 08:58:13 UTC 2026
+Last Block Report: Fri Nov 27 07:41:06 UTC 2026
+Num of Blocks: 127
+
+
+Name: 172.22.0.6:9866 (gtdp-datanode3-1.gtdp)
+Hostname: datanode3
+Decommission Status : Normal
+Configured Capacity: 1081101176832 (1006.85 GB)
+DFS Used: 2946576384 (2.74 GB)
+Non DFS Used: 261156495360 (243.22 GB)
+DFS Remaining: 762005369106 (709.67 GB)
+DFS Used%: 0.27%
+DFS Remaining%: 70.48%
+Configured Cache Capacity: 0 (0 B)
+Cache Used: 0 (0 B)
+Cache Remaining: 0 (0 B)
+Cache Used%: 100.00%
+Cache Remaining%: 0.00%
+Xceivers: 0
+Last contact: Fri Nov 27 08:58:14 UTC 2026
+Last Block Report: Fri Nov 27 07:41:08 UTC 2026
+Num of Blocks: 5575
+
+
+Decommissioning datanodes (1):
+
+Name: 172.22.0.4:9866 (gtdp-datanode4-1.gtdp)
+Hostname: datanode4
+Decommission Status : Decommission in progress
+Configured Capacity: 1081101176832 (1006.85 GB)
+DFS Used: 2943972635 (2.74 GB)
+Non DFS Used: 261156047589 (243.22 GB)
+DFS Remaining: 762008801280 (709.68 GB)
+DFS Used%: 0.27%
+DFS Remaining%: 70.48%
+Configured Cache Capacity: 0 (0 B)
+Cache Used: 0 (0 B)
+Cache Remaining: 0 (0 B)
+Cache Used%: 100.00%
+Cache Remaining%: 0.00%
+Xceivers: 0
+Last contact: Fri Nov 27 08:58:12 UTC 2026
+Last Block Report: Fri Nov 27 07:47:36 UTC 2026
+Num of Blocks: 5574
+
+

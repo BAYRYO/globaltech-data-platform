@@ -1,0 +1,55 @@
+07:44:18 WARN DataStreamer: Exception for BP-1884475711-172.22.0.2-1795715752320:blk_1073794502_53765
+java.io.IOException: Bad response ERROR for BP-1884475711-172.22.0.2-1795715752320:blk_1073794502_53765 from datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:44:18 WARN DataStreamer: Error Recovery for BP-1884475711-172.22.0.2-1795715752320:blk_1073794502_53765 in pipeline [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]: datanode 1(DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]) is bad.
+07:44:18 WARN DataStreamer: Failed to replace datanode. Continue with the remaining datanodes since dfs.client.block.write.replace-datanode-on-failure.best-effort is set to true.
+java.io.IOException: Failed to replace a bad datanode on the existing pipeline due to no more good datanodes being available to try. (Nodes: current=[DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]], original=[DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]]). The current failed datanode replacement policy is DEFAULT, and a client may configure this via 'dfs.client.block.write.replace-datanode-on-failure.policy' in its configuration.
+07:45:23 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794539_53803
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:23 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794539_53803
+07:45:23 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:23 WARN DataStreamer: Slow waitForAckedSeqno took 65058ms (threshold=30000ms). File being written: /datalake/gold/_dim_customer.lock.takeover-8ed5456ed09932e1.tmp-7fb7fa738b0c463ca7eab1c1c8e66a25, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073794540_53804, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK], DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK]].
+07:45:25 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794541_53805
+java.net.ConnectException: Connection refused
+07:45:25 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794541_53805
+07:45:25 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:25 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794545_53809
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:25 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794545_53809
+07:45:25 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:25 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794547_53811
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:25 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794547_53811
+07:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794557_53821
+java.net.ConnectException: Connection refused
+07:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794557_53821
+07:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:26 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794559_53823
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:26 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794559_53823
+07:45:26 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:27 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794593_53857
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:27 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794593_53857
+07:45:27 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:27 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794595_53859
+java.net.ConnectException: Connection refused
+07:45:27 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794595_53859
+07:45:27 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:27 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794607_53871
+java.net.ConnectException: Connection refused
+07:45:27 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794607_53871
+07:45:27 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:28 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794609_53873
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:28 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794609_53873
+07:45:28 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:45:38 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794621_53885
+java.io.IOException: Got error, status=ERROR, status message , ack with firstBadLink as 172.22.0.4:9866
+07:45:38 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794621_53885
+07:45:38 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:46:38 WARN DataStreamer: Exception in createBlockOutputStream blk_1073794623_53887
+org.apache.hadoop.net.ConnectTimeoutException: 60000 millis timeout while waiting for channel to be ready for connect. ch : java.nio.channels.SocketChannel[connection-pending remote=/172.22.0.4:9866]
+07:46:38 WARN DataStreamer: Abandoning BP-1884475711-172.22.0.2-1795715752320:blk_1073794623_53887
+07:46:38 WARN DataStreamer: Excluding datanode DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK]
+07:46:38 WARN DataStreamer: Slow waitForAckedSeqno took 60090ms (threshold=30000ms). File being written: /datalake/gold/_kpi_price_deviation.lock.tmp-f1dbfad5d7bb44d79060fd0985f4cc50, block: BP-1884475711-172.22.0.2-1795715752320:blk_1073794624_53888, Write pipeline datanodes: [DatanodeInfoWithStorage[172.22.0.6:9866,DS-ee31f143-85c3-4702-88bf-7b47bd972eeb,DISK], DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]].

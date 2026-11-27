@@ -1,0 +1,40 @@
+Connecting to namenode via http://namenode:9870/fsck?ugi=hadoop&path=%2F
+[... per-file lines trimmed ...]
+Status: HEALTHY
+ Number of data-nodes:	2
+ Number of racks:		1
+ Total dirs:			2025
+ Total symlinks:		0
+
+Replicated Blocks:
+ Total size:	2527634239 B
+ Total files:	6004
+ Total blocks (validated):	5568 (avg. block size 453957 B)
+ Minimally replicated blocks:	5568 (100.0 %)
+ Over-replicated blocks:	0 (0.0 %)
+ Under-replicated blocks:	5568 (100.0 %)
+ Mis-replicated blocks:		0 (0.0 %)
+ Default replication factor:	3
+ Average block replication:	2.0
+ Missing blocks:		0
+ Corrupt blocks:		0
+ Missing replicas:		5568 (33.333332 %)
+ Blocks queued for replication:	0
+
+Erasure Coded Block Groups:
+ Total size:	713481364 B
+ Total files:	2
+ Total block groups (validated):	4 (avg. block group size 178370341 B)
+ Minimally erasure-coded block groups:	4 (100.0 %)
+ Over-erasure-coded block groups:	0 (0.0 %)
+ Under-erasure-coded block groups:	3 (75.0 %)
+ Unsatisfactory placement block groups:	0 (0.0 %)
+ Average block group size:	2.0
+ Missing block groups:		0
+ Corrupt block groups:		0
+ Missing internal blocks:	3 (27.272728 %)
+ Blocks queued for replication:	0
+FSCK ended at Fri Nov 27 07:46:52 UTC 2026 in 88 milliseconds
+
+
+The filesystem under path '/' is HEALTHY
