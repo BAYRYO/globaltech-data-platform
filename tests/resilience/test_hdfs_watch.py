@@ -70,6 +70,15 @@ def test_a_decommissioning_node_counts_once_though_the_report_lists_it_twice(wat
     assert (row["datanode3"], row["datanode3_blocks"]) == ("live", 5575)
 
 
+def test_a_stopped_decommissioned_spare_is_dead_and_decommissioned(watch):
+    row = sample(watch, "report-spare-decommissioned.txt")
+
+    assert (row["live"], row["dead"], row["decommissioning"]) == (3, 1, 0)
+    assert row["datanode4"] == "dead/decommissioned"
+    assert [row[f"datanode{n}"] for n in (1, 2, 3)] == ["live", "live", "live"]
+    assert row["under_replicated"] == row["ec_low_redundancy"] == row["missing"] == 0
+
+
 def test_a_host_listed_live_and_dead_counts_as_live(watch):
     dead_section = (DATA / "report-dead.txt").read_text().split("Dead datanodes")[1]
     text = (DATA / "report-nominal.txt").read_text() + "Dead datanodes" + dead_section
