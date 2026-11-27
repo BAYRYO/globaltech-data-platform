@@ -22,7 +22,7 @@ dans le [script](script.md#12-démonstration).
 
 | Étape | Rôle | Contenu | En direct ou préparé | Durée mesurée |
 | ---: | --- | --- | --- | ---: |
-| 1 | Data engineer streaming et performance | flux capteurs lancé en arrière-plan, driver tué au micro-batch 2 puis relancé | en direct | tourne pendant les étapes 2 à 4 ; l'étape 5 attend sa fin |
+| 1 | Data engineer streaming et performance | flux capteurs lancé en arrière-plan, driver tué au micro-batch 2 des agrégats puis relancé | en direct | tourne pendant les étapes 2 à 4 ; l'étape 5 attend sa fin |
 | 2 | Architecte plateforme | santé du cluster | en direct | 1,4 s |
 | 3 | Data engineer batch | état de gold, réconciliation silver tirée de la table d'audit | en direct | 14,1 s |
 | 4 | Data engineer batch | rapport gold : gold contre silver recalculé, prix applicable de `P00042` | en direct | 109,0 s, dont 88,8 s de calcul et deux pauses de 10 s |
@@ -73,14 +73,16 @@ puis sa sortie. Les journaux complets vont dans le dossier `logs:` affiché en p
 - Si la démonstration s'arrête avant la fin (Ctrl+C, erreur), le script arrête le flux en
   arrière-plan : `demo.sh`, puis les conteneurs clients démarrés depuis le début de `live`.
 
-Sorties attendues, relevées dans l'exécution enregistrée le 27 novembre 2026 à 21 h 25 :
+Sorties attendues, relevées dans l'exécution enregistrée le 27 novembre 2026 à 21 h 25, puis
+retrouvées par une répétition complète le même jour à 22 h 58 (209,8 s). Les valeurs qui dépendent
+de l'instant où le driver est tué sont signalées comme telles :
 
 | Étape | Ce que l'écran doit montrer |
 | ---: | --- |
 | 2 | 9 services `(healthy)` ; `HDFS  3 live / 0 dead DataNodes, safe mode off` ; `YARN  2 RUNNING / 2 NodeManagers` |
 | 3 | `_state.json` : `"status": "PUBLISHED"` et `"silver_days": ["2026-01-01", "2026-01-02", "2026-01-03"]` ; la requête d'audit : trois jours, `adds_up` à `true`, J1 `1106403` = `1070797` + `25518` + `10088` |
 | 4 | `orders` `970262` des deux côtés, les 8 contrôles `ok`, les deux versions de `P00042` (504.06, puis 530.97 à partir du 2025-09-25 08:19:03), dernière ligne `gold PUBLISHED, 0 order dates mismatched, 0 checks failed` |
-| 5 | `killed the driver container (...) at aggregates batch 2`, puis `last planned batch 2, last committed batch 1` pour les trois requêtes ; `job 2 started` ; `job stopped: "stop_reason": "idle"`. Le rapport : `duplicate keys 0` partout, trois lignes `row difference 0`, `IDENTICAL` ; la ligne d'audit du job 2 (`SUCCESS`, `in 1688`) et le job 1 listé sans ligne d'audit (`batches 2 in 258`) : 258 + 1 688 = 1 946 événements lus, autant que les 1 946 publiés |
+| 5 | `killed the driver container (...) at aggregates batch 2`, puis `aggregates: last planned batch 2, last committed batch 1` : le micro-batch 2 de l'agrégation est planifié, pas validé. `demo.sh` ne surveille que cette requête ; `alerts` et `rejects` avancent à leur rythme, leurs numéros dépendent de l'instant où le driver est tué (2 planifié, 1 validé dans l'enregistrement ; `rejects` avait déjà validé 2 à la répétition). Puis `job 2 started` ; `job stopped: "stop_reason": "idle"`. Le rapport : `duplicate keys 0` partout, trois lignes `row difference 0`, `IDENTICAL` ; les valeurs `in` de la ligne d'audit du job 2 (`SUCCESS`) et du job 1, listé sans ligne d'audit, totalisent 1 946 événements lus, autant que les 1 946 publiés. Le partage entre les deux jobs dépend de l'instant où le driver est tué : 258 + 1 688 dans l'enregistrement, 450 + 1 496 à la répétition. Les heures du rapport sont en UTC, celles du journal du flux à l'heure locale : une heure d'écart à l'heure d'hiver (UTC+1), deux à l'heure d'été |
 | 6 | les quatre applications de cette exécution, `FINISHED SUCCEEDED` : deux `gtdp-streaming-sensors`, `gtdp-gold-report`, `gtdp-streaming-report` |
 
 Le rapport gold tourne à côté du flux, avec un seul exécuteur (voir les écarts plus bas).
@@ -124,7 +126,7 @@ avance plus vite. Trois attentes sont raccourcies : le calcul du rapport gold (8
 flux après sa dernière publication (60 s) et le rapport du flux (26 s). Les 227,0 s de
 l'exécution donnent 115,3 s de vidéo, en 1280×720, pour 1,1 Mo. Le tableau des contrôles gold
 reste seul à l'écran 10 s. 20 s laissent le temps de dire sur la vidéo le texte de la
-démonstration, 105 s dans la [répétition](repetition.md).
+démonstration, 107 s dans la [répétition](repetition.md).
 
 ## Écarts avec le job configuré
 

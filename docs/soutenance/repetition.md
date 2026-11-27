@@ -45,7 +45,7 @@ dossier choisi.
 | 9 | Performance | data engineer streaming et performance | 55 s | 54 s | 7 min 20 s |
 | 10 | Stockage et panne d'un DataNode | architecte plateforme | 55 s | 55 s | 8 min 15 s |
 | 11 | Industrialisation et qualité | responsable qualité et delivery | 50 s | 51 s | 9 min 06 s |
-| 12 | Démonstration | data engineer streaming et performance, architecte plateforme, data engineer batch, dans l'ordre des étapes | 3 min 50 s | démonstration 227 s (texte dit en 105 s pendant la démonstration) | 12 min 53 s |
+| 12 | Démonstration | data engineer streaming et performance, architecte plateforme, data engineer batch, dans l'ordre des étapes | 3 min 50 s | démonstration 227 s (texte dit en 107 s pendant la démonstration) | 12 min 53 s |
 | 13 | Limites | data engineer batch | 50 s | 47 s | 13 min 40 s |
 | 14 | Retour d'expérience | responsable qualité et delivery | 45 s | 43 s | 14 min 23 s |
 | 15 | Questions | responsable qualité et delivery | 5 s | 6 s | 14 min 28 s |
