@@ -124,8 +124,9 @@ def test_a_late_order_refreshes_its_date_without_dropping_the_published_orders(s
 
     assert rows_per_date(silver_lake) == {"2025-12-30": 3, "2025-12-31": 1, "2026-01-01": 1}
     assert set(sales_by_id(silver_lake)) == {"T1", "T2", "T3", "T4", "T5"}
-    assert run.metrics["order_dates"] == ["2025-12-30", "2026-01-01"]
-    assert (run.counters.rows_in, run.counters.rows_out) == (4, 4)
+    changes = {k: run.metrics[k] for k in ("dates_rewritten", "dates_removed", "dates_unchanged")}
+    assert changes == {"dates_rewritten": 2, "dates_removed": 0, "dates_unchanged": 1}
+    assert (run.counters.rows_in, run.counters.rows_out) == (5, 5)
 
 
 def test_replaying_a_day_leaves_every_gold_table_unchanged(silver_lake):

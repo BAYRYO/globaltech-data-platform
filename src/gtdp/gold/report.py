@@ -352,7 +352,10 @@ def runs(spark: SparkSession, cfg: AppConfig) -> DataFrame:
             "rows_out",
             "duration_s",
             "yarn_app_id",
-            F.get_json_object("metrics_json", "$.partitions_refreshed").alias("partitions"),
+            *[
+                F.get_json_object("metrics_json", f"$.dates_{change}").alias(change)
+                for change in ("rewritten", "removed", "unchanged")
+            ],
             F.get_json_object("metrics_json", "$.build_violations").alias("build_violations"),
             "error_message",
         )

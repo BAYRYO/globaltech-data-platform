@@ -33,14 +33,18 @@ def test_every_silver_order_is_in_fact_sales_on_its_date(generated):
 
 
 def test_late_orders_join_the_published_orders_of_their_date(generated):
-    j2 = json.loads(gold_runs(generated)[1].metrics_json)
-    late = [day for day in j2["order_dates"] if day < "2026-01-01"]
-    silver = generated.table("orders").where(F.to_date("event_time").isin(late))
+    orders = generated.table("orders").withColumn("order_date", F.to_date("event_time"))
+    j2_dates = {r.order_date for r in orders.where("ingestion_date = '2026-01-02'").collect()}
+    late = sorted(day for day in j2_dates if day < date(2026, 1, 1))
+    silver = orders.where(F.col("order_date").isin(late))
     drops = {str(row.ingestion_date) for row in silver.select("ingestion_date").collect()}
+    j2 = json.loads(gold_runs(generated)[1].metrics_json)
 
     assert late
     assert {"2026-01-01", "2026-01-02"} <= drops
     assert fact_sales(generated).where(F.col("order_date").isin(late)).count() == silver.count()
+    assert j2["dates_rewritten"] >= len(j2_dates)
+    assert j2["dates_removed"] == 0
 
 
 def test_p00042_orders_take_the_catalog_price_of_their_date(generated):
