@@ -435,3 +435,56 @@ def test_a_stop_signal_received_while_taking_the_lock_still_releases_it(spark, t
         signal.signal(signal.SIGTERM, previous)
 
     assert not lock.exists()
+
+
+class FailedReads:
+    """A filesystem on which the lock file cannot be opened ``times`` times (None: always)."""
+
+    def __init__(self, fs, times):
+        self._fs, self._left = fs, times
+
+    def open(self, path):
+        if path.getName().endswith(".lock") and self._left != 0:
+            self._left = None if self._left is None else self._left - 1
+            path = path.suffix(".unreachable")  # the NameNode does not answer
+        return self._fs.open(path)
+
+    def __getattr__(self, name):
+        return getattr(self._fs, name)
+
+
+def test_a_release_that_cannot_read_its_lock_once_reads_it_again_and_releases_it(
+    spark, table, resource_manager, monkeypatch, caplog
+):
+    """The application stays RUNNING: a lock it kept would refuse it for the rest of its life."""
+    path, lock = table
+    monkeypatch.setattr(SparkContext, "applicationId", property(lambda _self: APP))
+    resource_manager.states[APP] = "RUNNING"
+
+    with monkeypatch.context() as patch, caplog.at_level(logging.WARNING, logger="gtdp.io"):
+        hand_out(patch, lambda fs: FailedReads(fs, 1))
+        with table_lock(spark, path):
+            pass
+
+    assert not lock.exists()
+    assert caplog.text == ""
+    with table_lock(spark, path):  # the same application, later
+        pass
+
+
+def test_a_release_that_never_reads_its_lock_keeps_it_and_says_how_to_free_it(
+    spark, table, monkeypatch, caplog
+):
+    path, lock = table
+    monkeypatch.setattr(gtdp.io, "_RETRY_PAUSES_S", (0.0, 0.0), raising=False)
+
+    with monkeypatch.context() as patch, caplog.at_level(logging.WARNING, logger="gtdp.io"):
+        hand_out(patch, lambda fs: FailedReads(fs, None))
+        with table_lock(spark, path):
+            pass
+
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert lock.exists()
+    assert len(errors) == 1
+    assert str(lock) in errors[0]
+    assert "hdfs dfs -rm" in errors[0]
