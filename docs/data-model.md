@@ -87,6 +87,7 @@ la ligne reste en silver, éventuellement avec un drapeau dans `quality_flags`.
 | `BAD_PRICE` | non décimal ou ≤ 0 | rejet `BAD_PRICE` |
 | `BAD_TIMESTAMP` | non conforme à `yyyy-MM-dd'T'HH:mm:ss`, ou date impossible | rejet `BAD_TIMESTAMP` |
 | `FUTURE_TIMESTAMP` | `event_time` > `ingestion_date` + 1 jour | rejet `FUTURE_TIMESTAMP` |
+| — | `event_time` antérieur au `1900-01-01 00:00:00` (règle défensive, rien d'injecté) | rejet `ANCIENT_TIMESTAMP` |
 | `BAD_ENUM` | `channel` ou `status` hors liste | rejet `BAD_ENUM` |
 | `MALFORMED_ROW` | `_corrupt_record` non nul, code exclusif | rejet `MALFORMED_ROW` |
 | (J3) `discount_pct` | absent du fichier ou vide : `0.000` | conservé |
@@ -103,7 +104,9 @@ la ligne reste en silver, éventuellement avec un drapeau dans `quality_flags`.
 | `MISSING_REGION` | région vide | conservé, `country` = `UNKNOWN`, drapeau `MISSING_REGION` |
 | `BAD_DATE` | `signup_date` non ISO | conservé, date relue au format `dd/MM/yyyy` sinon nulle, drapeau `BAD_DATE` |
 | (kit) inscription future | `signup_date` > `ingestion_date` | conservé, drapeau `FUTURE_SIGNUP` |
+| — | `signup_date` antérieure au `1900-01-01` | conservé, date gardée, drapeau `ANCIENT_SIGNUP` |
 | — | `updated_at` vide ou hors format ISO | conservé, `updated_at` nul, drapeau `BAD_UPDATED_AT` ; jamais doublon de clé |
+| — | `updated_at` antérieur au `1900-01-01 00:00:00` | conservé, drapeau `ANCIENT_UPDATED_AT` |
 | — | `customer_id` vide (règle défensive, rien d'injecté) | rejet `MISSING_KEY` |
 | — | `_corrupt_record` non nul (règle défensive, rien d'injecté) | rejet `MALFORMED_ROW` |
 
@@ -124,6 +127,7 @@ le plus petit `_record_hash`, départagent.
 | `MALFORMED_ROW` | `_corrupt_record` non nul, code exclusif | rejet `MALFORMED_ROW` |
 | — | `product_id` vide (règle défensive, rien d'injecté) | rejet `MISSING_KEY` |
 | — | `updated_at` hors format (règle défensive, rien d'injecté) | rejet `BAD_TIMESTAMP` |
+| — | `updated_at` antérieur au `1900-01-01 00:00:00` (règle défensive, rien d'injecté) | rejet `ANCIENT_TIMESTAMP` |
 
 Le contrat injecte ces anomalies uniquement sur des versions non initiales : la version
 précédente du produit reste donc en vigueur.
@@ -136,6 +140,8 @@ précédente du produit reste donc en vigueur.
 | `HTTP_404`, `HTTP_500` | lignes valides | conservé |
 | — | même `_record_hash` dans le dépôt | doublon exact (rien d'injecté) |
 | — | `log_id` déjà publié par un jour complet antérieur à `D` | doublon inter-jours (rien d'injecté) |
+| — | horodatage postérieur à `ingestion_date` + 1 jour (règle défensive, rien d'injecté) | rejet `FUTURE_TIMESTAMP` |
+| — | horodatage antérieur au `1900-01-01 00:00:00` (règle défensive, rien d'injecté) | rejet `ANCIENT_TIMESTAMP` |
 
 L'expression accepte un client IPv6 (préfixe `/48`), un champ entre guillemets contenant un
 guillemet ou une barre oblique inverse échappés, et la requête `"-"` d'une connexion fermée avant
