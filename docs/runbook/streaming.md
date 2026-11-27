@@ -58,7 +58,7 @@ Section `[streaming]` de `conf/app.toml`, surchargeable comme toute clé
 
 | Clé | Défaut | Effet |
 | --- | --- | --- |
-| `trigger_interval_s` | `30` | Secondes entre deux micro-batches : 6 fichiers de 5 s par micro-batch. `0` enchaîne les micro-batches. Chaque micro-batch coûte des noms HDFS et des entrées d'event log, voir [Quotas](#quotas-projection-sur-24-h). |
+| `trigger_interval_s` | `30` | Secondes entre deux micro-batches : 6 fichiers de 5 s par micro-batch. `0` enchaîne les micro-batches. Chaque micro-batch coûte des noms HDFS et des entrées d'event log, voir [Quotas](#quotas--projection-sur-24-h). |
 | `max_files_per_trigger` | `12` | Nouveaux fichiers lus au plus par micro-batch (une minute de flux). Au-delà de 18, un événement en retard de 5 minutes peut passer le watermark après une reprise. |
 | `state_partitions` | `4` | Partitions de l'état. Figé par le checkpoint à sa création. |
 | `stop_after_idle_triggers` | `0` | Arrêt après ce nombre de déclenchements sans données ni micro-batch à exécuter. `0` : jamais. |
