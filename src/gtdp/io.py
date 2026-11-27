@@ -276,10 +276,10 @@ def _lock_path(target: Any) -> Any:
 def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
     """Hold the lock of the table ``target`` for the block, then remove dead runs' staging.
 
-    The lock is a file created only if absent, which HDFS decides atomically. It holds the run id,
-    the application id and the time it was taken. While the run that holds it may be alive:
-    ``TableLockedError`` at once, no wait. A lock left by a run that died is taken over by one
-    run only (``_acquire``).
+    The lock is a file created only if absent (``_create``). It holds the run id, the application
+    id, the time it was taken and a token, so that no two takings write the same content. While
+    the run that holds it may be alive: ``TableLockedError`` at once, no wait. A lock left by a
+    run that died is taken over (``_acquire``).
     """
     lock, stale_after = _lock_path(target), _stale_after_s(spark)
     holder = json.dumps(
@@ -298,8 +298,7 @@ def _locked(spark: SparkSession, fs: Any, target: Any) -> Iterator[None]:
         yield
     finally:
         with _stop_signals_deferred():
-            if _read(fs, lock) == holder:
-                fs.delete(lock, False)
+            _release(spark, fs, lock, holder)
 
 
 def _locked_message(fs: Any, target: Any, lock: Any) -> str:
@@ -313,10 +312,8 @@ def _locked_message(fs: Any, target: Any, lock: Any) -> str:
 def _acquire(spark: SparkSession, fs: Any, path: Any, holder: str) -> bool:
     """Create the lock file ``path`` holding ``holder``; ``False`` while a live run holds it.
 
-    A file left by a run that died (``_stale_reason``) is taken over with a warning. Its takers
-    first create the claim ``<path>.takeover-<digest of what it holds>``, only if absent. The one
-    that does deletes ``path`` if it still holds the same, creates its own, then deletes the
-    claim; the others get ``False``. A claim left by a taker that died is taken over the same way.
+    A file left by a run that died (``_stale_reason``) is deleted (``_delete_if_holds``) with a
+    warning, then created again; ``False`` if another run deletes or creates it first.
     """
     if _create(fs, path, holder):
         return True
@@ -324,21 +321,44 @@ def _acquire(spark: SparkSession, fs: Any, path: Any, holder: str) -> bool:
     if held is None:
         return _create(fs, path, holder)
     reason = _stale_reason(spark, fs, path, held)
-    if reason is None:
+    if reason is None or not _delete_if_holds(spark, fs, path, held, holder):
         return False
+    logger.warning("taking over the lock %s, left by a run that died (%s): %s", path, reason, held)
+    return _create(fs, path, holder)
+
+
+def _release(spark: SparkSession, fs: Any, lock: Any, holder: str) -> None:
+    """Delete the lock file ``lock`` if it still holds ``holder`` (``_delete_if_holds``).
+
+    A lock that another run took over, the age rule having taken this run for dead, is left to it.
+    """
+    held = _read(fs, lock)
+    if held is None:
+        return
+    if held != holder or not _delete_if_holds(spark, fs, lock, holder, holder):
+        logger.warning("leaving the lock %s to the run that took it over from this one", lock)
+
+
+def _delete_if_holds(spark: SparkSession, fs: Any, path: Any, held: str, claimant: str) -> bool:
+    """Delete the lock file ``path`` if it still holds ``held``; ``False`` if not, or if claimed.
+
+    Every delete of a lock file, by the run that holds it or by a taker, goes through here. The run
+    first creates the claim ``<path>.takeover-<digest of held>`` holding ``claimant`` with
+    ``_acquire``, so a claim left by a run that died is taken over in turn. Then it reads ``path``
+    again and deletes it if it still holds ``held``. Only the run that holds that claim deletes a
+    file holding ``held``, and no content is written twice, so ``path`` cannot change between that
+    read and the delete.
+    """
     claim = path.suffix(f".takeover-{hashlib.sha256(held.encode()).hexdigest()[:16]}")
-    if not _acquire(spark, fs, claim, holder):
+    if not _acquire(spark, fs, claim, claimant):
         return False
     try:
         if _read(fs, path) != held:
             return False
-        logger.warning(
-            "taking over the lock %s, left by a run that died (%s): %s", path, reason, held
-        )
         fs.delete(path, False)
-        return _create(fs, path, holder)
+        return True
     finally:
-        if _read(fs, claim) == holder:
+        if _read(fs, claim) == claimant:
             fs.delete(claim, False)
 
 
