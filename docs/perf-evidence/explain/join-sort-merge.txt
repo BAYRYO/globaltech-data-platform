@@ -1,0 +1,70 @@
+== Physical Plan ==
+AdaptiveSparkPlan (12)
++- Project (11)
+   +- SortMergeJoin LeftOuter (10)
+      :- Sort (4)
+      :  +- Exchange (3)
+      :     +- Project (2)
+      :        +- Scan parquet  (1)
+      +- Sort (9)
+         +- Exchange (8)
+            +- Project (7)
+               +- Filter (6)
+                  +- Scan parquet  (5)
+
+
+(1) Scan parquet 
+Output [10]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226, ingestion_date#227]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/silver/orders]
+ReadSchema: struct<transaction_id:string,event_time:timestamp,customer_id:string,product_id:string,quantity:int,unit_price_eur:decimal(10,2),channel:string,status:string,discount_pct:decimal(4,3)>
+
+(2) Project
+Output [9]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226]
+Input [10]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226, ingestion_date#227]
+
+(3) Exchange
+Input [9]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226]
+Arguments: hashpartitioning(product_id#221, 16), ENSURE_REQUIREMENTS, [plan_id=76]
+
+(4) Sort
+Input [9]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226]
+Arguments: [product_id#221 ASC NULLS FIRST], false, 0
+
+(5) Scan parquet 
+Output [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/gold/dim_product]
+PushedFilters: [IsNotNull(product_id), IsNotNull(valid_from), IsNotNull(valid_to)]
+ReadSchema: struct<product_sk:string,product_id:string,unit_price_eur:decimal(10,2),valid_from:timestamp,valid_to:timestamp>
+
+(6) Filter
+Input [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+Condition : ((isnotnull(product_id#31) AND isnotnull(valid_from#35)) AND isnotnull(valid_to#36))
+
+(7) Project
+Output [5]: [product_id#31 AS _version_of#238, product_sk#30, unit_price_eur#34 AS applicable_unit_price#239, valid_from#35, valid_to#36]
+Input [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+
+(8) Exchange
+Input [5]: [_version_of#238, product_sk#30, applicable_unit_price#239, valid_from#35, valid_to#36]
+Arguments: hashpartitioning(_version_of#238, 16), ENSURE_REQUIREMENTS, [plan_id=77]
+
+(9) Sort
+Input [5]: [_version_of#238, product_sk#30, applicable_unit_price#239, valid_from#35, valid_to#36]
+Arguments: [_version_of#238 ASC NULLS FIRST], false, 0
+
+(10) SortMergeJoin
+Left keys [1]: [product_id#221]
+Right keys [1]: [_version_of#238]
+Join type: LeftOuter
+Join condition: ((valid_from#35 <= event_time#219) AND (event_time#219 < valid_to#36))
+
+(11) Project
+Output [15]: [transaction_id#218, event_time#219, cast(date_format(cast(cast(event_time#219 as date) as timestamp), yyyyMMdd, Some(UTC)) as int) AS date_key#312, customer_id#220, product_sk#30, product_id#221, channel#224, status#225, quantity#222, unit_price_eur#223 AS unit_price_invoiced#319, applicable_unit_price#239, discount_pct#226, cast(round(((cast(quantity#222 as decimal(10,0)) * applicable_unit_price#239) * (1 - discount_pct#226)), 2) as decimal(20,2)) AS revenue_eur#322, cast(round(((cast(quantity#222 as decimal(10,0)) * unit_price_eur#223) * (1 - discount_pct#226)), 2) as decimal(20,2)) AS invoiced_amount_eur#323, cast(event_time#219 as date) AS order_date#324]
+Input [14]: [transaction_id#218, event_time#219, customer_id#220, product_id#221, quantity#222, unit_price_eur#223, channel#224, status#225, discount_pct#226, _version_of#238, product_sk#30, applicable_unit_price#239, valid_from#35, valid_to#36]
+
+(12) AdaptiveSparkPlan
+Output [15]: [transaction_id#218, event_time#219, date_key#312, customer_id#220, product_sk#30, product_id#221, channel#224, status#225, quantity#222, unit_price_invoiced#319, applicable_unit_price#239, discount_pct#226, revenue_eur#322, invoiced_amount_eur#323, order_date#324]
+Arguments: isFinalPlan=false
+

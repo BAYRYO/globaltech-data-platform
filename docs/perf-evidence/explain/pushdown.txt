@@ -1,0 +1,25 @@
+== Physical Plan ==
+* Project (4)
++- * Filter (3)
+   +- * ColumnarToRow (2)
+      +- Scan parquet  (1)
+
+
+(1) Scan parquet 
+Output [4]: [transaction_id#72, quantity#76, status#79, ingestion_date#81]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/silver/orders]
+PushedFilters: [IsNotNull(status), IsNotNull(quantity), EqualTo(status,CANCELLED), GreaterThanOrEqual(quantity,10)]
+ReadSchema: struct<transaction_id:string,quantity:int,status:string>
+
+(2) ColumnarToRow [codegen id : 1]
+Input [4]: [transaction_id#72, quantity#76, status#79, ingestion_date#81]
+
+(3) Filter [codegen id : 1]
+Input [4]: [transaction_id#72, quantity#76, status#79, ingestion_date#81]
+Condition : (((isnotnull(status#79) AND isnotnull(quantity#76)) AND (status#79 = CANCELLED)) AND (quantity#76 >= 10))
+
+(4) Project [codegen id : 1]
+Output [2]: [transaction_id#72, quantity#76]
+Input [4]: [transaction_id#72, quantity#76, status#79, ingestion_date#81]
+

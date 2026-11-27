@@ -1,0 +1,97 @@
+{
+  "experiment": "prepare",
+  "app_id": "application_1795715756506_0405",
+  "settings": {
+    "spark.executor.instances": "2",
+    "spark.executor.cores": "2",
+    "spark.executor.memory": "896m",
+    "spark.sql.shuffle.partitions": "16",
+    "spark.sql.adaptive.enabled": "true"
+  },
+  "args": {
+    "experiment": "prepare",
+    "runs": 5,
+    "root": "hdfs://namenode:8020/benchmarks/perf/full",
+    "landing": "hdfs://namenode:8020/benchmarks/mr-vs-spark/full/landing",
+    "out": "build/perf/prepare",
+    "first": "2025-12-01",
+    "last": "2025-12-31",
+    "salts": 16,
+    "skew_factor": 2.0,
+    "skew_threshold": "16m",
+    "advisory_size": "8m",
+    "partitions": [
+      4,
+      8,
+      16,
+      64,
+      200
+    ],
+    "label": ""
+  },
+  "rows": {
+    "csv/orders": 9843644,
+    "csv/customers": 5024,
+    "csv/products": 1006,
+    "parquet/orders": 9843644,
+    "parquet/customers": 5024,
+    "parquet/products": 1006,
+    "parquet_part/orders": 9843644,
+    "parquet_part/customers": 5024,
+    "parquet_part/products": 1006,
+    "parquet_part_zstd/orders": 9843644,
+    "parquet_part_zstd/customers": 5024,
+    "parquet_part_zstd/products": 1006,
+    "versions": 1326
+  },
+  "stored": {
+    "csv/orders": {
+      "logical": 870431664,
+      "physical": 2611294992
+    },
+    "csv/customers": {
+      "logical": 55544,
+      "physical": 166632
+    },
+    "csv/products": {
+      "logical": 16650,
+      "physical": 49950
+    },
+    "parquet/orders": {
+      "logical": 232784584,
+      "physical": 698353752
+    },
+    "parquet/customers": {
+      "logical": 25413,
+      "physical": 76239
+    },
+    "parquet/products": {
+      "logical": 5267,
+      "physical": 15801
+    },
+    "parquet_part/orders": {
+      "logical": 231506870,
+      "physical": 694520610
+    },
+    "parquet_part/customers": {
+      "logical": 25413,
+      "physical": 76239
+    },
+    "parquet_part/products": {
+      "logical": 5267,
+      "physical": 15801
+    },
+    "parquet_part_zstd/orders": {
+      "logical": 174330088,
+      "physical": 522990264
+    },
+    "parquet_part_zstd/customers": {
+      "logical": 5500,
+      "physical": 16500
+    },
+    "parquet_part_zstd/products": {
+      "logical": 1779,
+      "physical": 5337
+    }
+  }
+}

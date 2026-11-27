@@ -1,0 +1,44 @@
+FSCK started by hadoop (auth:SIMPLE) from /172.22.0.11 for path /benchmarks/ec/products_20260101.csv at Fri Nov 27 03:14:39 UTC 2026
+
+/benchmarks/ec/products_20260101.csv 79966 bytes, erasure-coded: policy=XOR-2-1-1024k, 1 block(s):  OK
+0. BP-1884475711-172.22.0.2-1795715752320:blk_-9223372036854775488_50171 len=79966 Live_repl=2  [blk_-9223372036854775488:DatanodeInfoWithStorage[172.22.0.4:9866,DS-3a9444c7-c313-49b7-b70e-ca393f04dfc7,DISK], blk_-9223372036854775486:DatanodeInfoWithStorage[172.22.0.5:9866,DS-320daac3-b8ba-4591-842d-fdfe8185300d,DISK]]
+
+
+Status: HEALTHY
+ Number of data-nodes:	3
+ Number of racks:		1
+ Total dirs:			0
+ Total symlinks:		0
+
+Replicated Blocks:
+ Total size:	0 B
+ Total files:	0
+ Total blocks (validated):	0
+ Minimally replicated blocks:	0
+ Over-replicated blocks:	0
+ Under-replicated blocks:	0
+ Mis-replicated blocks:		0
+ Default replication factor:	3
+ Average block replication:	0.0
+ Missing blocks:		0
+ Corrupt blocks:		0
+ Missing replicas:		0
+ Blocks queued for replication:	0
+
+Erasure Coded Block Groups:
+ Total size:	79966 B
+ Total files:	1
+ Total block groups (validated):	1 (avg. block group size 79966 B)
+ Minimally erasure-coded block groups:	1 (100.0 %)
+ Over-erasure-coded block groups:	0 (0.0 %)
+ Under-erasure-coded block groups:	0 (0.0 %)
+ Unsatisfactory placement block groups:	0 (0.0 %)
+ Average block group size:	2.0
+ Missing block groups:		0
+ Corrupt block groups:		0
+ Missing internal blocks:	0 (0.0 %)
+ Blocks queued for replication:	0
+FSCK ended at Fri Nov 27 03:14:39 UTC 2026 in 1 milliseconds
+
+
+The filesystem under path '/benchmarks/ec/products_20260101.csv' is HEALTHY

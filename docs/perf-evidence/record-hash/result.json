@@ -1,0 +1,107 @@
+{
+  "experiment": "record-hash",
+  "app_id": "application_1795715756506_0415",
+  "settings": {
+    "spark.executor.instances": "2",
+    "spark.executor.cores": "2",
+    "spark.executor.memory": "896m",
+    "spark.sql.shuffle.partitions": "16",
+    "spark.sql.adaptive.enabled": "true"
+  },
+  "args": {
+    "experiment": "record-hash",
+    "runs": 5,
+    "root": "hdfs://namenode:8020/benchmarks/perf/full",
+    "landing": "hdfs://namenode:8020/benchmarks/mr-vs-spark/full/landing",
+    "out": "build/perf/record-hash",
+    "first": "2025-12-01",
+    "last": "2025-12-31",
+    "salts": 16,
+    "skew_factor": 2.0,
+    "skew_threshold": "16m",
+    "advisory_size": "8m",
+    "partitions": [
+      4,
+      8,
+      16,
+      64,
+      200
+    ],
+    "label": ""
+  },
+  "bronze_orders": {
+    "transaction_id": {
+      "compressed": 4608561,
+      "uncompressed": 14097546
+    },
+    "event_time": {
+      "compressed": 9557319,
+      "uncompressed": 23085264
+    },
+    "customer_id": {
+      "compressed": 1722013,
+      "uncompressed": 1825120
+    },
+    "product_id": {
+      "compressed": 1449202,
+      "uncompressed": 1485183
+    },
+    "quantity": {
+      "compressed": 513455,
+      "uncompressed": 513960
+    },
+    "unit_price_eur": {
+      "compressed": 5737140,
+      "uncompressed": 10245089
+    },
+    "channel": {
+      "compressed": 258767,
+      "uncompressed": 258602
+    },
+    "status": {
+      "compressed": 141506,
+      "uncompressed": 179380
+    },
+    "_corrupt_record": {
+      "compressed": 56705,
+      "uncompressed": 81601
+    },
+    "_source_file": {
+      "compressed": 3538,
+      "uncompressed": 3342
+    },
+    "_ingested_at": {
+      "compressed": 1769,
+      "uncompressed": 1655
+    },
+    "_run_id": {
+      "compressed": 1838,
+      "uncompressed": 1724
+    },
+    "_record_hash": {
+      "compressed": 66420644,
+      "uncompressed": 68375295
+    },
+    "discount_pct": {
+      "compressed": 4204,
+      "uncompressed": 5811
+    }
+  },
+  "bronze_du": {
+    "logical": 90541119,
+    "physical": 271623357
+  },
+  "hex": {
+    "_record_hash": {
+      "compressed": 66216693,
+      "uncompressed": 68375260
+    }
+  },
+  "binary": {
+    "_record_hash": {
+      "compressed": 34840415,
+      "uncompressed": 36199201
+    }
+  },
+  "rows": 1005480
+}

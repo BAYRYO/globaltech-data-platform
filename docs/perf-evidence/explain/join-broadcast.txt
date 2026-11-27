@@ -1,0 +1,55 @@
+== Physical Plan ==
+AdaptiveSparkPlan (9)
++- Project (8)
+   +- BroadcastHashJoin LeftOuter BuildRight (7)
+      :- Project (2)
+      :  +- Scan parquet  (1)
+      +- BroadcastExchange (6)
+         +- Project (5)
+            +- Filter (4)
+               +- Scan parquet  (3)
+
+
+(1) Scan parquet 
+Output [10]: [transaction_id#95, event_time#96, customer_id#97, product_id#98, quantity#99, unit_price_eur#100, channel#101, status#102, discount_pct#103, ingestion_date#104]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/silver/orders]
+ReadSchema: struct<transaction_id:string,event_time:timestamp,customer_id:string,product_id:string,quantity:int,unit_price_eur:decimal(10,2),channel:string,status:string,discount_pct:decimal(4,3)>
+
+(2) Project
+Output [9]: [transaction_id#95, event_time#96, customer_id#97, product_id#98, quantity#99, unit_price_eur#100, channel#101, status#102, discount_pct#103]
+Input [10]: [transaction_id#95, event_time#96, customer_id#97, product_id#98, quantity#99, unit_price_eur#100, channel#101, status#102, discount_pct#103, ingestion_date#104]
+
+(3) Scan parquet 
+Output [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+Batched: true
+Location: InMemoryFileIndex [hdfs://namenode:8020/datalake/gold/dim_product]
+PushedFilters: [IsNotNull(product_id), IsNotNull(valid_from), IsNotNull(valid_to)]
+ReadSchema: struct<product_sk:string,product_id:string,unit_price_eur:decimal(10,2),valid_from:timestamp,valid_to:timestamp>
+
+(4) Filter
+Input [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+Condition : ((isnotnull(product_id#31) AND isnotnull(valid_from#35)) AND isnotnull(valid_to#36))
+
+(5) Project
+Output [5]: [product_id#31 AS _version_of#115, product_sk#30, unit_price_eur#34 AS applicable_unit_price#116, valid_from#35, valid_to#36]
+Input [5]: [product_sk#30, product_id#31, unit_price_eur#34, valid_from#35, valid_to#36]
+
+(6) BroadcastExchange
+Input [5]: [_version_of#115, product_sk#30, applicable_unit_price#116, valid_from#35, valid_to#36]
+Arguments: HashedRelationBroadcastMode(List(input[0, string, true]),false), [plan_id=50]
+
+(7) BroadcastHashJoin
+Left keys [1]: [product_id#98]
+Right keys [1]: [_version_of#115]
+Join type: LeftOuter
+Join condition: ((valid_from#35 <= event_time#96) AND (event_time#96 < valid_to#36))
+
+(8) Project
+Output [15]: [transaction_id#95, event_time#96, cast(date_format(cast(cast(event_time#96 as date) as timestamp), yyyyMMdd, Some(UTC)) as int) AS date_key#190, customer_id#97, product_sk#30, product_id#98, channel#101, status#102, quantity#99, unit_price_eur#100 AS unit_price_invoiced#197, applicable_unit_price#116, discount_pct#103, cast(round(((cast(quantity#99 as decimal(10,0)) * applicable_unit_price#116) * (1 - discount_pct#103)), 2) as decimal(20,2)) AS revenue_eur#200, cast(round(((cast(quantity#99 as decimal(10,0)) * unit_price_eur#100) * (1 - discount_pct#103)), 2) as decimal(20,2)) AS invoiced_amount_eur#201, cast(event_time#96 as date) AS order_date#202]
+Input [14]: [transaction_id#95, event_time#96, customer_id#97, product_id#98, quantity#99, unit_price_eur#100, channel#101, status#102, discount_pct#103, _version_of#115, product_sk#30, applicable_unit_price#116, valid_from#35, valid_to#36]
+
+(9) AdaptiveSparkPlan
+Output [15]: [transaction_id#95, event_time#96, date_key#190, customer_id#97, product_sk#30, product_id#98, channel#101, status#102, quantity#99, unit_price_invoiced#197, applicable_unit_price#116, discount_pct#103, revenue_eur#200, invoiced_amount_eur#201, order_date#202]
+Arguments: isFinalPlan=false
+
