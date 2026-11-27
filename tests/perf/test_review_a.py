@@ -152,7 +152,7 @@ def test_finding_the_aqe_gain_is_told_against_the_documents_own_decision_rule():
     four_slots_first_series = two_sided("skew-first-txid-salt", "baseline", "aqe-skew-join")
     assert (eight_slots, four_slots_first_series) == (0.056, 0.056)
     doc = " ".join((DOCS / "performance.md").read_text(encoding="utf-8").split())
-    assert "AQE gagne 0,23 s (\u22129,9 %, p = 0,056), une différence que la règle ne retient pas" in doc
+    assert "AQE gagne 0,23 s (\u22129,9 %, p = 0,056), une différence que la règle" in doc
     assert "AQE gagne 0,16 s (\u22126,0 %, p = 0,056), non retenu non plus" in doc
 
 

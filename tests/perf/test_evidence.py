@@ -113,10 +113,8 @@ CHECKS = [
         r"à 4 \(p = (\d,\d{3})\) et à 200 \(p = (\d,\d{3})\)",
         [("partitions", "sp-16", "sp-4", "key_p"), ("partitions", "sp-16", "sp-200", "key_p")],
     ),
-    (
-        r"pas à 8 ni à 64\s\(p = (\d,\d{3})\)",
-        [("partitions", "sp-16", "sp-8", "key_p"), ("partitions", "sp-16", "sp-64", "key_p")],
-    ),
+    (r"pas à 8 ni à 64\s\(p = (\d,\d{3})\)", [("partitions", "sp-16", "sp-8", "key_p")]),
+    (r"pas à 8 ni à 64\s\(p = (\d,\d{3})\)", [("partitions", "sp-16", "sp-64", "key_p")]),
     (
         r"16 partitions \(p = (\d,\d{3})\), comme à 4",
         [("partitions", "sp-16", "sp-200-aqe-coalesce", "key_p")],
