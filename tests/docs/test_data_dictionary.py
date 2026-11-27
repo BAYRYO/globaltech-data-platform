@@ -94,6 +94,11 @@ def documented() -> dict[str, Shape]:
     return shapes
 
 
+def _relative(path: str) -> str:
+    """``path`` from the root of the temporary lake."""
+    return path.rsplit("/lake/", 1)[1]
+
+
 def _matches(pattern: str, path: str) -> bool:
     literal = (re.escape(part) for part in re.split(r"<[^>]+>", pattern))
     return re.fullmatch("[^/]+".join(literal), path) is not None
@@ -159,12 +164,12 @@ def _written(spark, cfg, lake: Path) -> dict[str, Shape]:
 
     shapes = {}
     for table in (audit_path(cfg), f"{paths.ops}/smoke"):
-        local = lake / table.rsplit("/lake/", 1)[1]
+        local = lake / _relative(table)
         shapes[table] = Shape.of(read_table(spark, table).schema, *_partitions(local))
     day = f"{days_path(paths.silver)}/{INGESTION_DATE}={DAY}"
     files = (f"{paths.gold}/{STATE}", f"{day}/orders.json", f"{day}/{COMPLETE}")
     for path in (*files, fingerprint_path(paths.ops)):
-        record = json.loads((lake / path.rsplit("/lake/", 1)[1]).read_text(encoding="utf-8"))
+        record = json.loads((lake / _relative(path)).read_text(encoding="utf-8"))
         shapes[path] = Shape({key: _json_type(value) for key, value in record.items()})
     return shapes
 
@@ -176,7 +181,7 @@ def code(spark, tmp_path_factory) -> dict[str, Shape]:
     areas = {f"paths.{area.name}": str(lake / area.name) for area in fields(LakePaths)}
     cfg = load_config("local", overrides=areas)
     shapes = _declared(spark, cfg.paths, cfg.gold) | _written(spark, cfg, lake)
-    return {path.rsplit("/lake/", 1)[1]: shape for path, shape in shapes.items()}
+    return {_relative(path): shape for path, shape in shapes.items()}
 
 
 @pytest.fixture(scope="module")
