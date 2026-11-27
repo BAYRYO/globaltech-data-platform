@@ -238,8 +238,10 @@ le même résultat.
 
 ### Le secret de pseudonymisation
 
-Les jobs `--env cluster` lisent le sel dans `GTDP_PSEUDO_SALT` et s'arrêtent avec le code 2 sans
-lui ([ADR-0004](adr/0004-pseudonymisation.md)). Le mettre dans `.env`, ignoré par Git, ou
+Le job `silver`, seul à pseudonymiser, lit le sel dans `GTDP_PSEUDO_SALT`. Sur le cluster,
+`run.py` le vérifie avant le démarrage de Spark et s'arrête avec le code 2 s'il manque
+([ADR-0003](adr/0003-configuration-toml.md), [ADR-0004](adr/0004-pseudonymisation.md)). Les autres
+jobs n'en ont pas besoin. Le mettre dans `.env`, ignoré par Git, ou
 l'exporter dans le shell. Ne jamais le commiter.
 
 ```bash
@@ -347,7 +349,9 @@ scripts/cluster/client.sh bash -c 'hadoop jar "$HADOOP_STREAMING_JAR" \
 
 Les sous-dossiers de landing sont `orders`, `customers`, `products`, `weblogs`, `_manifests` et
 `sensors/incoming`. Les sorties du streaming (`/datalake/gold/sensor_aggregates`,
-`/datalake/gold/sensor_alerts`) sont créées par le job lui-même.
+`/datalake/gold/sensor_alerts`) sont créées par le job lui-même. `/datalake/streaming/archive` est
+créé par le job `streaming-housekeeping` et `/datalake/streaming/control` par
+`scripts/streaming/stop.sh` : tous deux comptent dans le quota de `/datalake/streaming`.
 
 Choix de droits :
 
@@ -361,7 +365,10 @@ Choix de droits :
 - **Event logs Spark.** Une application de streaming écrit environ 200 Mo d'event log en
   11 minutes (940 jobs Spark, mesuré au lot 5). Les event logs sont donc compressés (zstd) et
   découpés en fichiers de 128 Mo (`spark.eventLog.rolling`), le History Server purge au-delà de
-  7 jours, et `/spark-logs` a un quota de 15 Go.
+  7 jours, et `/spark-logs` a un quota de 15 Go. Le History Server compacte les event logs roulés
+  d'une application en cours au-delà de 2 fichiers
+  (`spark.history.fs.eventLog.rolling.maxFilesToRetain`, appliqué à son prochain démarrage) : le
+  job de streaming 24/7 garde environ 55 Mo stockés.
 - **Quotas.** Un quota d'espace HDFS compte les octets répliqués. 30 Go en réplication 3 font
   donc 10 Go de données. Un quota de noms compte les fichiers et répertoires : il borne la
   prolifération de petits fichiers (un micro-batch de streaming en crée plusieurs, d'où 500 000
