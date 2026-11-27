@@ -26,6 +26,7 @@ from gtdp.io import (
     table_lock,
     write_partitions,
 )
+from gtdp.streaming import stream
 
 pytestmark = pytest.mark.slow
 
@@ -614,3 +615,24 @@ def test_one_failed_request_to_yarn_never_frees_the_old_lock_of_a_running_applic
 
     assert lock.read_text() == lock_of(APP)
     assert resource_manager.requests == [f"/ws/v1/cluster/apps/{APP}"] * 2
+
+
+def test_the_stream_waits_stale_after_s_and_a_margin_for_a_running_holder_then_fails(
+    spark, table, resource_manager, monkeypatch
+):
+    """ADR-0002 and the streaming runbook: the sensor stream waits for a held lock, stale_after_s
+    and a margin at most, then fails the query. It never takes over the lock of a RUNNING
+    application, such as a housekeeping step longer than stale_after_s."""
+    path, lock = table
+    resource_manager.states[APP] = "RUNNING"
+    lock.write_text(lock_of(APP))
+    monkeypatch.setattr(stream, "_LOCK_MARGIN_S", 0.5)
+    monkeypatch.setattr(stream, "_LOCK_POLL_S", 0.1)
+    frame = spark.createDataFrame([(1, "2026-01-01")], "id int, day string")
+    started = time.monotonic()
+
+    with pytest.raises(TableLockedError, match=APP):
+        stream._write_waiting(frame, path, {"day": ["2026-01-01"]}, stale_after_s=1)
+
+    assert time.monotonic() - started >= 1.5
+    assert lock.read_text() == lock_of(APP)

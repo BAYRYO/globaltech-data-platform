@@ -279,9 +279,10 @@ def _write_waiting(
 ) -> None:
     """``write_partitions``, retried while another run holds the table's lock.
 
-    The holder is the housekeeping, or a run that died holding it: the lock then turns stale
-    after ``stale_after_s`` and ``write_partitions`` takes it over. ``TableLockedError`` once
-    that time and a margin have passed.
+    The holder is the housekeeping, or a run that died holding it, whose lock ``write_partitions``
+    takes over once YARN reports it ended, or after ``stale_after_s`` without a state from YARN.
+    ``TableLockedError`` once ``stale_after_s`` and a margin have passed, whatever YARN says of the
+    holder: a housekeeping step longer than that fails the query.
     """
     start, warned = time.monotonic(), False
     while True:
