@@ -6,7 +6,7 @@ and gives an absent one its default, so ``SOURCES`` is the one list of expected 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -43,6 +43,8 @@ class Source:
     hold more (unknown columns, kept in bronze and reported in the audit)."""
     optional: frozenset[str] = frozenset()
     """Columns of ``columns`` that appeared after the first drop (ADR-0007): ``discount_pct``."""
+    partitions: tuple[str, ...] = (INGESTION_DATE,)
+    """Partition column of ``bronze/<source>``: one partition per landed day."""
 
     @property
     def required(self) -> tuple[str, ...]:
@@ -111,10 +113,12 @@ TECHNICAL_COLUMNS = StructType(
 )
 
 
-def bronze_schema(source: Source) -> StructType:
-    """Schema of ``bronze/<source>`` read with ``mergeSchema``: the canonical columns as strings,
-    the technical columns, then the partition column."""
-    raw = [StructField(column, StringType()) for column in source.columns]
+def bronze_schema(source: Source, header: Sequence[str] | None = None) -> StructType:
+    """Schema of ``bronze/<source>``: the data columns as strings, the technical columns, then
+    the partition column. The data columns are the canonical ones, as read with ``mergeSchema``,
+    or those of a file ``header``, as bronze writes the file's rows."""
+    columns = source.columns if header is None else header
+    raw = [StructField(column, StringType()) for column in columns]
     return StructType([*raw, *TECHNICAL_COLUMNS.fields, StructField(INGESTION_DATE, DateType())])
 
 
@@ -205,4 +209,6 @@ SILVER_REJECTS = StructType(
         StructField(INGESTION_DATE, DateType(), False),
     ]
 )
-"""``silver/rejects/<source>``, partitioned by ``ingestion_date``: one rejected bronze record."""
+"""``silver/rejects/<source>``: one rejected bronze record."""
+REJECTS_PARTITIONS = (INGESTION_DATE,)
+"""Partition column of ``silver/rejects/<source>``: one partition per landed day."""

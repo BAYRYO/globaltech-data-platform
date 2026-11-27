@@ -1,4 +1,5 @@
 import ast
+import re
 from datetime import date
 from pathlib import Path
 
@@ -21,8 +22,8 @@ SCHEMA = StructType(
 )
 
 
-def rows(spark, *days: date, schema: str = "id int, name string, ingestion_date date"):
-    return spark.createDataFrame([(i, f"n{i}", day) for i, day in enumerate(days)], schema)
+def rows(spark, *days: date):
+    return spark.createDataFrame([(i, f"n{i}", day) for i, day in enumerate(days)], SCHEMA)
 
 
 def test_a_partitioned_table_gets_the_named_partitions_replaced(spark, tmp_path):
@@ -64,7 +65,7 @@ def test_rows_without_the_declared_columns_are_refused_before_any_write(
     path = tmp_path / "table"
     frame = spark.createDataFrame([], columns)
 
-    with pytest.raises(SchemaMismatchError, match=named):
+    with pytest.raises(SchemaMismatchError, match=re.escape(named)):
         publish(frame, str(path), SCHEMA, (INGESTION_DATE,), [D1])
 
     assert not path.exists()
@@ -72,7 +73,7 @@ def test_rows_without_the_declared_columns_are_refused_before_any_write(
 
 def test_columns_in_another_order_pass_where_the_order_does_not_count(spark, tmp_path):
     path = str(tmp_path / "table")
-    frame = rows(spark, D1, schema="name string, id int, ingestion_date date")
+    frame = rows(spark, D1).select("name", "id", INGESTION_DATE)
 
     publish(frame, path, SCHEMA, (INGESTION_DATE,), [D1], ordered=False)
 

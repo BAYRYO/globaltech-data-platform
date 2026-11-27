@@ -18,8 +18,9 @@ from gtdp.bronze.landing import (
     scan,
 )
 from gtdp.bronze.transform import check_counts, to_bronze
-from gtdp.io import INGESTION_DATE, drop_partitions, read_table, write_partitions
+from gtdp.io import INGESTION_DATE, drop_partitions, read_table
 from gtdp.jobs.registry import JobContext, job
+from gtdp.publish import publish
 from gtdp.schemas import CORRUPT_RECORD, SOURCE_FILE, SOURCES, bronze_schema
 
 
@@ -93,7 +94,9 @@ def bronze(ctx: JobContext) -> None:
     for source, source_frames in frames.items():
         table = f"{paths.bronze}/{source}"
         rows = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), source_frames)
-        write_partitions(rows, table, {INGESTION_DATE: [day]})
+        header = dict.fromkeys(c for f in files if f.source.name == source for c in headers[f.key])
+        schema = bronze_schema(SOURCES[source], list(header))
+        publish(rows, table, schema, SOURCES[source].partitions, [day], ordered=False)
         written = {
             row[SOURCE_FILE]: (row["rows"], row["corrupt"])
             for row in read_table(spark, table, bronze_schema(SOURCES[source]))

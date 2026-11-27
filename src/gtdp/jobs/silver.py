@@ -19,11 +19,10 @@ from gtdp.io import (
     list_partition_values,
     path_exists,
     read_table,
-    replace_table,
-    write_partitions,
 )
 from gtdp.jobs.registry import JobContext, job
-from gtdp.schemas import SILVER_REJECTS
+from gtdp.publish import publish
+from gtdp.schemas import REJECTS_PARTITIONS, SILVER_REJECTS
 from gtdp.silver import days
 from gtdp.silver.pipelines import (
     PIPELINES,
@@ -226,11 +225,12 @@ def _publish(
             raise SilverCheckError(f"{source} {day}, nothing published: " + "; ".join(problems))
         line = [column for column in in_file if column in columns]
         rejected_rows = rejects(records.where(of_day), line, source=source, run_id=ctx.run.run_id)
-        write_partitions(conform(rejected_rows, SILVER_REJECTS), rejected, {INGESTION_DATE: [day]})
+        rejected_rows = conform(rejected_rows, SILVER_REJECTS)
+        publish(rejected_rows, rejected, SILVER_REJECTS, REJECTS_PARTITIONS, [day])
         if pipeline.partitioned:
-            write_partitions(rows, target, {INGESTION_DATE: [day]})
+            publish(rows, target, pipeline.schema, pipeline.partitions, [day])
         else:
-            replace_table(rows, target)
+            publish(rows, target, pipeline.schema)
     finally:
         records.unpersist()
 
@@ -280,12 +280,11 @@ def _roll_back(ctx: JobContext, source: str, day: date, salt: DataFrame) -> None
         return
     previous = days.latest_day(spark, paths.silver, source, before=day)
     if previous is None:
-        replace_table(spark.createDataFrame([], pipeline.schema), target)
+        publish(spark.createDataFrame([], pipeline.schema), target, pipeline.schema)
         return
     records = classified(spark, paths, source, previous, salt)
-    replace_table(
-        pipeline.build(records.where(F.col(DISPOSITION) == Disposition.CLEAN.value)), target
-    )
+    clean = records.where(F.col(DISPOSITION) == Disposition.CLEAN.value)
+    publish(pipeline.build(clean), target, pipeline.schema)
 
 
 def _record(run: Run, reports: dict[str, SourceReport]) -> None:

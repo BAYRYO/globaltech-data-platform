@@ -39,6 +39,8 @@ class Table:
     schema: StructType
     key: tuple[str, ...]
     """Columns unique across the whole table, checked by each run."""
+    partitions: tuple[str, ...] = ()
+    """Partition column of the table; none for a table rebuilt whole by each run."""
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,7 @@ FACT_SALES = Table(
         ]
     ),
     ("transaction_id",),
+    partitions=(ORDER_DATE,),
 )
 
 FACT_WEB_EVENTS = Table(

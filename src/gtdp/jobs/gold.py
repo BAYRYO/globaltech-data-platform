@@ -24,17 +24,12 @@ from gtdp.gold.tables import (
     FACT_SALES,
     FACT_WEB_EVENTS,
     ORDER_DATE,
+    STAR,
     table_path,
 )
-from gtdp.io import (
-    INGESTION_DATE,
-    drop_partitions,
-    read_table,
-    replace_table,
-    table_lock,
-    write_partitions,
-)
+from gtdp.io import INGESTION_DATE, drop_partitions, read_table, table_lock
 from gtdp.jobs.registry import JobContext, job
+from gtdp.publish import publish
 from gtdp.schemas import SILVER_REJECTS
 from gtdp.silver.days import complete_days
 from gtdp.silver.pipelines import PIPELINES, rejects_path
@@ -133,7 +128,9 @@ def _build(ctx: JobContext, complete: list[date], settings: GoldSettings) -> dic
 
 def _publish(ctx: JobContext, tables: dict[str, DataFrame], complete: list[date]) -> None:
     """Write ``tables``, built from the ``complete`` days of silver: ``fact_sales`` for the order
-    dates that changed, the others whole, between a ``PUBLISHING`` and a ``PUBLISHED`` state."""
+    dates that changed, the others whole, between a ``PUBLISHING`` and a ``PUBLISHED`` state.
+    A table of the star must have the columns of its ``Table``; an indicator has the columns its
+    function in ``KPIS`` computes, which is its declaration."""
     spark, gold = ctx.spark, ctx.cfg.paths.gold
     path = table_path(gold, FACT_SALES.name)
     sales = tables[FACT_SALES.name]
@@ -153,12 +150,14 @@ def _publish(ctx: JobContext, tables: dict[str, DataFrame], complete: list[date]
     write_state(spark, gold, publishing)
     if rewritten:
         changed = sales.where(F.col(ORDER_DATE).isin(rewritten)).repartition(ORDER_DATE)
-        write_partitions(changed, path, {ORDER_DATE: rewritten})
+        publish(changed, path, FACT_SALES.schema, FACT_SALES.partitions, rewritten)
     if removed:
         drop_partitions(spark, path, {ORDER_DATE: removed})
-    for name, frame in tables.items():
-        if name != FACT_SALES.name:
-            replace_table(frame, table_path(gold, name))
+    for table in STAR:
+        if table is not FACT_SALES:
+            publish(tables[table.name], table_path(gold, table.name), table.schema)
+    for name in KPIS:
+        publish(tables[name], table_path(gold, name), tables[name].schema)
 
     after = checks.fingerprints(read_table(spark, path, FACT_SALES.schema))
     ctx.run.counters.rows_out = sum(rows for rows, _ in after.values())
