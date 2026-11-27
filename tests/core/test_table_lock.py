@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import signal
 import socket
 import threading
 import time
@@ -14,6 +15,7 @@ import pytest
 from pyspark import SparkContext
 
 import gtdp.io
+from gtdp.audit import RunStopped
 from gtdp.io import (
     RUN_ID_PROPERTY,
     TableLockedError,
@@ -410,3 +412,26 @@ def test_a_taker_and_a_run_that_takes_the_released_lock_never_both_hold_it(
 
     assert len(holders) == 1
     assert named == holders[0]
+
+
+def test_a_stop_signal_received_while_taking_the_lock_still_releases_it(spark, table, monkeypatch):
+    """The bronze runbook: the lock goes at the end of the write, also on failure or stop signal."""
+    path, lock = table
+    real = gtdp.io._acquire
+
+    def stopped_while_acquiring(*args):
+        os.kill(os.getpid(), signal.SIGTERM)  # for example while YARN is asked
+        return real(*args)
+
+    def raise_stopped(signum, _frame):
+        raise RunStopped(signal.Signals(signum))
+
+    monkeypatch.setattr(gtdp.io, "_acquire", stopped_while_acquiring)
+    previous = signal.signal(signal.SIGTERM, raise_stopped)
+    try:
+        with pytest.raises(RunStopped), table_lock(spark, path):
+            pass
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert not lock.exists()
