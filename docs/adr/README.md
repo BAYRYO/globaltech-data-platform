@@ -18,3 +18,4 @@ après coup une décision prise pendant un lot, avec les preuves qui l'ont justi
 | [0009](0009-gold-etoile-recalcul.md) | Gold en étoile, recalculée depuis les jours silver complets, contrôles fermés avant écriture (rétrospectif) | Acceptée |
 | [0010](0010-moteur-et-reglages-spark.md) | Spark pour les batchs ; réglages appliqués et recommandations non appliquées après les Lots 6 et 7 (rétrospectif) | Acceptée |
 | [0011](0011-exploitation-plateforme.md) | Mémoire fixée par service, une racine HDFS par couche, droits et quotas, secours `datanode4`, authentification simple (rétrospectif) | Acceptée |
+| [0012](0012-bronze-controle-manifeste.md) | Bronze vérifie chaque fichier contre son manifeste (SHA-256, UTF-8, lignes, en-tête) avant toute écriture (rétrospectif) | Acceptée |
