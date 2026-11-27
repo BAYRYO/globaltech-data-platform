@@ -1,7 +1,9 @@
 # Décisions d'architecture (ADR)
 
 Une décision structurante par fichier : contexte, décision, conséquences, alternatives écartées.
-Une décision remplacée garde son fichier avec le statut « Remplacée par ADR-xxxx ».
+Une décision remplacée garde son fichier avec le statut « Remplacée par ADR-xxxx ». Une phrase
+dépassée garde son texte et reçoit une note « Mise à jour » datée. Un ADR rétrospectif consigne
+après coup une décision prise pendant un lot, avec les preuves qui l'ont justifiée.
 
 | ADR | Décision | Statut |
 | --- | --- | --- |
@@ -13,3 +15,6 @@ Une décision remplacée garde son fichier avec le statut « Remplacée par ADR-
 | [0006](0006-topologie-hdfs.md) | 3 DataNodes, réplication 3 par défaut, erasure coding XOR-2-1 comparé | Acceptée |
 | [0007](0007-evolution-schema.md) | Schéma brut par en-tête de fichier en bronze, schéma canonique en silver | Acceptée |
 | [0008](0008-streaming.md) | Streaming : watermark 2 min, fenêtres 1 min en append, une alerte par capteur et fenêtre, écriture par jour et `batch_id`, housekeeping horaire | Acceptée |
+| [0009](0009-gold-etoile-recalcul.md) | Gold en étoile, recalculée depuis les jours silver complets, contrôles fermés avant écriture (rétrospectif) | Acceptée |
+| [0010](0010-moteur-et-reglages-spark.md) | Spark pour les batchs ; réglages appliqués et recommandations non appliquées après les Lots 6 et 7 (rétrospectif) | Acceptée |
+| [0011](0011-exploitation-plateforme.md) | Mémoire fixée par service, une racine HDFS par couche, droits et quotas, secours `datanode4`, authentification simple (rétrospectif) | Acceptée |
