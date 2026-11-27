@@ -11,7 +11,7 @@ from pyspark.sql import functions as F
 
 from gtdp.io import INGESTION_DATE
 from gtdp.schemas import RECORD_HASH, SILVER_CUSTOMERS, SOURCES
-from gtdp.silver.parse import blank, day_first_date, iso_date, timestamp
+from gtdp.silver.parse import ancient, blank, day_first_date, iso_date, timestamp
 from gtdp.silver.pseudonymize import salted
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw
 
@@ -51,8 +51,10 @@ ENTITY = Entity(
         Rule("MISSING_REGION", FLAG, lambda: blank(raw("region"))),
         Rule("BAD_DATE", FLAG, lambda: iso_date(raw("signup_date")).isNull()),
         Rule("FUTURE_SIGNUP", FLAG, lambda: F.col("signup_date") > F.col(INGESTION_DATE)),
+        Rule("ANCIENT_SIGNUP", FLAG, lambda: ancient(F.col("signup_date"))),
         # Kept: the record still says the customer exists. It ranks last in the SCD1 choice.
         Rule("BAD_UPDATED_AT", FLAG, lambda: F.col("updated_at").isNull()),
+        Rule("ANCIENT_UPDATED_AT", FLAG, lambda: ancient(F.col("updated_at"))),
     ),
     # A key duplicate restates a record with its email in another case or padded with spaces.
     key=("customer_id", "updated_at"),

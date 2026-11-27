@@ -180,6 +180,23 @@ marqueur illisible (abîmé, ou tronqué par une version antérieure) arrête le
 (`MarkerError`) au lieu d'être pris pour absent. `_state.json` illisible se lit comme absent :
 gold n'est alors pas tenu pour publié.
 
+### Dates anciennes en Parquet
+
+Spark 3 calcule les dates dans le calendrier grégorien proleptique ; Spark 2 et Hive écrivaient
+les dates antérieures au `1582-10-15` et les horodatages INT96 antérieurs au `1900-01-01` dans un
+calendrier hybride (julien puis grégorien). Par défaut (`EXCEPTION`), Spark 3.5 refuse d'écrire
+ces valeurs (`WRITE_ANCIENT_DATETIME`) : une seule ligne bien formée mais ancienne faisait échouer
+toute l'exécution silver (KAN-59). `build_spark` pose donc
+`spark.sql.parquet.datetimeRebaseModeInWrite`, `datetimeRebaseModeInRead`,
+`int96RebaseModeInWrite` et `int96RebaseModeInRead` à `CORRECTED` : les valeurs s'écrivent et
+se relisent telles que Spark les calcule, sans conversion. Aucun lecteur du calendrier hybride
+(Spark 2, Hive) ne lit ce lake, et les fichiers déjà écrits par Spark 3 se relisent à
+l'identique. Le type physique des horodatages reste INT96 : `outputTimestampType` n'est pas
+changé, aucun besoin ne le demande et les partitions déjà écrites mêleraient deux types. Les
+tests passent par `build_spark`, comme le cluster, dont `spark-defaults.conf` ne pose aucun de ces
+modes. Silver borne en outre les dates plausibles au `1900-01-01` par ses règles
+([dictionnaire silver](../data-dictionary/silver.md#disposition-dune-ligne-bronze)).
+
 ### Lecture : `read_table`
 
 Les jobs lisent toute table du lake par `read_table(spark, chemin, schéma)`. Le schéma explicite

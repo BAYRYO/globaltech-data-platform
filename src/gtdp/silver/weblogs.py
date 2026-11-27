@@ -10,7 +10,7 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
 from gtdp.schemas import SILVER_WEBLOGS, SOURCES
-from gtdp.silver.parse import null_if
+from gtdp.silver.parse import ancient, future, null_if
 from gtdp.silver.pseudonymize import salted
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw
 
@@ -139,6 +139,8 @@ ENTITY = Entity(
             Action.REJECT,
             lambda: ~raw("value").rlike(COMBINED_LOG) | F.col("event_ts").isNull(),
         ),
+        Rule("FUTURE_TIMESTAMP", Action.REJECT, lambda: future(F.col("event_ts"))),
+        Rule("ANCIENT_TIMESTAMP", Action.REJECT, lambda: ancient(F.col("event_ts"))),
     ),
     # The same line twice is one request: an exact duplicate within a day, a cross-day
     # duplicate when a complete earlier day published it.

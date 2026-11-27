@@ -12,6 +12,7 @@ from pyspark.sql import Column
 from pyspark.sql import functions as F
 from pyspark.sql.types import DataType
 
+from gtdp.io import INGESTION_DATE
 from gtdp.schemas import AMOUNT
 
 TIMESTAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$"
@@ -19,6 +20,9 @@ DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 DAY_FIRST_DATE_PATTERN = r"^(\d{2})/(\d{2})/(\d{4})$"
 INTEGER_PATTERN = r"^-?\d{1,9}$"
 AMOUNT_PATTERN = r"^-?\d{1,8}(\.\d{1,2})?$"
+EARLIEST = "1900-01-01"
+"""The day version 1 of every product is valid from (``gtdp.silver.products``), the earliest
+day the model knows: a date or time before it is not plausible."""
 
 
 def blank(column: Column) -> Column:
@@ -60,6 +64,17 @@ def amount(column: Column) -> Column:
 
 def missing_or_not_positive(column: Column) -> Column:
     return column.isNull() | (column <= 0)
+
+
+def ancient(column: Column) -> Column:
+    """A date, or a time in UTC, before ``EARLIEST``; a null is not."""
+    return column < F.lit(EARLIEST).cast("date")
+
+
+def future(column: Column) -> Column:
+    """A time later than the day after the drop: ``column > ingestion_date + 1 day``, the next
+    midnight included."""
+    return column > F.date_add(F.col(INGESTION_DATE), 1).cast("timestamp")
 
 
 def outside(column: Column, values: Iterable[str]) -> Column:

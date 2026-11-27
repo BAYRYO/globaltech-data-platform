@@ -1,8 +1,9 @@
 """Products: the rules of a catalog version, and ``silver/products_scd2`` (SCD type 2).
 
 The table is rebuilt from every clean product record of bronze up to the day. A record starts a
-new version only when a historised attribute changes. Version 1 is valid from 1900-01-01, so
-every order, however early, finds exactly one price.
+new version only when a historised attribute changes. Version 1 is valid from 1900-01-01, and
+silver rejects an order or a product record dated earlier: every order kept finds exactly one
+price.
 """
 
 from __future__ import annotations
@@ -12,11 +13,11 @@ from pyspark.sql import functions as F
 
 from gtdp.io import INGESTION_DATE
 from gtdp.schemas import RECORD_HASH, SILVER_PRODUCTS_SCD2, SOURCES
-from gtdp.silver.parse import amount, blank, missing_or_not_positive, timestamp
+from gtdp.silver.parse import EARLIEST, amount, ancient, blank, missing_or_not_positive, timestamp
 from gtdp.silver.quality import Action, Entity, Rule, conform, raw, records_sharing
 
 HISTORISED = ("product_name", "category", "unit_price_eur")
-FIRST_VALID_FROM = "1900-01-01 00:00:00"
+FIRST_VALID_FROM = f"{EARLIEST} 00:00:00"
 OPEN_VALID_TO = "9999-12-31 00:00:00"
 REJECT = Action.REJECT
 
@@ -44,6 +45,8 @@ ENTITY = Entity(
         Rule("BAD_PRICE", REJECT, lambda: missing_or_not_positive(F.col("unit_price_eur"))),
         Rule("NULL_CATEGORY", REJECT, lambda: blank(raw("category"))),
         Rule("BAD_TIMESTAMP", REJECT, lambda: F.col("updated_at").isNull()),
+        # Version 1 starts on EARLIEST: an earlier version would end before it begins.
+        Rule("ANCIENT_TIMESTAMP", REJECT, lambda: ancient(F.col("updated_at"))),
         # Two different records for one version: no way to tell which is right, both go.
         Rule(
             "CONFLICTING_VERSION",

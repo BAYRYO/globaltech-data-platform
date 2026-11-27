@@ -89,11 +89,22 @@ Chaque ligne bronze d'un jour reçoit exactement une disposition, évaluée dans
 
 Identité vérifiée à chaque exécution : `lignes bronze du jour = clean + rejected + duplicated`.
 
-Limite connue (KAN-59) : une date antérieure au `1582-10-15` ou un horodatage antérieur au
-`1900-01-01 00:00:00` UTC respecte les formats acceptés, mais Spark refuse de l'écrire en Parquet
-(`WRITE_ANCIENT_DATETIME`, aucun mode de conversion n'est configuré). L'exécution échoue en
-écrivant la table : la ligne ne reçoit aucune disposition publiée, la source n'a pas de marqueur et
-le jour reste incomplet.
+Bornes de plausibilité. Le `1900-01-01`, début de la version 1 de tout produit, est le premier
+jour que le modèle connaît. Une date ou un horodatage UTC antérieur reçoit la disposition de son
+registre : rejet `ANCIENT_TIMESTAMP` pour l'heure d'une commande, d'un log ou d'une version
+produit, drapeau `ANCIENT_SIGNUP` ou `ANCIENT_UPDATED_AT` pour une fiche client, gardée comme pour
+`BAD_DATE`. Côté futur, l'heure d'une commande ou d'un log postérieure à `ingestion_date + 1 jour`
+est rejetée (`FUTURE_TIMESTAMP`) et une `signup_date` postérieure au dépôt est signalée
+(`FUTURE_SIGNUP`). Le générateur ne produit aucune de ces dates anciennes ni aucun log futur : ces
+codes n'ont pas de code du manifeste. Limite connue : `updated_at` n'a pas de borne future, ni pour
+un client (une fiche datée du futur l'emporte dans le choix SCD 1) ni pour un produit (sa version
+ne vaut qu'à partir de cette date).
+
+Parquet écrit et relit les dates telles que Spark les calcule, calendrier grégorien proleptique
+(modes `CORRECTED` de `gtdp.spark.build_spark`, [ADR-0002](../adr/0002-parquet-idempotence.md)) :
+une date antérieure à 1582 ou un horodatage antérieur à 1900, comme la `signup_date`
+`1500-01-01` d'une fiche signalée, s'écrit comme une autre valeur.
+
 Les codes de rejet et les drapeaux sont calculés en **une seule projection** à partir du
 registre de règles de la source (`ENTITY.rules` de `src/gtdp/silver/<source>.py`). Une ligne
 dont `_corrupt_record` est non nul reçoit le seul code `MALFORMED_ROW` : ses colonnes sont
@@ -140,6 +151,7 @@ Règles de rejet (`src/gtdp/silver/orders.py`), une ligne pouvant en cumuler plu
 | `BAD_PRICE` | prix non décimal, nul ou négatif | `BAD_PRICE` |
 | `BAD_TIMESTAMP` | `event_time` hors format | `BAD_TIMESTAMP` |
 | `FUTURE_TIMESTAMP` | `event_time > ingestion_date + 1 jour` (le lendemain à minuit est accepté) | `FUTURE_TIMESTAMP` |
+| `ANCIENT_TIMESTAMP` | `event_time` antérieur au `1900-01-01 00:00:00`, qu'aucune version produit ne couvre (règle défensive, rien d'injecté) | — |
 | `BAD_ENUM` | `channel` ou `status` hors liste, casse comprise | `BAD_ENUM` |
 | `BAD_DISCOUNT` | remise hors format ou hors `[0 ; 0,30]` | — |
 | `MALFORMED_ROW` | `_corrupt_record` non nul, code exclusif | `MALFORMED_ROW` |
@@ -183,7 +195,9 @@ d'autre ; à égalité, le jour le plus récent, puis le plus petit `_record_has
 | `MISSING_REGION` | drapeau | région vide ; `country = UNKNOWN` | `MISSING_REGION` |
 | `BAD_DATE` | drapeau | `signup_date` hors format ISO | `BAD_DATE` |
 | `FUTURE_SIGNUP` | drapeau | `signup_date > ingestion_date` (incohérence connue du kit, 688 clients en J1) | — |
+| `ANCIENT_SIGNUP` | drapeau | `signup_date` antérieure au `1900-01-01`, gardée telle quelle (règle défensive, rien d'injecté) | — |
 | `BAD_UPDATED_AT` | drapeau | `updated_at` vide ou hors format ISO ; la fiche est gardée, dernière dans le choix SCD 1 | — |
+| `ANCIENT_UPDATED_AT` | drapeau | `updated_at` antérieur au `1900-01-01 00:00:00`, gardé tel quel : la fiche passe après toute fiche datée plus tard dans le choix SCD 1 (règle défensive, rien d'injecté) | — |
 
 Doublons : `DUPLICATE_EXACT` → `duplicated.exact` ; `DUPLICATE_KEY` → `duplicated.key`, clé
 (`customer_id`, `updated_at`) : la fiche est répétée avec son email en majuscules ou entouré
@@ -213,7 +227,8 @@ bronze jusqu'à `D`. Une ligne ne crée une version que si `product_name`, `cate
 
 Le prix applicable à une commande est celui de la version telle que
 `valid_from <= event_time < valid_to` (`gtdp.silver.products.with_applicable_price`). La
-version 1 valant depuis 1900, toute commande trouve exactement une version. Contrôles avant et après
+version 1 valant depuis 1900 et une commande antérieure étant rejetée (`ANCIENT_TIMESTAMP`),
+toute commande trouve exactement une version. Contrôles avant et après
 écriture, chacun à zéro ligne : clé (`product_id`, `valid_from`) unique, intervalle non vide,
 ni recouvrement ni trou entre deux versions, `is_current` vrai pour la seule version ouverte,
 version 1 depuis 1900.
@@ -224,6 +239,7 @@ version 1 depuis 1900.
 | `BAD_PRICE` | prix non décimal, nul ou négatif | `BAD_PRICE` |
 | `NULL_CATEGORY` | catégorie vide | `NULL_CATEGORY` |
 | `BAD_TIMESTAMP` | `updated_at` hors format (règle défensive) | — |
+| `ANCIENT_TIMESTAMP` | `updated_at` antérieur au `1900-01-01 00:00:00` : la version finirait avant le début de la version 1 (règle défensive, rien d'injecté) | — |
 | `CONFLICTING_VERSION` | au moins deux lignes distinctes du jour pour (`product_id`, `updated_at`) : tout le groupe est rejeté, soit 2 lignes par anomalie du manifeste | `CONFLICTING_VERSION` |
 | `MALFORMED_ROW` | `_corrupt_record` non nul | `MALFORMED_ROW` |
 
@@ -261,6 +277,8 @@ tels quels) et la requête `"-"` d'une connexion fermée avant toute requête.
 | Code | Condition | Code du manifeste |
 | --- | --- | --- |
 | `MALFORMED_LINE` | ligne hors de l'expression du Combined Log Format, ou horodatage hors format ou impossible (`1/Jan/2026:…`, `31/Feb/2026`, décalage `+2500`) : la ligne est rejetée, le jour publié | `MALFORMED_LINE` |
+| `FUTURE_TIMESTAMP` | `event_ts > ingestion_date + 1 jour`, en UTC, le lendemain à minuit accepté (règle défensive, rien d'injecté) | — |
+| `ANCIENT_TIMESTAMP` | `event_ts` antérieur au `1900-01-01 00:00:00` UTC (règle défensive, rien d'injecté) | — |
 
 `HTTP_404` et `HTTP_500` du manifeste sont conservés. Doublons : même ligne dans le dépôt
 (`duplicated.exact`), ligne déjà publiée par un jour complet antérieur
