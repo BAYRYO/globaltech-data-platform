@@ -18,12 +18,11 @@ Scopes : `platform`, `datagen`, `core`, `bronze`, `silver`, `gold`, `streaming`,
 
 ## Environnement
 
-Prérequis : Docker (16 Go de RAM conseillés pour le cluster), Git, GNU Make (ou Git Bash sous
-Windows).
+Prérequis : Docker (14 Go de mémoire au moins pour Docker Desktop, voir le
+[guide de la plateforme](docs/platform.md#prérequis)), Git, GNU Make (ou Git Bash sous Windows).
 
 ```bash
-make test        # lint + tests dans un conteneur Python 3.11 + Java 17, sans rien installer
-make lint        # ruff
+make test        # ruff check, ruff format --check puis pytest, dans un conteneur Python 3.11 + Java 17
 ```
 
 Développement local sans Docker : Python 3.11, Java 11 ou 17, puis
