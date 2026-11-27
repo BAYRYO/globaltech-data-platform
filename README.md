@@ -62,8 +62,9 @@ Sur un cluster qui a déjà traité J1 à J3, gardez le sel d'origine et suivez
 	cd globaltech-data-platform
 	```
 
-2. Lancez le lint et les tests dans un conteneur. La suite prend environ 23 min sur GitHub
-   Actions. La dernière ligne de pytest compte les tests `passed`, sans `failed`.
+2. Lancez le lint et les tests dans un conteneur. La suite a pris 36 min sur la machine de
+   référence et de 33 à 57 min sur GitHub Actions le 27 novembre 2026. La dernière ligne de
+   pytest compte les tests `passed`, sans `failed`.
 
 	```bash
 	scripts/test.sh
