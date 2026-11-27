@@ -3,6 +3,7 @@
 import signal
 import subprocess
 import time
+from datetime import datetime
 
 SCRIPT = "gold-write-under-failure.sh"
 
@@ -17,6 +18,25 @@ def test_the_datanode_stops_at_the_first_fact_sales_file_and_returns_after_the_j
     assert [event for event in events if event in order] == order
     assert events[-1] == "scratch_deleted"
     assert cluster.running("datanode1")
+
+
+def test_the_run_waits_for_the_copies_still_asked_after_the_datanode_returns(cluster):
+    """fsck counts a block whose third copy is asked and not yet made as under-replicated; the
+    NameNode counter ``Under replicated blocks`` does not (49 such blocks at the end of the
+    second exercise of 2026-11-27)."""
+    restarted_lately = '(( $(date +%s) - $(stat -c %Y "$S/log") < 12 ))'
+    pending = f'grep -q "^start gtdp-datanode1-1" "$S/log" && {restarted_lately}'
+    result = cluster.run(SCRIPT, "write", PENDING_WHEN=pending)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    stamps = dict(
+        reversed(line.split(",", 1))
+        for line in (cluster.root / "output" / "write" / "events.csv").read_text().splitlines()
+    )
+    waited = datetime.fromisoformat(stamps["replicated"]) - datetime.fromisoformat(
+        stamps["victim_started"]
+    )
+    assert waited.total_seconds() >= 11
 
 
 def test_a_stop_while_the_datanode_is_down_starts_it_again(cluster):
