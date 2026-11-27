@@ -19,6 +19,13 @@ from gtdp.silver.quality import MALFORMED_ROW, Action
 from gtdp.streaming.sensors import REJECT_RULES
 
 DICTIONARY = Path(__file__).resolve().parents[2] / "docs" / "data-dictionary"
+DATA_MODEL = DICTIONARY.parent / "data-model.md"
+DISPOSITION_TABLES = {
+    "orders": "Commandes",
+    "customers": "Clients",
+    "products": "Produits",
+    "weblogs": "Logs web",
+}
 ACTIONS = {"rejet": Action.REJECT, "drapeau": Action.FLAG}
 
 
@@ -48,6 +55,20 @@ def test_silver_lists_the_rule_codes_of_each_source_with_their_action(source):
         in_code.append((MALFORMED_ROW, Action.REJECT))
 
     assert sorted(documented) == sorted(in_code)
+
+
+@pytest.mark.parametrize("source", list(PIPELINES))
+def test_the_data_model_gives_each_rule_code_of_a_source_its_disposition(source):
+    """``gtdp.silver.reconcile`` counts through the disposition tables of data-model.md: the
+    table of each source names, in its last column, every code of the source's registry."""
+    text = DATA_MODEL.read_text(encoding="utf-8")
+    start = text.index(f"\n**{DISPOSITION_TABLES[source]}**\n")
+    end = re.search(r"\n(\*\*[^*\n]+\*\*|#+ [^\n]+)\n", text[start + 1 :])
+    table = text[start : start + 1 + end.start()]
+    dispositions = re.findall(r"^\|.*\|([^|]*)\|$", table, flags=re.MULTILINE)
+    documented = {code for cell in dispositions for code in re.findall(r"`([A-Z_0-9]+)`", cell)}
+
+    assert sorted({rule.code for rule in PIPELINES[source].entity.rules} - documented) == []
 
 
 def test_the_stream_lists_its_reject_reasons_in_priority_order():

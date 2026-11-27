@@ -139,3 +139,45 @@ def test_a_forced_earlier_day_makes_the_later_days_incomplete(fresh_lake, publis
     lake.run("silver", J3)
     assert complete(lake) == list(DAYS)
     assert silver_state(lake) == silver_state(published)
+
+
+def test_a_torn_marker_of_an_earlier_complete_day_is_rewritten_by_forcing_that_day(fresh_lake):
+    """Review A, F5: the marker of J1 is torn while J2 is complete. The message gives the repair
+    that works: J1 forced, then J2 replayed."""
+    lake = fresh_lake
+    lake.run("silver", J1)
+    lake.run("silver", J2)
+    marker = local(lake.cfg.paths.silver) / "_days" / f"ingestion_date={J1}" / "customers.json"
+    marker.write_text('{"source": "custo')
+    marker.with_name(f".{marker.name}.crc").unlink(missing_ok=True)
+    repair = rf"silver --date {J1} again, with --force if a later day is complete"
+
+    with pytest.raises(days.MarkerError, match=repair):
+        lake.run("silver", J2, "orders")
+    with pytest.raises(LaterPartitionError):
+        lake.run("silver", J1)
+    lake.run("silver", J1, force=True)
+    lake.run("silver", J2)
+    lake.run("silver", J2, "orders")
+
+    assert complete(lake) == [J1, J2]
+
+
+def test_orders_are_refused_while_customers_holds_a_later_day_than_its_markers_say(fresh_lake):
+    """Review A, F7: a J3 run of ``customers`` stopped between its swap and its marker. The
+    markers say J2; the table holds the rows of J3."""
+    lake = fresh_lake
+    lake.run("silver", J1)
+    lake.run("silver", J2)
+
+    def killed_before_the_customers_marker(*_args):
+        raise Killed
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(days, "mark_source", killed_before_the_customers_marker)
+        with pytest.raises(Killed):
+            lake.run("silver", J3, "customers")
+    assert lake.table("customers").where(f"ingestion_date = '{J3}'").count() > 0
+
+    with pytest.raises(silver_job.DayOrderError, match=rf"silver --date {J2} --source customers"):
+        lake.run("silver", J2, "orders")
