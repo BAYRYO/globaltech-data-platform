@@ -34,7 +34,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           cluster=false
-          if [ "$EVENT" = workflow_dispatch ]; then
+          # On main the job writes the image cache that pull requests restore: a run restores only
+          # the caches of its own branch and of main.
+          if [ "$EVENT" = workflow_dispatch ] || [ "$EVENT" = push ]; then
             cluster=true
           elif [ "$EVENT" = pull_request ]; then
             # A file, not a pipe: grep -q exits at the first match, git diff then dies of SIGPIPE
@@ -52,7 +54,8 @@ jobs:
     needs: lint
     if: needs.lint.outputs.cluster == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # A cold build downloads Spark from archive.apache.org: 27 min on 2026-11-27.
+    timeout-minutes: 75
     env:
       YARN_NM_MEMORY_MB: "2048"
       GTDP_SPARK_SUBMIT_OPTS: --conf spark.executor.memory=512m --conf spark.driver.memory=512m
