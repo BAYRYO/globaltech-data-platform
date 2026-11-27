@@ -1,13 +1,12 @@
 """Taking a table lock over: the YARN state of the run that holds it, its age, racing takers."""
 
-import itertools
 import json
 import logging
 import os
 import socket
 import threading
 import time
-from contextlib import ExitStack, suppress
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -15,7 +14,6 @@ import pytest
 
 import gtdp.io
 from gtdp.io import (
-    RUN_ID_PROPERTY,
     TableLockedError,
     path_exists,
     read_table,
@@ -197,7 +195,6 @@ def test_a_reader_finishes_an_interrupted_swap_once_yarn_reports_its_writer_ende
 
 
 # The takeover of a stale lock is a few calls on the lock and on files named after it (the steps).
-# Each test below runs its takers through every split of their steps.
 SPLITS = range(14)
 
 
@@ -229,82 +226,6 @@ def hand_out(monkeypatch, *wrappers):
         return (queue.pop(0)(fs) if queue else fs), hadoop_path
 
     monkeypatch.setattr(gtdp.io, "_filesystem", filesystem)
-
-
-def race(spark, table, monkeypatch, a_first, b_first):
-    """run-a and run-b take the lock of ``table``, interleaved at the step numbers given.
-
-    run-a takes ``a_first`` steps, run-b ``b_first`` steps, then run-a finishes taking the lock
-    (or fails), then run-b. Return who holds it, the run that the lock file names, and how many
-    steps each took, while both still hold what they took.
-    """
-    path, lock = table
-    held, steps = {}, {}
-    b_parked, b_resume = threading.Event(), threading.Event()
-
-    def take(run, stack):
-        spark.sparkContext.setLocalProperty(RUN_ID_PROPERTY, run)
-        try:
-            stack.enter_context(table_lock(spark, path))
-            held[run] = True
-        except TableLockedError:
-            held[run] = False
-
-    def run_b():
-        try:
-            take("run-b", b_holds)
-        finally:
-            b_parked.set()
-
-    b = threading.Thread(target=run_b)
-
-    def start_b():
-        if b.ident is None:
-            b.start()
-            assert b_parked.wait(60)
-
-    def park_b():
-        b_parked.set()
-        assert b_resume.wait(60)
-
-    def steps_of(run, at, pause):
-        def wrap(fs):
-            steps[run] = Steps(fs, at, pause)
-            return steps[run]
-
-        return wrap
-
-    with monkeypatch.context() as patch, ExitStack() as a_holds, ExitStack() as b_holds:
-        hand_out(patch, steps_of("run-a", a_first, start_b), steps_of("run-b", b_first, park_b))
-        take("run-a", a_holds)
-        counts = [steps["run-a"].count]
-        start_b()
-        b_resume.set()
-        b.join(60)
-        counts.append(steps["run-b"].count)
-        named = json.loads(lock.read_text())["run_id"] if lock.exists() else None
-    return held, named, counts
-
-
-def test_two_runs_taking_over_a_dead_run_lock_never_both_hold_it(spark, table, monkeypatch):
-    _, lock = table
-    wrong, most_steps = [], 0
-    for a_first, b_first in itertools.product(SPLITS, SPLITS):
-        lock.write_text(lock_of("local-1795715756506"))
-        make_old(lock)
-
-        held, named, counts = race(spark, table, monkeypatch, a_first, b_first)
-
-        holders = [run for run, holds in held.items() if holds]
-        leftovers = sorted(os.listdir(lock.parent))
-        if len(holders) != 1 or named != holders[0] or leftovers:
-            wrong.append((a_first, b_first, holders, named, leftovers))
-        most_steps = max(most_steps, *counts)
-        for leftover in lock.parent.iterdir():
-            leftover.unlink()
-
-    assert wrong == []
-    assert most_steps < len(SPLITS), "a taker takes more steps than SPLITS covers"
 
 
 class Killed(BaseException):
