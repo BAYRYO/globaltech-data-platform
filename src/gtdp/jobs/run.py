@@ -86,6 +86,9 @@ def _run(spec: JobSpec, args: argparse.Namespace) -> int:
             if args.force:
                 run.metrics["force"] = True
             spec.func(JobContext(spark, cfg, run, force=args.force))
+    except ConfigError as exc:
+        logger.error("invalid configuration: %s", exc)
+        return 2
     except Exception:
         logger.exception("job failed")
         return 1

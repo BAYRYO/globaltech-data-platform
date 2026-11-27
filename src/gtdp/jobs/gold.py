@@ -11,6 +11,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from gtdp.audit import Layer
+from gtdp.config import ConfigError
 from gtdp.gold import checks, dimensions, facts
 from gtdp.gold.kpis import KPIS, Star
 from gtdp.gold.tables import (
@@ -54,10 +55,10 @@ def gold(ctx: JobContext) -> None:
     """
     day = ctx.run.ingestion_date
     if day is None:
-        raise ValueError("gold needs --date")
+        raise ConfigError("gold needs --date")
     settings = ctx.cfg.gold
     if settings is None:
-        raise ValueError("the configuration has no [gold] section")
+        raise ConfigError("the configuration has no [gold] section")
     spark, silver = ctx.spark, ctx.cfg.paths.silver
     complete = complete_days(spark, silver)
     if day not in complete:
