@@ -87,7 +87,9 @@ Hadoop 3.3.6 feraient annoncer 8 Gio à chaque NodeManager.
 
 `<source>` ∈ `orders`, `customers`, `products`, `weblogs`. Pendant une écriture, chaque table a
 pour frères cachés son verrou `_<table>.lock` et ses répertoires de transit
-(`_<table>.staging-<id>`, `_<table>.tmp`, `_<table>.old`), voir
+(`_<table>.staging-<id>`, `_<table>.tmp`, `_<table>.old`). Le temps d'une prise ou d'une
+libération du verrou s'y ajoutent la copie du verrou en cours d'écriture
+(`_<table>.lock.tmp-<id>`) et la réclamation (`_<table>.lock.takeover-<empreinte>`), voir
 [ADR-0002](adr/0002-parquet-idempotence.md). Les event logs de `/spark-logs` sont compressés et
 découpés ([guide de la plateforme](platform.md#arborescence-hdfs-droits-et-quotas)).
 
