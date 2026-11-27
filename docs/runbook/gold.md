@@ -173,7 +173,9 @@ d'audit. Un verrou ne se libère seul qu'après 6 h ; avant, la relance échoue 
 	```
 
 2. Vérifiez que cette application est terminée : `State` doit valoir `FINISHED`, `FAILED` ou
-   `KILLED`, jamais `RUNNING` ni `ACCEPTED`. Si elle tourne encore, attendez sa fin.
+   `KILLED`, jamais `RUNNING` ni `ACCEPTED`. Si elle tourne encore, attendez sa fin. Lisez
+   `State`, pas `Final-State` : un pilote tué en mode client laisse une application
+   `FINISHED` dont `Final-State` vaut `SUCCEEDED` (constaté sur le cluster).
 
 	```bash
 	scripts/cluster/client.sh yarn application -status application_1795715756506_0412
