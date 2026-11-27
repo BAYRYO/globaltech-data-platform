@@ -37,7 +37,7 @@ from pyspark.sql import functions as F
 from gtdp.audit import audit_path
 from gtdp.config import AppConfig, Env, load_config
 from gtdp.gold import checks, dimensions, facts
-from gtdp.gold.kpis import COMPLETED, KPIS
+from gtdp.gold.kpis import COMPLETED, KPIS, with_customer
 from gtdp.gold.tables import DIM_CUSTOMER, DIM_PRODUCT, FACT_SALES, ORDER_DATE, STAR, table_path
 from gtdp.io import INGESTION_DATE, read_table
 from gtdp.silver.days import complete_days
@@ -111,10 +111,7 @@ def reconciliation(spark: SparkSession, cfg: AppConfig) -> list[tuple[str, str, 
     products = dimensions.products(
         read_table(spark, silver_path(cfg.paths.silver, "products"), PIPELINES["products"].schema)
     )
-    customers = dimensions.customers(
-        read_table(spark, silver_path(cfg.paths.silver, "customers"), PIPELINES["customers"].schema)
-    )
-    recomputed = facts.sales(orders, products, customers)
+    recomputed = facts.sales(orders, products)
     net = F.lit(1) - F.col("discount_pct")
     invoiced = F.round(F.col("quantity") * F.col("unit_price_eur") * net, 2)
     silver = orders.agg(F.count(F.lit(1)), F.sum(invoiced)).first()
@@ -168,8 +165,10 @@ def top_products_check(spark: SparkSession, cfg: AppConfig, country: str) -> lis
     """``(position, product, revenue)`` of a plain ``groupBy``/``orderBy`` beside ``(rank,
     product, revenue)`` of ``kpi_top_products_country``, and whether the two agree."""
     n = cfg.gold.top_n if cfg.gold else 0
+    sales = _gold(spark, cfg, FACT_SALES.name, FACT_SALES.schema)
+    customers = _gold(spark, cfg, DIM_CUSTOMER.name, DIM_CUSTOMER.schema)
     plain = (
-        _gold(spark, cfg, FACT_SALES.name, FACT_SALES.schema)
+        with_customer(sales, customers)
         .where((F.col("status") == COMPLETED) & (F.col("country") == country))
         .groupBy("product_id")
         .agg(F.sum("revenue_eur").alias("revenue_eur"))
@@ -370,14 +369,13 @@ def explain(spark: SparkSession, cfg: AppConfig, day: date) -> None:
     dates = [row[0] for row in of_day.select(facts.order_date()).distinct().collect()]
     of_dates = orders.where(facts.order_date().isin(dates))
     products = _gold(spark, cfg, DIM_PRODUCT.name, DIM_PRODUCT.schema)
-    customers = _gold(spark, cfg, DIM_CUSTOMER.name, DIM_CUSTOMER.schema)
     print(f"== fact_sales build for the {len(dates)} order dates of {day}, default join selection")
-    facts.sales(of_dates, products, customers).explain()
+    facts.sales(of_dates, products).explain()
     previous = spark.conf.get(BROADCAST_THRESHOLD)
     spark.conf.set(BROADCAST_THRESHOLD, "-1")
     try:
         print(f"== the same build with {BROADCAST_THRESHOLD}=-1")
-        facts.sales(of_dates, products, customers).explain()
+        facts.sales(of_dates, products).explain()
     finally:
         spark.conf.set(BROADCAST_THRESHOLD, previous)
 

@@ -43,8 +43,7 @@ def test_late_orders_join_the_published_orders_of_their_date(generated):
     assert late
     assert {"2026-01-01", "2026-01-02"} <= drops
     assert fact_sales(generated).where(F.col("order_date").isin(late)).count() == silver.count()
-    assert j2["dates_rewritten"] >= len(j2_dates)
-    assert j2["dates_removed"] == 0
+    assert (j2["dates_rewritten"], j2["dates_removed"]) == (len(j2_dates), 0)
 
 
 def test_p00042_orders_take_the_catalog_price_of_their_date(generated):

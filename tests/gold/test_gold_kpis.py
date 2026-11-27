@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
+from pyspark.sql.types import StringType, StructField, StructType
 
 from gtdp.gold import dimensions, facts, kpis
 from gtdp.gold.tables import FACT_SALES
@@ -19,12 +20,18 @@ from .silver_lake import J1, J2, customer, frame, order, reject, request, versio
 
 pytestmark = pytest.mark.slow
 
+CUSTOMER_SALES = StructType(
+    [*FACT_SALES.schema.fields, *[StructField(c, StringType()) for c in kpis.CUSTOMER_ATTRIBUTES]]
+)
+"""``fact_sales`` with the current attributes of each line's customer (``kpis.with_customer``)."""
+
 
 def sale(
     transaction_id: str,
     day: str,
     *,
     country: str = "FR",
+    segment: str = "B2C",
     product: str = "P1",
     version: str = "19000101000000",
     customer_id: str = "C1",
@@ -34,7 +41,7 @@ def sale(
     applicable: str = "10.00",
     invoiced: str | None = None,
 ) -> tuple:
-    """A ``fact_sales`` row without discount."""
+    """A ``CUSTOMER_SALES`` row without discount."""
     on = date.fromisoformat(day)
     applicable_price, invoiced_price = Decimal(applicable), Decimal(invoiced or applicable)
     return (
@@ -44,7 +51,6 @@ def sale(
         customer_id,
         f"{product}-{version}",
         product,
-        country,
         channel,
         status,
         quantity,
@@ -54,13 +60,15 @@ def sale(
         quantity * applicable_price,
         quantity * invoiced_price,
         on,
+        country,
+        segment,
     )
 
 
 @pytest.fixture
 def star(spark):
     def build(*rows):
-        return spark.createDataFrame(list(rows), FACT_SALES.schema)
+        return spark.createDataFrame(list(rows), CUSTOMER_SALES)
 
     return build
 
@@ -261,17 +269,16 @@ def test_cancel_and_return_rates_are_shares_of_lines_per_day_country_channel_cat
     }
 
 
-def test_the_average_basket_is_per_completed_order_day_country_and_segment(star, customers):
+def test_the_average_basket_is_per_completed_order_day_country_and_segment(star):
     sales = star(
         sale("T1", "2025-03-01", applicable="10.00", invoiced="9.00"),
         sale("T2", "2025-03-01", applicable="30.00", invoiced="27.00"),
         sale("T3", "2025-03-01", applicable="900.00", status="CANCELLED"),
-        sale("T4", "2025-03-01", customer_id="C2", applicable="25.00", quantity=2),
+        sale("T4", "2025-03-01", customer_id="C2", segment="B2B", applicable="25.00", quantity=2),
         sale("T5", "2025-03-02", applicable="40.00"),
     )
-    people = customers(customer("C1", segment="B2C"), customer("C2", segment="B2B"))
 
-    rows = kpis.avg_basket(sales, people).collect()
+    rows = kpis.avg_basket(sales).collect()
 
     assert {
         (str(r.order_date), r.country, r.segment): (

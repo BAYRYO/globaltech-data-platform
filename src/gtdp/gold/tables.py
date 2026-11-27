@@ -120,7 +120,6 @@ FACT_SALES = Table(
             StructField("customer_id", StringType(), False),
             StructField("product_sk", StringType(), False),
             StructField("product_id", StringType(), False),
-            StructField("country", StringType(), False),
             StructField("channel", StringType(), False),
             StructField("status", StringType(), False),
             StructField("quantity", IntegerType(), False),

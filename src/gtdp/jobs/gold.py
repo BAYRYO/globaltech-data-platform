@@ -106,7 +106,7 @@ def _build(ctx: JobContext, complete: list[date], settings: GoldSettings) -> dic
         DIM_DATE.name: kept(dimensions.calendar(days)),
         DIM_CUSTOMER.name: customers,
         DIM_PRODUCT.name: products,
-        FACT_SALES.name: kept(facts.sales(orders, products, customers)),
+        FACT_SALES.name: kept(facts.sales(orders, products)),
         FACT_WEB_EVENTS.name: kept(facts.web_events(weblogs)),
     }
     ctx.run.counters.rows_in = orders_in = orders.count()

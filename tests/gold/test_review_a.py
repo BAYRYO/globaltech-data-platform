@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
+from types import SimpleNamespace
 
 import pytest
 from pyspark.sql import functions as F
@@ -50,9 +51,14 @@ def test_fact_sales_country_is_the_current_country_of_dim_customer(silver_lake):
     silver_lake.run_gold(J2)
 
     dim = {r.customer_id: r.country for r in silver_lake.gold("dim_customer").collect()}
-    fact = {r.transaction_id: r.country for r in silver_lake.gold("fact_sales").collect()}
     assert dim == {"C1": "DE"}
-    assert fact == {"T1": "DE", "T2": "DE"}
+    # Adapted in the fix round: fact_sales no longer holds the customer's country (decision 1),
+    # the indicators join the current one.
+    assert "country" not in silver_lake.gold("fact_sales").columns
+    daily = {
+        (str(r.order_date), r.country) for r in silver_lake.gold("kpi_revenue_daily").collect()
+    }
+    assert daily == {("2025-12-30", "DE"), ("2026-01-01", "DE")}
 
 
 def test_replaying_an_earlier_day_leaves_the_indicators_unchanged(silver_lake):
@@ -76,13 +82,22 @@ def test_generated_fact_sales_country_matches_dim_customer(generated):
     """The same on the generated ci drops: J2 and J3 update the region of existing customers."""
     gold = generated.cfg.paths.gold
     sales = read_table(generated.spark, table_path(gold, "fact_sales"), FACT_SALES.schema)
-    dim = read_table(generated.spark, table_path(gold, "dim_customer")).select(
-        "customer_id", F.col("country").alias("current_country")
+    dim = read_table(generated.spark, table_path(gold, "dim_customer"))
+    # Adapted in the fix round: fact_sales no longer holds the customer's country (decision 1).
+    # Every line of kpi_cancel_return_rate (all statuses) is counted under the current country.
+    lines = (
+        sales.join(dim, "customer_id")
+        .groupBy("order_date", "country")
+        .agg(F.count(F.lit(1)).alias("lines"))
+    )
+    kpi = (
+        read_table(generated.spark, table_path(gold, "kpi_cancel_return_rate"))
+        .groupBy("order_date", "country")
+        .agg(F.sum("lines").alias("lines"))
     )
 
-    stale = sales.join(dim, "customer_id").where(F.col("country") != F.col("current_country"))
-
-    assert stale.count() == 0
+    assert "country" not in sales.columns
+    assert sorted(map(tuple, kpi.collect())) == sorted(map(tuple, lines.collect()))
 
 
 # --- F2: a fact_sales partition no silver day names any more is never cleaned ----------------
@@ -200,13 +215,15 @@ def test_price_deviation_is_the_median_on_an_even_number_of_lines(spark):
     from gtdp.schemas import SILVER_PRODUCTS_SCD2
 
     from .silver_lake import frame
+    from .test_gold_kpis import CUSTOMER_SALES
 
+    # Adapted in the fix round: the test rows carry the customer's country beside fact_sales.
     sales = spark.createDataFrame(
         [
             sale("T1", "2025-03-02", applicable="100.00", invoiced="90.00"),
             sale("T2", "2025-03-05", applicable="100.00", invoiced="100.00"),
         ],
-        FACT_SALES.schema,
+        CUSTOMER_SALES,
     )
     products = dimensions.products(
         frame(spark, SILVER_PRODUCTS_SCD2, versions("P1", ("1900-01-01", "100.00")))
@@ -341,12 +358,17 @@ def test_plain_python_daily_revenue_with_the_current_country(generated, plain):
 
 def test_plain_python_indicators_from_the_published_fact(generated):
     """Top N, moving average, cancel/return, basket, price deviation, recomputed in plain Python
-    from the published ``fact_sales`` (its own country column), so that the frozen country of F1
-    does not hide another defect."""
+    from the published ``fact_sales`` and the current country of ``dim_customer``."""
     cfg = generated.cfg.gold
-    sales = _gold(generated, "fact_sales")
     category = {v.product_sk: v.category for v in _gold(generated, "dim_product")}
     segment = {c.customer_id: c.segment for c in _gold(generated, "dim_customer")}
+    # Adapted in the fix round: fact_sales no longer holds the country (decision 1); each row
+    # takes its customer's current country, the one the indicators use.
+    country_of = {c.customer_id: c.country for c in _gold(generated, "dim_customer")}
+    sales = [
+        SimpleNamespace(**r.asDict(), country=country_of[r.customer_id])
+        for r in _gold(generated, "fact_sales")
+    ]
     completed = [r for r in sales if r.status == "COMPLETED"]
 
     # Top N: dense rank of revenue per country.

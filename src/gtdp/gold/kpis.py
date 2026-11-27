@@ -1,7 +1,9 @@
 """The gold indicators: each one a pure function of the star, rebuilt whole by each run.
 
 Revenue counts ``COMPLETED`` lines only, at the catalog price applicable on the order date
-(``revenue_eur``). Ratios are doubles, null when their denominator is 0.
+(``revenue_eur``). Ratios are doubles, null when their denominator is 0. The country and the
+segment of a customer are current values (``dim_customer``, SCD 1), joined when the indicators
+are built (``with_customer``); the product attributes are those of the version applied.
 """
 
 from __future__ import annotations
@@ -25,11 +27,18 @@ FUNNEL = (("view", "product_views"), ("cart", "carts"), ("purchase", "orders"))
 """The steps of the conversion funnel after the visit: the event type a visit must also hold to
 reach the step, and the column counting the visits that reach it."""
 ORDER_BEFORE_SIGNUP = "ORDER_BEFORE_SIGNUP"
+CUSTOMER_ATTRIBUTES = ("country", "segment")
+"""The ``dim_customer`` columns the indicators group by."""
+
+
+def with_customer(sales: DataFrame, customers: DataFrame) -> DataFrame:
+    """``fact_sales`` rows with the current ``CUSTOMER_ATTRIBUTES`` of their customer."""
+    return sales.join(customers.select("customer_id", *CUSTOMER_ATTRIBUTES), "customer_id", "left")
 
 
 @dataclass(frozen=True)
 class Star:
-    """What the indicators read: the published star, and the silver tables of data quality."""
+    """What the indicators read: the star, and the silver tables of data quality."""
 
     sales: DataFrame
     web_events: DataFrame
@@ -39,6 +48,11 @@ class Star:
     """``silver/orders``, every ``ingestion_date``."""
     rejects: DataFrame
     """``silver/rejects`` of every source."""
+
+    @property
+    def customer_sales(self) -> DataFrame:
+        """``sales`` with the current country and segment of each customer."""
+        return with_customer(self.sales, self.customers)
 
 
 def _completed(sales: DataFrame) -> DataFrame:
@@ -54,7 +68,8 @@ def _ratio(numerator: str, denominator: str) -> Column:
 
 
 def revenue_daily(sales: DataFrame) -> DataFrame:
-    """Completed orders, quantity and revenue per order date and country."""
+    """Completed orders, quantity and revenue per order date and country; ``sales`` holds the
+    country of each line's customer (``with_customer``), as it does below."""
     return (
         _completed(sales)
         .groupBy(ORDER_DATE, "country")
@@ -150,17 +165,15 @@ def cancel_return_rate(sales: DataFrame, products: DataFrame) -> DataFrame:
     )
 
 
-def avg_basket(sales: DataFrame, customers: DataFrame) -> DataFrame:
+def avg_basket(sales: DataFrame) -> DataFrame:
     """Average completed order per order date, country and customer segment.
 
     A basket is one transaction: the contract has no basket identifier grouping several lines.
     ``avg_basket_eur`` is at the applicable catalog price, ``avg_invoiced_eur`` at the invoiced
     price. ``revenue_eur / orders`` gives the average at any coarser grain.
     """
-    segments = customers.select("customer_id", "segment")
     return (
         _completed(sales)
-        .join(segments, "customer_id", "left")
         .groupBy(ORDER_DATE, "country", "segment")
         .agg(
             F.count(F.lit(1)).alias("orders"),
@@ -245,16 +258,18 @@ Kpi = Callable[[Star, GoldSettings], DataFrame]
 
 KPIS: Mapping[str, Kpi] = MappingProxyType(
     {
-        "kpi_revenue_daily": lambda star, _: revenue_daily(star.sales),
+        "kpi_revenue_daily": lambda star, _: revenue_daily(star.customer_sales),
         "kpi_top_products_country": lambda star, settings: top_products_by_country(
-            star.sales, star.products, settings.top_n
+            star.customer_sales, star.products, settings.top_n
         ),
         "kpi_revenue_moving_avg": lambda star, settings: revenue_moving_avg(
-            star.sales, settings.moving_average_days
+            star.customer_sales, settings.moving_average_days
         ),
         "kpi_price_deviation": lambda star, _: price_deviation(star.sales, star.products),
-        "kpi_cancel_return_rate": lambda star, _: cancel_return_rate(star.sales, star.products),
-        "kpi_avg_basket": lambda star, _: avg_basket(star.sales, star.customers),
+        "kpi_cancel_return_rate": lambda star, _: cancel_return_rate(
+            star.customer_sales, star.products
+        ),
+        "kpi_avg_basket": lambda star, _: avg_basket(star.customer_sales),
         "kpi_http_errors_hourly": lambda star, _: http_errors_hourly(star.web_events),
         "kpi_conversion_funnel": lambda star, _: conversion_funnel(star.web_events),
         "kpi_data_quality": lambda star, _: data_quality(star.rejects, star.orders, star.customers),
