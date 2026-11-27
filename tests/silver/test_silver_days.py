@@ -83,11 +83,11 @@ def test_a_failed_dimension_check_puts_back_the_previous_days_table(fresh_lake, 
         [],
     )
 
-    def losing_one_version(frame, path):
+    def losing_one_version(frame, path, *args):
         writes.append(path)
         if path == products and writes.count(products) == 1:
             frame = frame.limit(frame.count() - 1)
-        replace(frame, path)
+        replace(frame, path, *args)
 
     monkeypatch.setattr(publish_module, "replace_table", losing_one_version)
     with pytest.raises(silver_job.SilverCheckError, match="products"):
